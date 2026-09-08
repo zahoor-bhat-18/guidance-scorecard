@@ -70,28 +70,41 @@ function fiscalPosition(endDate, fye) {
  * Does this filer label a fiscal year by the year it starts or the year it
  * ends?
  *
- * Learned from the annual filings rather than assumed. A 10-K's own fy IS the
- * label the company uses, and its latest year-long fact ends on the fiscal
- * year end, so the two together give the offset.
+ * There is no rule. Macy's year ending January 2026 is its fiscal 2025;
+ * Autodesk's year ending January 2027 is its fiscal 2027. Nothing in a date
+ * distinguishes them, and fy in companyfacts cannot help - it is the year of
+ * the REPORT, which is what sent the first two attempts at this a year out.
+ *
+ * The company states its own answer. DocumentFiscalYearFocus, in the dei
+ * section of the same document, is the label it puts on the report. Pairing
+ * that with the period end gives the offset directly, with nothing inferred.
+ *
+ * Where dei is absent, the fallback is where most of the year falls: a year
+ * running February to January is eleven months in the earlier calendar year.
+ * That is right for Macy's and wrong for Autodesk, which is why it is only a
+ * fallback and why the answer is reported in _meta for checking.
  */
-function learnLabelOffset(usGaap, fye) {
-  const concepts = ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "NetIncomeLoss"];
-  for (const c of concepts) {
-    const node = usGaap[c];
-    if (!node || !node.units) continue;
+function learnLabelOffset(dei, fye) {
+  const node = dei && dei.DocumentFiscalYearFocus;
+  if (node && node.units) {
     for (const facts of Object.values(node.units)) {
-      for (const f of facts) {
-        if (f.form !== "10-K" || f.fp !== "FY" || !f.start || !f.end || !f.fy) continue;
-        const days = (Date.parse(f.end) - Date.parse(f.start)) / 86400000;
-        if (days < 300 || days > 400) continue;
+      // Newest first: a company that changed its convention should be read on
+      // its current one.
+      const sorted = facts.slice().sort((a, b) => (a.end < b.end ? 1 : -1));
+      for (const f of sorted) {
+        if (f.form !== "10-K" || !f.end) continue;
+        const label = parseInt(f.val, 10);
+        if (!Number.isFinite(label)) continue;
         const { endsIn } = fiscalPosition(f.end, fye);
-        // 0 means the label is the ending year, 1 means the starting year.
-        const offset = endsIn - f.fy;
-        if (offset === 0 || offset === 1) return offset;
+        const offset = endsIn - label;
+        if (offset === 0 || offset === 1) return { offset, source: "DocumentFiscalYearFocus" };
       }
     }
   }
-  return fye.month === 12 ? 0 : 1;
+
+  // Fallback: whichever calendar year holds most of the fiscal year.
+  if (fye.month === 12) return { offset: 0, source: "calendar year end" };
+  return { offset: fye.month <= 6 ? 1 : 0, source: "assumed from the year end month" };
 }
 
 /* Ordered fallbacks per metric. First match wins, so the most specific and
@@ -158,7 +171,9 @@ export async function factsFor(env, cik) {
   const url = "https://data.sec.gov/api/xbrl/companyfacts/CIK" + cik + ".json";
   const [doc, fye] = await Promise.all([secJson(env, url), fiscalYearEnd(env, cik)]);
   const us = (doc.facts && doc.facts["us-gaap"]) || {};
-  const labelOffset = learnLabelOffset(us, fye);
+  const dei = (doc.facts && doc.facts.dei) || {};
+  const convention = learnLabelOffset(dei, fye);
+  const labelOffset = convention.offset;
 
   const out = {};   // "revenue|2026Q2" -> { value, unit, concept, filed, accession }
 
@@ -233,6 +248,7 @@ export async function factsFor(env, cik) {
     labelConvention: labelOffset === 1
       ? "fiscal year is labelled by the year it STARTS in"
       : "fiscal year is labelled by the year it ENDS in",
+    conventionFrom: convention.source,
   };
 
   return out;
