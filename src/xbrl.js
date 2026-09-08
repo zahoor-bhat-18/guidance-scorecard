@@ -18,6 +18,82 @@
 
 import { secJson } from "./sec.js";
 
+/**
+ * fy and fp cannot be trusted as a fact's period.
+ *
+ * In companyfacts they describe the REPORT the fact was filed in, not the
+ * period the fact covers. A 10-Q for FY2026 Q1 also carries last year's
+ * comparative column, and both rows come back tagged fy 2026, fp Q1 - so
+ * Macy's quarter ending May 2025 arrived labelled 2026Q1. Every match built on
+ * that would be a year out.
+ *
+ * The dates are reliable, so the period is derived from them instead: which
+ * fiscal year the end date falls in, and which quarter of it.
+ */
+
+/** The company's fiscal year end, as month and day, from EDGAR. */
+async function fiscalYearEnd(env, cik) {
+  const subs = await secJson(env, "https://data.sec.gov/submissions/CIK" + cik + ".json");
+  const raw = String(subs.fiscalYearEnd || "").replace(/[^0-9]/g, "");
+  const name = subs.name || "";
+  if (!/^\d{4}$/.test(raw)) return { month: 12, day: 31, name };
+  return { month: parseInt(raw.slice(0, 2), 10), day: parseInt(raw.slice(2), 10), name };
+}
+
+/**
+ * Which fiscal year does a date fall in, and which quarter of it?
+ *
+ * Returned as the calendar year the fiscal year ENDS in, plus a quarter
+ * number. Turning that into the company's own label needs one more step,
+ * because the conventions disagree: Macy's FY2025 ends January 2026, while
+ * Autodesk's FY2027 also ends January 2027. Nothing in a date says which.
+ */
+function fiscalPosition(endDate, fye) {
+  const d = new Date(endDate + "T00:00:00Z");
+  const y = d.getUTCFullYear();
+
+  // The fiscal year end on or after this date.
+  let endsIn = y;
+  const thisYearEnd = Date.UTC(y, fye.month - 1, fye.day);
+  // A week either side, because a 52/53-week filer's year end moves.
+  if (d.getTime() > thisYearEnd + 8 * 86400000) endsIn = y + 1;
+
+  const yearEnd = Date.UTC(endsIn, fye.month - 1, fye.day);
+  const yearStart = Date.UTC(endsIn - 1, fye.month - 1, fye.day);
+  const through = (d.getTime() - yearStart) / (yearEnd - yearStart);
+  const quarter = Math.min(4, Math.max(1, Math.round(through * 4)));
+
+  return { endsIn, quarter };
+}
+
+/**
+ * Does this filer label a fiscal year by the year it starts or the year it
+ * ends?
+ *
+ * Learned from the annual filings rather than assumed. A 10-K's own fy IS the
+ * label the company uses, and its latest year-long fact ends on the fiscal
+ * year end, so the two together give the offset.
+ */
+function learnLabelOffset(usGaap, fye) {
+  const concepts = ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "NetIncomeLoss"];
+  for (const c of concepts) {
+    const node = usGaap[c];
+    if (!node || !node.units) continue;
+    for (const facts of Object.values(node.units)) {
+      for (const f of facts) {
+        if (f.form !== "10-K" || f.fp !== "FY" || !f.start || !f.end || !f.fy) continue;
+        const days = (Date.parse(f.end) - Date.parse(f.start)) / 86400000;
+        if (days < 300 || days > 400) continue;
+        const { endsIn } = fiscalPosition(f.end, fye);
+        // 0 means the label is the ending year, 1 means the starting year.
+        const offset = endsIn - f.fy;
+        if (offset === 0 || offset === 1) return offset;
+      }
+    }
+  }
+  return fye.month === 12 ? 0 : 1;
+}
+
 /* Ordered fallbacks per metric. First match wins, so the most specific and
    most modern tag goes first. These lists grow as filers are tested - that is
    expected, and each addition should be recorded against the company that
@@ -80,8 +156,9 @@ function normalise(metric, value, unit) {
  */
 export async function factsFor(env, cik) {
   const url = "https://data.sec.gov/api/xbrl/companyfacts/CIK" + cik + ".json";
-  const doc = await secJson(env, url);
+  const [doc, fye] = await Promise.all([secJson(env, url), fiscalYearEnd(env, cik)]);
   const us = (doc.facts && doc.facts["us-gaap"]) || {};
+  const labelOffset = learnLabelOffset(us, fye);
 
   const out = {};   // "revenue|2026Q2" -> { value, unit, concept, filed, accession }
 
@@ -92,21 +169,21 @@ export async function factsFor(env, cik) {
 
       for (const [unit, facts] of Object.entries(node.units)) {
         for (const f of facts) {
-          if (!f.fy || !f.fp || !f.end) continue;
+          if (!f.end || !f.start) continue;
           if (f.form !== "10-Q" && f.form !== "10-K") continue;
 
-          const period = f.fp === "FY" ? `${f.fy}FY` : `${f.fy}${f.fp}`;
-          const key = metric + "|" + period;
+          // The period comes from the dates, never from fy and fp.
+          const days = (Date.parse(f.end) - Date.parse(f.start)) / 86400000;
+          const isYear = days >= 300 && days <= 400;
+          const isQuarter = days >= 60 && days <= 120;
+          // Anything else is year-to-date or half-year: real figures, but not
+          // comparable with a quarterly or annual guide.
+          if (!isYear && !isQuarter) continue;
 
-          // Duration check. A quarter is about 90 days, a year about 365.
-          // Without this, a year-to-date figure filed under Q3 gets scored
-          // against a quarterly guide.
-          if (f.start) {
-            const days = (Date.parse(f.end) - Date.parse(f.start)) / 86400000;
-            const wantYear = f.fp === "FY";
-            if (wantYear && (days < 300 || days > 400)) continue;
-            if (!wantYear && (days < 60 || days > 120)) continue;
-          }
+          const pos = fiscalPosition(f.end, fye);
+          const label = pos.endsIn - labelOffset;
+          const period = isYear ? `${label}FY` : `${label}Q${pos.quarter}`;
+          const key = metric + "|" + period;
 
           const norm = normalise(metric, f.val, unit);
           const rec = {
@@ -148,6 +225,15 @@ export async function factsFor(env, cik) {
       derived: true,
     };
   }
+
+  // Carried out so the caller can show its working, and so a period that looks
+  // wrong can be traced to the convention rather than to the data.
+  out._meta = {
+    fiscalYearEnd: String(fye.month).padStart(2, "0") + "/" + String(fye.day).padStart(2, "0"),
+    labelConvention: labelOffset === 1
+      ? "fiscal year is labelled by the year it STARTS in"
+      : "fiscal year is labelled by the year it ENDS in",
+  };
 
   return out;
 }
