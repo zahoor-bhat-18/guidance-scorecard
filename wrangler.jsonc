@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "guidance-scorecard",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-01",
+
+  // Never let a deploy delete a secret or variable set in the dashboard.
+  // Without this, wrangler reconciles the Worker against this file and removes
+  // whatever it does not find here - which is how the old project lost its
+  // API key on a deploy that was only meant to add a domain.
+  "keep_vars": true,
+
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
+
+  // Not sensitive, so it lives here where a deploy cannot remove it. SEC
+  // refuses any request without a real name and address.
+  "vars": {
+    "SEC_USER_AGENT": "Zahoor Bhat zahoorbhatdotcom@gmail.com"
+  },
+
+  // One shared store. A filing read once is replayed everywhere, so two
+  // devices always see the same figures.
+  "kv_namespaces": [
+    { "binding": "CACHE", "id": "PASTE_YOUR_KV_NAMESPACE_ID_HERE" }
+  ],
+
+  "observability": { "enabled": true }
+}
