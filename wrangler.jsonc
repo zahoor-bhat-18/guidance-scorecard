@@ -24,7 +24,7 @@
   // One shared store. A filing read once is replayed everywhere, so two
   // devices always see the same figures.
   "kv_namespaces": [
-    { "binding": "CACHE", "id": "PASTE_YOUR_KV_NAMESPACE_ID_HERE" }
+    { "binding": "CACHE", "id": "ae1f3bc993714a41973b9fd4492ff641" }
   ],
 
   "observability": { "enabled": true }
