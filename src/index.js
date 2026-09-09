@@ -4,16 +4,22 @@
  * Static files in ./public are served by Cloudflare directly. Only the routes
  * below reach this code.
  *
- * /api/facts?ticker=M   every XBRL fact this tool can use, for one company
- * /sec?url=...          host-locked EDGAR proxy, for the browser
+ * /api/facts?ticker=M       every XBRL fact this tool can use, for one company
+ * /api/releases?ticker=M    the earnings 8-Ks, newest first, no model called
+ * /api/guidance?ticker=M    guidance read out of ONE release
+ * /sec?url=...              host-locked EDGAR proxy, for the browser
  *
- * Nothing here reads a filing or calls a model yet. That is deliberate: the
- * XBRL half has to be proven to line up with how companies label their own
- * quarters before anything is built on top of it.
+ * /api/guidance reads the most recent release by default. Pass &accession= to
+ * read an older one - which is how the eight-quarter history gets checked by
+ * hand before anything automates it.
+ *
+ * Nothing is matched, scored or stored yet. Extraction has to be shown to work
+ * on one release before a pipeline is built on top of it.
  */
 
 import { proxy, json } from "./sec.js";
 import { factsFor, resolveCik } from "./xbrl.js";
+import { earningsReleases, guidanceFrom } from "./guidance.js";
 
 export default {
   async fetch(request, env, ctx) {
@@ -53,6 +59,42 @@ export default {
           ),
           facts: byMetric,
         });
+      } catch (e) {
+        return json({ error: e.message }, 502);
+      }
+    }
+
+    // The release list on its own, so the 8-K filter can be checked without
+    // spending a model call. If this returns the wrong filings, nothing built
+    // on top of it can be right.
+    if (url.pathname === "/api/releases") {
+      const ticker = url.searchParams.get("ticker");
+      if (!ticker) return json({ error: "Add ?ticker=M" }, 400);
+      try {
+        const { cik, name } = await resolveCik(env, ticker);
+        const releases = await earningsReleases(env, cik, 12);
+        return json({ ticker: ticker.toUpperCase(), company: name, cik, count: releases.length, releases });
+      } catch (e) {
+        return json({ error: e.message }, 502);
+      }
+    }
+
+    if (url.pathname === "/api/guidance") {
+      const ticker = url.searchParams.get("ticker");
+      const wanted = url.searchParams.get("accession");
+      if (!ticker) return json({ error: "Add ?ticker=M" }, 400);
+      try {
+        const { cik, name } = await resolveCik(env, ticker);
+        const releases = await earningsReleases(env, cik, 12);
+        if (!releases.length) throw new Error("No 8-K carrying item 2.02 found for " + ticker + ".");
+
+        const release = wanted
+          ? releases.find((r) => r.accession === wanted)
+          : releases[0];
+        if (!release) throw new Error("Accession " + wanted + " is not among the recent earnings releases.");
+
+        const result = await guidanceFrom(env, cik, release);
+        return json({ ticker: ticker.toUpperCase(), company: name, cik, ...result });
       } catch (e) {
         return json({ error: e.message }, 502);
       }
