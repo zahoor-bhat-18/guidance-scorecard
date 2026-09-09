@@ -241,9 +241,55 @@ export async function factsFor(env, cik) {
     };
   }
 
-  // Carried out so the caller can show its working, and so a period that looks
-  // wrong can be traced to the convention rather than to the data.
-  out._meta = {
+  // Fourth quarter, by subtraction.
+  //
+  // Companies do not tag Q4. The 10-K reports the full year and Q4 is left
+  // implied, so a company guiding Q4 revenue has nothing to match against.
+  // The four figures are all filed, so the answer is exact arithmetic rather
+  // than an estimate: the year less the three quarters.
+  //
+  // Only for measures that add up across a year. Earnings per share does not
+  // - the share count moves - and a tax rate certainly does not.
+  const ADDITIVE = ["revenue", "operating_income", "net_income", "capex", "operating_cash_flow"];
+  for (const metric of ADDITIVE) {
+    for (const key of Object.keys(out)) {
+      if (!key.startsWith(metric + "|") || !key.endsWith("FY")) continue;
+      const year = key.split("|")[1].replace("FY", "");
+      const q = [1, 2, 3].map((n) => out[`${metric}|${year}Q${n}`]);
+      if (q.some((x) => !x)) continue;
+      const fy = out[key];
+      const q4key = `${metric}|${year}Q4`;
+      if (out[q4key]) continue;
+      out[q4key] = {
+        metric, period: `${year}Q4`,
+        value: fy.value - q.reduce((n, x) => n + x.value, 0),
+        unit: fy.unit,
+        concept: fy.concept,
+        form: fy.form, end: fy.end, filed: fy.filed, accession: fy.accession,
+        derived: "full year less Q1, Q2 and Q3",
+      };
+    }
+  }
+
+  // Free cash flow again, so a derived Q4 gets one too.
+  for (const key of Object.keys(out)) {
+    if (!key.startsWith("operating_cash_flow|")) continue;
+    const period = key.split("|")[1];
+    if (out["fcf|" + period]) continue;
+    const ocf = out[key], capex = out["capex|" + period];
+    if (!capex) continue;
+    out["fcf|" + period] = {
+      metric: "fcf", period,
+      value: ocf.value - Math.abs(capex.value),
+      unit: ocf.unit, concept: ocf.concept + " less " + capex.concept,
+      form: ocf.form, end: ocf.end, filed: ocf.filed, accession: ocf.accession,
+      derived: "operating cash flow less capital expenditure",
+    };
+  }
+
+  // Kept OUT of the facts map. It lived inside it and the caller, grouping by
+  // rec.metric, produced a metric called "undefined" with one entry.
+  const meta = {
     fiscalYearEnd: String(fye.month).padStart(2, "0") + "/" + String(fye.day).padStart(2, "0"),
     labelConvention: labelOffset === 1
       ? "fiscal year is labelled by the year it STARTS in"
@@ -251,7 +297,7 @@ export async function factsFor(env, cik) {
     conventionFrom: convention.source,
   };
 
-  return out;
+  return { facts: out, meta };
 }
 
 /** Ticker to CIK, from SEC's own list. */
