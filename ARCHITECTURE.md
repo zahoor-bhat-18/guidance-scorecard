@@ -146,44 +146,73 @@ This is a guess until measured.
 
 ---
 
-## Full-year guides
+## Scoring
+
+### Ranges
+
+No midpoint. A midpoint is a number management never gave, and beating it is
+not an event that happened.
+
+An outcome is reported by its position against the guided range — **above**,
+**within**, or **below** — with the delta to each end shown. Everything stated
+is something the company actually said.
+
+### Point guides
+
+Some guides carry no range. Broadcom guided fourth-quarter revenue at
+approximately $34.8 billion.
+
+These are reported as a delta with **no beat or miss label**. Inventing a
+tolerance band around someone else's "approximately" is a judgement the tool
+has no standing to make, and it is an argument with an analyst that cannot be
+won.
+
+### Full-year guides
 
 A full-year guide is not one number, it is a path. It is issued, then revised
-across the year, then settled by the annual actual. The record shows the
-revisions in sequence and the final outcome. The revision path is the finding.
+across the year, then settled by the annual actual.
+
+The record shows two things:
+
+1. The **revision path** — raised, cut, or unchanged, in sequence across the
+   year.
+2. The **outcome against the most recent guide** — what they last told the
+   market, and where they landed against it.
+
+**The delta against the ORIGINAL guide is also computed and stored**, even
+though the email leads with the latest. Without it, these two companies are
+indistinguishable:
+
+- guided $9.00–9.50, held it all year, delivered $9.20
+- guided $9.00–9.50, cut twice, delivered $8.15 against a final $8.00–8.20
+
+Both land within their most recent guide. The revision path exposes the
+difference, but only to a reader who looks. Stored as a field, it can be led
+with later or used to sort a universe. It costs nothing now and is expensive
+to backfill.
 
 ---
 
 ## Open questions
 
-1. **Which guide is scored?** A quarterly guide has one answer. A full-year
-   guide has up to four. Scoring against the first measures forecasting;
-   against the last measures very little. Current thinking is to score the
-   full-year outcome against the ORIGINAL guide, and show the revisions
-   separately as the path — but this is not settled.
-
-2. **Growth-rate and percentage-of-sales guides.** Walmart guides constant
+1. **Growth-rate and percentage-of-sales guides.** Walmart guides constant
    currency; Honeywell guides organic. The XBRL base can turn a growth rate
    into a level, but constant currency and organic are not the same as
    reported, so the comparison is not clean. Possibly recorded as events
    without scores in v1.
 
-3. **Comparable sales.** Pervasive in retail, absent from XBRL entirely, and
+2. **Comparable sales.** Pervasive in retail, absent from XBRL entirely, and
    only in the release. If non-GAAP actuals come from the release anyway, this
    may be scoreable after all. Worth testing before excluding.
 
-4. **Multiple releases per period.** Macy's filed two item-2.02 8-Ks for one
+3. **Multiple releases per period.** Macy's filed two item-2.02 8-Ks for one
    quarter (25 Nov and 11 Dec 2024) during its accounting investigation.
    Releases need deduping to one per period, and the rule for which one wins
    is not decided.
 
-5. **Universe.** Should be chosen by what is actually scoreable, not by market
+4. **Universe.** Should be chosen by what is actually scoreable, not by market
    cap. That means running extraction across candidates and measuring, not
    picking names first.
-
-6. **Beat / met / missed thresholds.** Delivering at the bottom of a guided
-   range is not a beat and is not a miss. Where the boundaries sit, and
-   whether "met" is a band or a point, is undecided.
 
 ---
 
@@ -213,7 +242,8 @@ Found in the six-company test. None are blocking; all need handling.
 2. The revenue cross-check against XBRL.
 3. Metric normalisation and derivative-guide suppression.
 4. The matcher: pair a guide to its actual, deterministically.
-5. Scoring, once thresholds are decided.
+5. Scoring — position against the range, delta to each end, delta to the
+   original guide stored alongside.
 6. Release deduping per period.
 7. Coverage measurement across candidate companies. Universe chosen from the
    result.
