@@ -29,7 +29,7 @@ export default {
       if (!ticker) return json({ error: "Add ?ticker=M" }, 400);
       try {
         const { cik, name } = await resolveCik(env, ticker);
-        const facts = await factsFor(env, cik);
+        const { facts, meta } = await factsFor(env, cik);
 
         // Grouped by metric and sorted newest first, because the question this
         // answers is "did the periods line up", and a flat list of 400 facts
@@ -46,6 +46,7 @@ export default {
           ticker: ticker.toUpperCase(),
           company: name,
           cik,
+          meta,
           metrics: Object.keys(byMetric).sort(),
           counts: Object.fromEntries(
             Object.entries(byMetric).map(([k, v]) => [k, v.length])
