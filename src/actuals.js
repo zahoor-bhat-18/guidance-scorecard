@@ -73,6 +73,43 @@ function htmlToText(html) {
 /* --- end copies --- */
 
 /**
+ * Is this guide a level, or a change?
+ *
+ * The distinction the first version of this file lost, at real cost. Walmart
+ * guided net sales to "increase 4.0% to 5.0%" and the answer came back as
+ * 184,574 - a dollar figure, from a table row printing the quarter and the
+ * year to date side by side. Both the kind of number and the column were
+ * wrong, and the reason is that the model was told the metric name and the
+ * basis and nothing about what sort of answer the question had.
+ *
+ * A guide expressed as a change can only be answered by a change. There is no
+ * conversion available here: constant-currency growth cannot be recovered from
+ * a reported level, and a percentage of revenue is not a revenue figure.
+ */
+function expectedAnswer(shape, unit) {
+  const isChange = shape === "growth_range" || shape === "growth_point";
+  if (isChange) {
+    return {
+      kind: "change",
+      unit: "percent",
+      describe: "a percentage CHANGE versus the prior year, not a dollar or share figure",
+    };
+  }
+  if (unit === "percent") {
+    return {
+      kind: "ratio",
+      unit: "percent",
+      describe: "a percentage - a margin, rate or percentage of revenue, not an absolute figure",
+    };
+  }
+  return {
+    kind: "level",
+    unit: unit || "other",
+    describe: "an absolute figure reported in " + (unit || "the unit the release uses"),
+  };
+}
+
+/**
  * What to look for, built from the guides in the previous release.
  *
  * Deduplicated on how the company writes the metric, not on the internal
@@ -101,6 +138,8 @@ export function requestsFrom(guides) {
       metric_as_written: written,
       basis: g.basis || "unclear",
       unit: g.unit || "other",
+      shape: g.shape || "point",
+      expect: expectedAnswer(g.shape, g.unit),
     });
   }
   return out;
@@ -114,18 +153,30 @@ export function requestsFrom(guides) {
  * neighbouring sentences, and reading a forecast as a result would have the
  * product tell a subscriber a company missed a number it has not yet reported.
  *
+ * The second instruction, added after the Walmart failure, is that each metric
+ * comes with the kind of answer it takes. A guide stated as a percentage
+ * increase is not answered by a dollar figure, and a model that produces one
+ * anyway has not found the actual - it has found a different number that
+ * happens to sit near the right label.
+ *
  * Nothing checkable is asked for. The period is taken verbatim and resolved in
  * code against the fiscal-label logic already built and verified in xbrl.js.
  */
 const SYSTEM = [
   "You read one company earnings press release and report ACTUAL REPORTED RESULTS.",
   "",
-  "You are given a list of metrics. For each one, find the figure this release",
-  "reports for the period that has just ENDED.",
+  "You are given a list of metrics. Each one carries an EXPECTS field saying what",
+  "kind of number answers it. For each metric, find the figure this release reports",
+  "for the period that has just ENDED.",
   "",
   "A result is a figure for a completed period. A forecast, outlook, guidance or",
   "expectation is NOT a result. Never report one. If a metric appears only as a",
   "forecast, return it with value null.",
+  "",
+  "The EXPECTS field is binding. If it asks for a percentage change and the release",
+  "reports only an absolute figure, return null - do NOT return the absolute figure.",
+  "If it asks for an absolute figure and only a percentage is reported, return null.",
+  "A number of the wrong kind is not the actual, however close its label sits.",
   "",
   "Match on meaning, not on wording. 'Net sales' and 'total revenue' may be the",
   "same figure. 'Adjusted diluted EPS' and 'adjusted earnings per share' are the",
@@ -151,7 +202,8 @@ const SYSTEM = [
   "Numbers exactly as written: $4.6 billion is value 4.6 with unit USD billions,",
   "not 4600. A percentage is the number without the sign: 23.5.",
   "",
-  "If a metric is genuinely absent, value null, found_as null, quote null.",
+  "If a metric is genuinely absent, or only the wrong kind of number is reported,",
+  "value null, found_as null, quote null.",
 ].join("\n");
 
 async function callModel(env, requests, text) {
@@ -162,7 +214,9 @@ async function callModel(env, requests, text) {
     JSON.stringify(requests.map((r) => ({
       metric_as_written: r.metric_as_written,
       basis: r.basis,
-    }))),
+      expects: r.expect.describe,
+      expects_unit: r.expect.unit,
+    })), null, 1),
     "",
     "RELEASE:",
     text,
@@ -211,6 +265,12 @@ async function callModel(env, requests, text) {
  * and a row reporting nothing must not look the same: the first is the model
  * ignoring an instruction, the second is a fact about the release.
  *
+ * The expected unit is checked here as well as asked for in the prompt. An
+ * instruction is a request; a check is a fact. Mismatches are reported rather
+ * than dropped, because a mismatch is usually the model finding a real number
+ * of the wrong kind, and seeing which number it found is how the next fix gets
+ * written.
+ *
  * Fails loudly on a failed call, for the same reason guidance.js does.
  */
 export async function actualsFrom(env, cik, release, requests) {
@@ -240,15 +300,28 @@ export async function actualsFrom(env, cik, release, requests) {
 
   const actuals = requests.map((req, i) => {
     const row = byName.get(req.metric_as_written.toLowerCase()) || rows[i] || {};
+    const value = typeof row.value === "number" ? row.value : null;
+    const unit = row.unit || null;
+
+    // A percentage answer to a percentage question is the same kind of number
+    // even when one says "percent" and the other says "percent change"; a
+    // dollar answer to a percentage question is not.
+    const wantedPercent = req.expect.unit === "percent";
+    const gotPercent = unit === "percent";
+    const unitMismatch = value !== null && Boolean(unit) && wantedPercent !== gotPercent;
+
     return {
       metric: req.metric,
       metric_as_written: req.metric_as_written,
       basis: req.basis,
+      guided_shape: req.shape,
       guided_unit: req.unit,
+      expected: req.expect.describe,
       found_as: row.found_as ?? null,
       period_text: row.period_text ?? null,
-      value: typeof row.value === "number" ? row.value : null,
-      unit: row.unit || null,
+      value,
+      unit,
+      unit_mismatch: unitMismatch,
       quote: row.quote ?? null,
     };
   });
@@ -266,6 +339,7 @@ export async function actualsFrom(env, cik, release, requests) {
     },
     requested: requests.length,
     found: actuals.filter((a) => a.value !== null).length,
+    unitMismatches: actuals.filter((a) => a.unit_mismatch).length,
     actuals,
   };
 }
