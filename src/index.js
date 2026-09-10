@@ -7,23 +7,58 @@
  * /api/facts?ticker=M       every XBRL fact this tool can use, for one company
  * /api/releases?ticker=M    the earnings 8-Ks, newest first, no model called
  * /api/guidance?ticker=M    guidance read out of ONE release
- * /api/actuals?ticker=M     the pairing: guides from the PREVIOUS release, and
- *                           the figures this release reports against them
+ * /api/actuals?ticker=M     guides from the PREVIOUS release, and the figures
+ *                           this release reports against them
+ * /api/period?ticker=M      the period normaliser, run over the phrasings this
+ *                           product has actually met. No model, no cost.
  * /sec?url=...              host-locked EDGAR proxy, for the browser
- *
- * /api/actuals is the shape the product runs on. A release carries the result
- * for the period ending and the guide for the period starting, so scoring one
- * release against the one before it needs nothing else - which is what lets
- * the email go out when the 8-K lands rather than weeks later when the 10-Q
- * is filed.
  *
  * Nothing is matched, scored or stored yet.
  */
 
 import { proxy, json } from "./sec.js";
-import { factsFor, resolveCik } from "./xbrl.js";
+import { factsFor, resolveCik, companyCalendar } from "./xbrl.js";
 import { earningsReleases, guidanceFrom } from "./guidance.js";
 import { requestsFrom, actualsFrom } from "./actuals.js";
+import { resolvePeriod } from "./period.js";
+
+/**
+ * The period phrasings seen so far, kept as a fixture.
+ *
+ * Every one of these is real - copied from output this product has already
+ * produced for Macy's, Broadcom, Walmart, Delta, United and Honeywell. Keeping
+ * them here means the normaliser can be re-checked against the whole set after
+ * any change, in one request, without spending a model call.
+ *
+ * direction matters: an actual reports a period that has ended, a guide
+ * describes one that has not, and the same words resolve differently.
+ */
+const PERIOD_FIXTURES = [
+  // From guidance - forward looking.
+  { text: "full year 2026", direction: "future" },
+  { text: "Fiscal 2026", direction: "future" },
+  { text: "full-year 2026", direction: "future" },
+  { text: "FY 2026", direction: "future" },
+  { text: "FY27", direction: "future" },
+  { text: "Q3 FY27", direction: "future" },
+  { text: "3Q26", direction: "future" },
+  { text: "fourth quarter of fiscal year 2026", direction: "future" },
+  { text: "third quarter", direction: "future" },
+  { text: "full year", direction: "future" },
+
+  // From actuals - backward looking.
+  { text: "13 Weeks Ended May 2, 2026", direction: "past" },
+  { text: "first quarter 2026", direction: "past" },
+  { text: "three months ended June 30, 2026", direction: "past" },
+  { text: "second quarter", direction: "past" },
+
+  // Should all decline, and say why.
+  { text: "26 Weeks Ended August 1, 2026", direction: "past" },
+  { text: "six months ended June 30, 2026", direction: "past" },
+  { text: "second half", direction: "future" },
+  { text: "May 2, 2026", direction: "past" },
+  { text: "$21.5 billion to $21.75 billion", direction: "future" },
+];
 
 export default {
   async fetch(request, env, ctx) {
@@ -179,6 +214,70 @@ export default {
           prior: priorGuidance.release,
           guides: priorGuidance.guides,
           ...result,
+        });
+      } catch (e) {
+        return json({ error: e.message }, 502);
+      }
+    }
+
+    /**
+     * The period normaliser, on its own.
+     *
+     * Deterministic, so it can be checked exhaustively and for nothing. Every
+     * fixture is a phrasing this product has already met in a real release,
+     * and each answer says HOW it was reached - because a period that is right
+     * for the wrong reason will be wrong on the next company.
+     *
+     * ?ticker= supplies the fiscal calendar; the labels are only meaningful
+     * against a company. ?text= checks one string instead of the fixtures, and
+     * ?direction=past|future says whether to read it as an actual or a guide.
+     */
+    if (url.pathname === "/api/period") {
+      const ticker = url.searchParams.get("ticker");
+      const text = url.searchParams.get("text");
+      const direction = url.searchParams.get("direction") || "past";
+      const asOf = url.searchParams.get("asof");
+      if (!ticker) return json({ error: "Add ?ticker=M" }, 400);
+
+      try {
+        const { cik, name } = await resolveCik(env, ticker);
+        const cal = await companyCalendar(env, cik);
+
+        // Anchored on a real filing date by default, so "third quarter" with no
+        // year resolves the way it would in production.
+        let referenceDate = asOf;
+        if (!referenceDate) {
+          const releases = await earningsReleases(env, cik, 1);
+          referenceDate = releases.length ? releases[0].filed : null;
+        }
+
+        const cases = text
+          ? [{ text, direction }]
+          : PERIOD_FIXTURES;
+
+        const results = cases.map((c) => {
+          const r = resolvePeriod(c.text, cal, {
+            referenceDate,
+            direction: c.direction,
+          });
+          return {
+            text: c.text,
+            direction: c.direction,
+            period: r.period,
+            how: r.how || null,
+            why: r.why || null,
+          };
+        });
+
+        return json({
+          ticker: ticker.toUpperCase(),
+          company: name,
+          cik,
+          calendar: cal.meta,
+          referenceDate,
+          resolved: results.filter((r) => r.period).length,
+          declined: results.filter((r) => !r.period).length,
+          results,
         });
       } catch (e) {
         return json({ error: e.message }, 502);
