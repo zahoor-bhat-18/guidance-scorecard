@@ -109,6 +109,117 @@ function htmlToText(html) {
     .trim();
 }
 
+/* ------------------------------------------------------------------ *
+ * The quote guard
+ * ------------------------------------------------------------------ */
+
+/**
+ * Every number appearing in a quote.
+ *
+ * Written after Delta's non-fuel unit cost guide came back as 6 percent from
+ * this sentence:
+ *
+ *   "we expect non-fuel unit costs to grow at a rate similar to the March
+ *    quarter, reflecting the impact of our capacity actions"
+ *
+ * There is no 6 in it. The number was invented, and it was then compared
+ * against a real 6.8% actual to produce a near-miss out of nothing. Nobody
+ * reading the row would have doubted it.
+ *
+ * A prompt instruction would not fix this reliably. A check does: a guide is
+ * only allowed to carry numbers that appear in the sentence it came from.
+ *
+ * Parenthesised figures are recorded as both signs. "(0.5%) to 0.5%" is a
+ * range from minus a half to plus a half, and a model may report either sign
+ * for the first one.
+ */
+function quoteNumbers(quote) {
+  const found = new Set();
+  if (!quote) return found;
+
+  const text = String(quote);
+  const re = /(\()?\s*\$?\s*(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const n = parseFloat(m[2].replace(/,/g, ""));
+    if (!Number.isFinite(n)) continue;
+    found.add(n);
+    if (m[1]) found.add(-n);   // "(0.5%)" is minus a half
+    // A company writing "$200M" and a model reporting 200 agree; a company
+    // writing "21,764" and a model reporting 21764 agree. Both are covered by
+    // stripping commas and comparing as written.
+  }
+  return found;
+}
+
+/* Numbers agree when they are the same number. The tolerance is for
+   representation only - 2 against 2.00, 6 against 6.0 - not for closeness. A
+   guide of 7.7 is NOT supported by a 7.8 in the quote. */
+function present(value, pool) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return true;  // nothing to check
+  for (const n of pool) {
+    if (Math.abs(n - value) <= 0.0005) return true;
+  }
+  return false;
+}
+
+/**
+ * A guide, checked against its own quote.
+ *
+ * If any stated number is absent from the quote, ALL of them are dropped and
+ * the guide becomes qualitative. That is deliberately strict, and it is a
+ * judgement worth knowing about:
+ *
+ * United guided capacity "flat to up approximately 2%". A model reports that
+ * as a range from 0 to 2. The 2 is in the sentence; the 0 is an inference from
+ * the word "flat" - a good inference, but not a number the company printed.
+ * Under this rule the whole range is dropped and the guide is kept as an
+ * event with no score.
+ *
+ * The alternative is to keep the supported half, which turns a range into a
+ * one-sided guide and changes what it means. A guide that cannot be scored is
+ * a small loss. A guide scored against a number nobody wrote is the loss that
+ * ends the product.
+ *
+ * Nothing is deleted. The original numbers and the reason are both reported,
+ * so a rule that turns out to be too strict can be loosened by looking at
+ * what it caught.
+ */
+function guardGuide(g) {
+  const pool = quoteNumbers(g.quote);
+  const stated = [];
+  if (typeof g.low === "number") stated.push(["low", g.low]);
+  if (typeof g.high === "number") stated.push(["high", g.high]);
+  if (typeof g.value === "number") stated.push(["value", g.value]);
+
+  if (!stated.length) {
+    return { ...g, numbers_verified: true };
+  }
+
+  const unsupported = stated.filter(([, v]) => !present(v, pool)).map(([k, v]) => k + "=" + v);
+  if (!unsupported.length) {
+    return { ...g, numbers_verified: true };
+  }
+
+  return {
+    ...g,
+    shape: "qualitative",
+    low: null,
+    high: null,
+    value: null,
+    numbers_verified: false,
+    unsupported_numbers: unsupported,
+    reported_numbers: {
+      low: g.low ?? null,
+      high: g.high ?? null,
+      value: g.value ?? null,
+    },
+    guard_note:
+      "Dropped: " + unsupported.join(", ") + " does not appear in the quoted sentence, "
+      + "so no number from this guide is trusted. Kept as a guidance event with no score.",
+  };
+}
+
 /**
  * The prompt.
  *
@@ -118,8 +229,8 @@ function htmlToText(html) {
  * what a guide is, what GAAP means, and that a number already reported is not
  * a forecast.
  *
- * Everything checkable - period arithmetic, unit conversion, whether a metric
- * has an XBRL equivalent - is left out and done downstream.
+ * Everything checkable - period arithmetic, unit conversion, whether the
+ * numbers are actually in the sentence - is left out and done downstream.
  */
 const SYSTEM = [
   "You read one company earnings press release and report only FORWARD-LOOKING GUIDANCE.",
@@ -149,6 +260,10 @@ const SYSTEM = [
   "low and high for a range. value for everything else. All three null for",
   "reaffirmed and withdrawn. Numbers as written: 4.6 billion is low 4.6 with",
   "unit USD billions, not 4600.",
+  "",
+  "The quote must contain the numbers you report. If a guide is stated in words",
+  "with no figure - 'up mid-teens', 'similar to last quarter' - report it with all",
+  "three numbers null. Never supply a figure the sentence does not contain.",
   "",
   "If the release gives no guidance at all, return {\"guides\":[]}.",
 ].join("\n");
@@ -216,7 +331,8 @@ export async function guidanceFrom(env, cik, release) {
   const truncated = full.length > MAX_CHARS;
   const text = truncated ? full.slice(0, MAX_CHARS) : full;
 
-  const guides = await callModel(env, text);
+  const raw = await callModel(env, text);
+  const guides = raw.map(guardGuide);
 
   return {
     release: {
@@ -229,6 +345,7 @@ export async function guidanceFrom(env, cik, release) {
       textChars: full.length,
       truncated,
     },
+    guarded: guides.filter((g) => g.numbers_verified === false).length,
     guides,
   };
 }
