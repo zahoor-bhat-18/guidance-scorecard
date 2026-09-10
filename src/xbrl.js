@@ -107,6 +107,39 @@ function learnLabelOffset(dei, fye) {
   return { offset: fye.month <= 6 ? 1 : 0, source: "assumed from the year end month" };
 }
 
+/**
+ * The company's calendar, on its own.
+ *
+ * ADDED, and additive only: nothing below is changed. The period normaliser
+ * needs the same two facts every fact here is labelled with - where the
+ * fiscal year ends, and whether the company names a year by its start or its
+ * end - and it has to get them from the same place, or a guide and an actual
+ * for the same period end up with different labels and never match.
+ *
+ * It refetches companyfacts rather than threading the values out of
+ * factsFor(). EDGAR is cached for a day, so the second request is nearly free,
+ * and factsFor() is proven and left alone.
+ */
+export async function companyCalendar(env, cik) {
+  const url = "https://data.sec.gov/api/xbrl/companyfacts/CIK" + cik + ".json";
+  const [doc, fye] = await Promise.all([secJson(env, url), fiscalYearEnd(env, cik)]);
+  const dei = (doc.facts && doc.facts.dei) || {};
+  const convention = learnLabelOffset(dei, fye);
+
+  return {
+    fye: { month: fye.month, day: fye.day },
+    labelOffset: convention.offset,
+    meta: {
+      fiscalYearEnd:
+        String(fye.month).padStart(2, "0") + "/" + String(fye.day).padStart(2, "0"),
+      labelConvention: convention.offset === 1
+        ? "fiscal year is labelled by the year it STARTS in"
+        : "fiscal year is labelled by the year it ENDS in",
+      conventionFrom: convention.source,
+    },
+  };
+}
+
 /* Ordered fallbacks per metric. First match wins, so the most specific and
    most modern tag goes first. These lists grow as filers are tested - that is
    expected, and each addition should be recorded against the company that
