@@ -112,19 +112,34 @@ function expectedAnswer(shape, unit) {
 /**
  * What to look for, built from the guides in the previous release.
  *
+ * A guide with no number is not a request. There is nothing to score it
+ * against, so looking for its actual spends a lookup to learn nothing.
+ *
+ * The test is the numbers themselves rather than the shape, which covers four
+ * cases at once and cannot fall out of step with a shape added later:
+ *
+ *   reaffirmed  - the shape carries no figures
+ *   withdrawn   - there is no guide any more
+ *   qualitative - "up low-teens", or a figure the quote guard rejected
+ *   anything else that arrived empty
+ *
+ * Delta's "Total Revenue YoY - up low-teens" went looking for an actual under
+ * the old rule, found a real 19%, and had nothing to compare it to.
+ *
  * Deduplicated on how the company writes the metric, not on the internal
  * name, because a company that guided a quarter and a year for the same
  * measure wrote it once and means one thing.
- *
- * Reaffirmations and withdrawals carry no number and are dropped: there is
- * nothing to find an actual for.
  */
 export function requestsFrom(guides) {
   const seen = new Set();
   const out = [];
 
   for (const g of guides || []) {
-    if (g.shape === "reaffirmed" || g.shape === "withdrawn") continue;
+    const hasNumber =
+      typeof g.low === "number" ||
+      typeof g.high === "number" ||
+      typeof g.value === "number";
+    if (!hasNumber) continue;
 
     const written = String(g.metric_as_written || "").trim();
     if (!written) continue;
