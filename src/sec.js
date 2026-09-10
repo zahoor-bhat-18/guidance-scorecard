@@ -71,6 +71,90 @@ export async function secJson(env, url) {
   return r.json();
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Server-side fetch of an EDGAR HTML document.
+ *
+ * Written after a Delta exhibit that had been read successfully minutes
+ * earlier started returning 403 and kept returning it. Two candidates - SEC
+ * throttling, or a 403 stored in the edge cache for a day - and no way to tell
+ * them apart, because the old code threw the status and discarded the body.
+ *
+ * SEC says which it is. A throttled request comes back with a page explaining
+ * the request-rate threshold; a rejected one explains that the tool is
+ * undeclared. That explanation was arriving on every failure and being thrown
+ * away, and two rounds were spent guessing at something the server had already
+ * answered.
+ *
+ * So: keep the first part of the body, and put it in the error.
+ *
+ * The retry exists for the other half of the problem. The first attempt may be
+ * served from cache, and a cached failure does not improve with waiting - in
+ * production it would take a company offline for a day. Later attempts bypass
+ * the cache, so a stored 403 is stepped over rather than waited out, and the
+ * error says whether the bypass was tried. Slow retries, because the most
+ * likely cause of a 403 is asking too often.
+ *
+ * Nothing here hides a failure. Every path either returns the document or
+ * throws with what EDGAR said.
+ */
+export async function fetchDoc(env, url) {
+  if (!env.SEC_USER_AGENT) throw new Error("SEC_USER_AGENT is not set on the Worker.");
+
+  const name = url.split("/").pop();
+  let last = null;
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const bypass = attempt > 0;
+
+    let res;
+    try {
+      res = await fetch(url, {
+        headers: { "User-Agent": env.SEC_USER_AGENT, Accept: "text/html, */*" },
+        // First attempt takes the cache. Later ones deliberately do not, so a
+        // stored failure cannot repeat itself.
+        cf: bypass ? { cacheTtl: 0, cacheEverything: false } : { cacheTtl: 86400 },
+      });
+    } catch (e) {
+      last = new Error("Could not reach EDGAR for " + name + ": " + e.message);
+      await sleep(500 * (attempt + 1));
+      continue;
+    }
+
+    if (res.ok) return await res.text();
+
+    // What EDGAR actually said, tags stripped, first 300 characters.
+    let explain = "";
+    try {
+      explain = (await res.text())
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 300);
+    } catch {
+      explain = "(no body)";
+    }
+
+    last = new Error(
+      "EDGAR " + res.status + " for " + name
+      + (bypass ? " [cache bypassed]" : " [cache allowed]")
+      + ": " + (explain || "(empty body)")
+    );
+
+    // A missing document will not appear by asking again. Throttling and
+    // server errors might.
+    const worthRetrying = res.status === 403 || res.status === 429 || res.status >= 500;
+    if (!worthRetrying) throw last;
+
+    await sleep(600 * (attempt + 1));
+  }
+
+  throw last;
+}
+
 export function json(obj, status) {
   return new Response(JSON.stringify(obj, null, 2), {
     status: status || 200,
