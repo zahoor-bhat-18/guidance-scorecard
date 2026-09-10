@@ -11,6 +11,7 @@
  *                           this release reports against them
  * /api/period?ticker=M      the period normaliser, run over the phrasings this
  *                           product has actually met. No model, no cost.
+ * /api/text?ticker=M        the release as the extractor sees it. No model.
  * /sec?url=...              host-locked EDGAR proxy, for the browser
  *
  * Nothing is matched, scored or stored yet.
@@ -21,6 +22,7 @@ import { factsFor, resolveCik, companyCalendar } from "./xbrl.js";
 import { earningsReleases, guidanceFrom } from "./guidance.js";
 import { requestsFrom, actualsFrom } from "./actuals.js";
 import { resolvePeriod } from "./period.js";
+import { releaseText } from "./text.js";
 
 /**
  * The period phrasings seen so far, kept as a fixture.
@@ -278,6 +280,54 @@ export default {
           resolved: results.filter((r) => r.period).length,
           declined: results.filter((r) => !r.period).length,
           results,
+        });
+      } catch (e) {
+        return json({ error: e.message }, 502);
+      }
+    }
+
+    /**
+     * The release, as the extractor sees it.
+     *
+     * No model, no cost. Same fetch, same stripping, same truncation point, so
+     * what this shows is what the model was given - which is the only way to
+     * tell a company that did not guide from a document we failed to read.
+     *
+     * ?grep=expect        lines containing a word, case-insensitive
+     * ?from=1&to=80       a range of lines when not grepping
+     * ?accession=         a specific release; defaults to the most recent
+     *
+     * Written after a Delta guide reported a number that appears nowhere in
+     * the sentence it quoted, and the only way to be certain was to read the
+     * filing by hand.
+     */
+    if (url.pathname === "/api/text") {
+      const ticker = url.searchParams.get("ticker");
+      const wanted = url.searchParams.get("accession");
+      if (!ticker) return json({ error: "Add ?ticker=M" }, 400);
+
+      try {
+        const { cik, name } = await resolveCik(env, ticker);
+        const releases = await earningsReleases(env, cik, 12);
+        if (!releases.length) throw new Error("No 8-K carrying item 2.02 found for " + ticker + ".");
+
+        const release = wanted
+          ? releases.find((r) => r.accession === wanted)
+          : releases[0];
+        if (!release) throw new Error("Accession " + wanted + " is not among the recent earnings releases.");
+
+        const result = await releaseText(env, cik, release.accession, {
+          grep: url.searchParams.get("grep"),
+          from: url.searchParams.get("from"),
+          to: url.searchParams.get("to"),
+        });
+
+        return json({
+          ticker: ticker.toUpperCase(),
+          company: name,
+          cik,
+          release: { accession: release.accession, filed: release.filed, items: release.items },
+          ...result,
         });
       } catch (e) {
         return json({ error: e.message }, 502);
