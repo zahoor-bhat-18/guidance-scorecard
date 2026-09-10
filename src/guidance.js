@@ -15,7 +15,7 @@
  * without re-reading a single filing.
  */
 
-import { secJson } from "./sec.js";
+import { secJson, fetchDoc } from "./sec.js";
 
 const MODEL = "deepseek-chat";
 const ENDPOINT = "https://api.deepseek.com/chat/completions";
@@ -321,13 +321,7 @@ async function callModel(env, text) {
 export async function guidanceFrom(env, cik, release) {
   const exhibit = await pickExhibit(env, cik, release.accession);
 
-  const res = await fetch(exhibit.url, {
-    headers: { "User-Agent": env.SEC_USER_AGENT, Accept: "text/html" },
-    cf: { cacheTtl: 86400, cacheEverything: true },
-  });
-  if (!res.ok) throw new Error("EDGAR " + res.status + " for " + exhibit.file);
-
-  const full = htmlToText(await res.text());
+  const full = htmlToText(await fetchDoc(env, exhibit.url));
   const truncated = full.length > MAX_CHARS;
   const text = truncated ? full.slice(0, MAX_CHARS) : full;
 
