@@ -27,7 +27,7 @@
  * diagnostic would agree with the bug.
  */
 
-import { secJson } from "./sec.js";
+import { secJson, fetchDoc } from "./sec.js";
 
 /* Must match MAX_CHARS in guidance.js and actuals.js. If they drift, this
    reports a truncation point the extractor does not use. */
@@ -87,13 +87,7 @@ export async function releaseText(env, cik, accession, opts) {
   const options = opts || {};
   const exhibit = await pickExhibit(env, cik, accession);
 
-  const res = await fetch(exhibit.url, {
-    headers: { "User-Agent": env.SEC_USER_AGENT, Accept: "text/html" },
-    cf: { cacheTtl: 86400, cacheEverything: true },
-  });
-  if (!res.ok) throw new Error("EDGAR " + res.status + " for " + exhibit.file);
-
-  const full = htmlToText(await res.text());
+  const full = htmlToText(await fetchDoc(env, exhibit.url));
   const lines = full.split("\n");
 
   // Where the extractor's view stops. Anything after this the model never saw,
