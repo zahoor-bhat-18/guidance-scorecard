@@ -10,14 +10,10 @@
  */
 
 import { secJson, fetchDoc } from "./sec.js";
-import { resolvePeriod } from "./period.js";
+import { resolvePeriod, conventionFromText } from "./period.js";
 
 const MODEL = "deepseek-chat";
 const ENDPOINT = "https://api.deepseek.com/chat/completions";
-
-/* How much of the release the model sees. The response reports whether the cut
-   happened, because "no guidance found" and "the guidance was past the cut"
-   look identical otherwise. */
 const MAX_CHARS = 80000;
 
 /* Two filings closer together than this are one event reported twice. A real
@@ -27,21 +23,18 @@ const SAME_EVENT_DAYS = 45;
 /**
  * Earnings releases only.
  *
- * Item 2.02 is "Results of Operations and Financial Condition", and it is on
- * every earnings release and almost nothing else.
+ * Item 2.02 is "Results of Operations and Financial Condition", on every
+ * earnings release and almost nothing else.
  *
  * Almost. Honeywell filed an 8-K carrying items 1.01, 2.01, 2.02, 3.03, 5.02,
  * 5.03, 7.01 and 9.01 three weeks before its actual results - a transaction
  * filing mentioning results in passing. Taking it as the previous release cost
  * a whole quarter, silently, because a company with no guidance looks exactly
- * like one we failed to read.
- *
- * Macy's produced the mirror image: two item-2.02 filings three weeks apart,
- * preliminary results followed by full ones.
+ * like one we failed to read. Macy's produced the mirror image: two item-2.02
+ * filings three weeks apart, preliminary results then full ones.
  *
  * One rule fixes both. Filings within six weeks are one event and the LATER
- * wins - the full results in Macy's case, the real earnings release in
- * Honeywell's. What was dropped is reported, so a wrong merge is visible.
+ * wins. What was dropped is reported, so a wrong merge is visible.
  */
 export async function earningsReleases(env, cik, limit) {
   const subs = await secJson(env, "https://data.sec.gov/submissions/CIK" + cik + ".json");
@@ -82,8 +75,6 @@ export async function earningsReleases(env, cik, limit) {
   return kept;
 }
 
-/* Which exhibit number is this, so 99.1 is read before 99.2? Unnumbered files
-   sort last. */
 function exhibitRank(name) {
   const m = name.match(/(?:^|[^0-9])99(?:[._-]?(\d))?(?:[^0-9]|$)/);
   if (!m) return 999;
@@ -129,6 +120,60 @@ async function collectExhibits(env, cik, accession) {
   };
 }
 
+/* The characters Windows-1252 puts in 0x80-0x9F, which UTF-8 does not.
+   Needed to turn mojibake back into the bytes it came from. */
+const CP1252_HIGH = {
+  "\u20AC": 0x80, "\u201A": 0x82, "\u0192": 0x83, "\u201E": 0x84,
+  "\u2026": 0x85, "\u2020": 0x86, "\u2021": 0x87, "\u02C6": 0x88,
+  "\u2030": 0x89, "\u0160": 0x8A, "\u2039": 0x8B, "\u0152": 0x8C,
+  "\u017D": 0x8E, "\u2018": 0x91, "\u2019": 0x92, "\u201C": 0x93,
+  "\u201D": 0x94, "\u2022": 0x95, "\u2013": 0x96, "\u2014": 0x97,
+  "\u02DC": 0x98, "\u2122": 0x99, "\u0161": 0x9A, "\u203A": 0x9B,
+  "\u0153": 0x9C, "\u017E": 0x9E, "\u0178": 0x9F,
+};
+
+/**
+ * Double-encoded text, put back.
+ *
+ * The symptom is everywhere in these filings: "Macyâ€™s", "(â€œEBITDAâ€)",
+ * "Â¢". It survived being decoded as UTF-8, which is the proof of what it is -
+ * SEC serves bytes that were already mangled before they were encoded, so a
+ * correct decoder faithfully reproduces the mangling.
+ *
+ * Patching the visible sequences one at a time was tried and missed most of
+ * them. This reverses the process instead: map each character back to the
+ * single byte it stands for, then read those bytes as UTF-8 - which is what
+ * should have happened upstream.
+ *
+ * Only runs when the signature is present, and returns the original untouched
+ * if anything fails. A document that is merely unusual should not be rewritten
+ * on suspicion.
+ */
+function repairDoubleEncoding(s) {
+  if (!/[\u00C2\u00C3][\u0080-\u00BF\u20AC\u201A\u0192\u201E\u2026\u2020\u2021\u02C6\u2030\u0160\u2039\u0152\u017D\u2018\u2019\u201C\u201D\u2022\u2013\u2014\u02DC\u2122\u0161\u203A\u0153\u017E\u0178]/.test(s)) {
+    return s;
+  }
+
+  const bytes = [];
+  for (const ch of s) {
+    const code = ch.codePointAt(0);
+    if (code <= 0xff) {
+      bytes.push(code);
+      continue;
+    }
+    const mapped = CP1252_HIGH[ch];
+    if (mapped === undefined) return s;   // not representable: leave it alone
+    bytes.push(mapped);
+  }
+
+  try {
+    const repaired = new TextDecoder("utf-8", { fatal: true }).decode(new Uint8Array(bytes));
+    return repaired;
+  } catch {
+    return s;
+  }
+}
+
 /**
  * Entities, decoded.
  *
@@ -139,11 +184,6 @@ async function collectExhibits(env, cik, accession) {
  * Decoded AFTER tags are stripped, deliberately. A document containing &#60;
  * would otherwise produce a "<" that the tag stripper reads as markup and eats
  * the text after it.
- *
- * The mojibake that appeared alongside this - "Companyâ€™s", "Â¢" - is NOT
- * handled here any more. It was never an entity problem: SEC declares a legacy
- * charset and the response was being decoded through it. That is fixed in
- * fetchDoc, at the decoder, which is where it belongs.
  */
 function decodeEntities(s) {
   const named = {
@@ -178,7 +218,7 @@ export function htmlToText(html) {
     .replace(/<\/(p|div|tr|h[1-6]|li)>/gi, "\n")
     .replace(/<[^>]+>/g, " ");
 
-  return decodeEntities(stripped)
+  return repairDoubleEncoding(decodeEntities(stripped))
     .replace(/[ \t\u00a0]+/g, " ")
     .replace(/\n\s*\n\s*\n+/g, "\n\n")
     .trim();
@@ -210,6 +250,42 @@ export async function readFiling(env, cik, accession) {
   return { text: parts.join(""), pickedBy: chosen.pickedBy, files: used, chars: spent };
 }
 
+/**
+ * The calendar, improved by what the release says.
+ *
+ * companyCalendar starts from the year-end month and, where SEC serves it, the
+ * company's own fiscal year focus tag. Where neither settles it the month is a
+ * guess, and the month cannot settle it: Macy's, Walmart and Autodesk all
+ * close in late January and do not agree.
+ *
+ * The release does settle it, so the release gets the last word.
+ */
+export function refineCalendar(cal, text) {
+  const learned = conventionFromText(text, cal.fye);
+  if (!learned) return cal;
+  if (learned.offset === cal.labelOffset) {
+    return {
+      ...cal,
+      meta: { ...cal.meta, conventionConfirmedBy: learned.source, conventionVotes: learned.votes },
+    };
+  }
+
+  return {
+    ...cal,
+    labelOffset: learned.offset,
+    meta: {
+      ...cal.meta,
+      labelConvention: learned.offset === 1
+        ? "fiscal year is labelled by the year it STARTS in"
+        : "fiscal year is labelled by the year it ENDS in",
+      conventionFrom: learned.source,
+      conventionWas: cal.meta.conventionFrom,
+      conventionVotes: learned.votes,
+      conventionEvidence: learned.evidence,
+    },
+  };
+}
+
 /* ------------------------------------------------------------------ *
  * The quote guard
  * ------------------------------------------------------------------ */
@@ -221,9 +297,6 @@ export async function readFiling(env, cik, accession) {
  * sentence reading "we expect non-fuel unit costs to grow at a rate similar to
  * the March quarter". There is no 6 in it. The number was invented, then
  * compared against a real 6.8% actual to produce a near-miss out of nothing.
- *
- * Parenthesised figures are recorded as both signs. "(0.5%) to 0.5%" runs from
- * minus a half to plus a half.
  */
 export function quoteNumbers(quote) {
   const found = new Set();
@@ -240,8 +313,6 @@ export function quoteNumbers(quote) {
   return found;
 }
 
-/* Numbers agree when they are the same number. The tolerance is for
-   representation only - 2 against 2.00 - not for closeness. */
 function present(value, pool) {
   if (typeof value !== "number" || !Number.isFinite(value)) return true;
   for (const n of pool) {
@@ -251,7 +322,7 @@ function present(value, pool) {
 }
 
 /**
- * A reaffirmed guide, with its numbers and its SHAPE put back.
+ * A reaffirmed guide, with its numbers and its shape put back.
  *
  * Walmart reaffirmed six full-year guides and every one came back with its
  * figures nulled, because the instruction says reaffirmations carry no
@@ -261,16 +332,10 @@ function present(value, pool) {
  *
  * Recovering the numbers alone was not enough. "Interest, net Increase
  * approximately $200M to $300M" is a guide about a CHANGE, and with the shape
- * still reading "reaffirmed" the actuals call was told to look for a level. It
- * dutifully returned 171 - the quarter's interest expense - against a guide
- * for a $200-300m increase.
+ * still reading "reaffirmed" the actuals call was told to look for a level.
  *
- * So the shape is read back out of the quote too. The words that mark a change
- * are the company's own, in the sentence, and they are the same words in every
- * release: increase, decrease, growth, up, down.
- *
- * Three or more numbers is ambiguous - a row carrying a prior column and a
- * current one - and is left alone rather than guessed at.
+ * So the shape is read back out of the quote too, using the company's own
+ * words - increase, decrease, growth, up, down.
  */
 function recoverReaffirmed(g) {
   const distinct = Array.from(quoteNumbers(g.quote))
@@ -289,8 +354,7 @@ function recoverReaffirmed(g) {
       was_reaffirmed: true,
       low: distinct[0],
       high: distinct[1],
-      numbers_recovered: "range read from the reaffirmed quote"
-        + (isChange ? ", stated as a change" : ""),
+      numbers_recovered: "range read from the reaffirmed quote" + (isChange ? ", stated as a change" : ""),
     };
   }
 
@@ -299,8 +363,7 @@ function recoverReaffirmed(g) {
     shape: isChange ? "growth_point" : "point",
     was_reaffirmed: true,
     value: distinct[0],
-    numbers_recovered: "point read from the reaffirmed quote"
-      + (isChange ? ", stated as a change" : ""),
+    numbers_recovered: "point read from the reaffirmed quote" + (isChange ? ", stated as a change" : ""),
   };
 }
 
@@ -308,17 +371,12 @@ function recoverReaffirmed(g) {
  * A guide, checked against its own quote.
  *
  * If any stated number is absent from the quote, ALL of them are dropped and
- * the guide becomes qualitative. Deliberately strict:
+ * the guide becomes qualitative. Deliberately strict: United guided capacity
+ * "flat to up approximately 2%", a model reports 0 to 2, and the 0 is an
+ * inference from the word "flat" rather than a number the company printed.
  *
- * United guided capacity "flat to up approximately 2%". A model reports that
- * as a range from 0 to 2. The 2 is in the sentence; the 0 is an inference from
- * the word "flat" - a good inference, but not a number the company printed.
- * Under this rule the whole range is dropped and the guide is kept as an event
- * with no score.
- *
- * Keeping the supported half would turn a range into a one-sided guide and
- * change what it means. A guide that cannot be scored is a small loss. A guide
- * scored against a number nobody wrote is the loss that ends the product.
+ * A guide that cannot be scored is a small loss. A guide scored against a
+ * number nobody wrote is the loss that ends the product.
  */
 function guardGuide(input) {
   const g = input.shape === "reaffirmed" ? recoverReaffirmed(input) : input;
@@ -354,9 +412,8 @@ function guardGuide(input) {
  * one guide can arrive as "Total Revenue YoY (%)" and again as "total revenue
  * growth". Scoring both counts one company decision twice.
  *
- * Now that periods are resolved before this runs, the RESOLVED period is the
- * key rather than the wording - which is what lets the Delta pair merge, since
- * "2Q26" and "June quarter" finally arrive as the same label.
+ * The RESOLVED period is the key rather than the wording, which is what lets
+ * that pair merge - "2Q26" and "the June quarter" now arrive as one label.
  */
 function dedupeGuides(guides) {
   const seen = new Map();
@@ -392,11 +449,9 @@ function dedupeGuides(guides) {
  * 25 to zero.
  *
  * A line telling the model not to report numbers absent from its quote was
- * tried here and removed. It worked - Delta's invented 6 stopped appearing -
- * but two real guides stated in prose went missing in both runs that carried
- * it. Accuracy paid for in recall is the trade this product should not make,
- * because the check belongs in guardGuide, where it costs nothing and cannot
- * compete with the task.
+ * tried and removed: it worked, but two real guides stated in prose went
+ * missing in both runs that carried it. The check belongs in guardGuide, where
+ * it costs nothing and cannot compete with the task.
  */
 const SYSTEM = [
   "You read one company earnings press release and report only FORWARD-LOOKING GUIDANCE.",
@@ -475,24 +530,23 @@ async function callModel(env, text) {
 /**
  * One release in, the guides it contains out.
  *
- * cal is the company's fiscal calendar. With it, every guide carries a
- * resolved period label as well as the words the company used - which is what
- * the matcher compares, and what stops a full-year guide being answered by a
- * first-quarter figure.
+ * The calendar is refined against the release text before any period is
+ * resolved, and the refined version is RETURNED so the actuals call uses the
+ * same one. If the two sides disagreed about the convention, every pair would
+ * be a year apart and all of them would be thrown away.
  *
  * Guidance looks FORWARD, so a period named without a year resolves to the
  * next one, not the last.
- *
- * Fails loudly. An empty result and a failed call must never look the same.
  */
 export async function guidanceFrom(env, cik, release, cal) {
   const filing = await readFiling(env, cik, release.accession);
+  const calendar = cal ? refineCalendar(cal, filing.text) : null;
 
   const raw = await callModel(env, filing.text);
 
   const withPeriods = raw.map(guardGuide).map((g) => {
-    const r = cal
-      ? resolvePeriod(g.period_text, cal, { referenceDate: release.filed, direction: "future" })
+    const r = calendar
+      ? resolvePeriod(g.period_text, calendar, { referenceDate: release.filed, direction: "future" })
       : { period: null, why: "No fiscal calendar was supplied." };
     return { ...g, period: r.period, period_how: r.how || null, period_why: r.why || null };
   });
@@ -508,6 +562,7 @@ export async function guidanceFrom(env, cik, release, cal) {
       files: filing.files,
       textChars: filing.chars,
     },
+    calendar,
     guarded: guides.filter((g) => g.numbers_verified === false).length,
     recovered: guides.filter((g) => g.numbers_recovered).length,
     unresolvedPeriods: guides.filter((g) => !g.period).length,
