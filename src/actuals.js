@@ -4,73 +4,28 @@
  * The companion to guidance.js, and the part that had to be conceded.
  *
  * XBRL holds actuals exactly, but only GAAP ones, and only weeks later when
- * the 10-Q is filed. Testing six large caps showed that GAAP-only leaves four
+ * the 10-Q is filed. Testing six large caps showed GAAP-only leaves four
  * scoreable guides across six companies: management guides adjusted EPS,
  * constant-currency sales and segment margin, and none of those is tagged
- * anywhere. So the non-GAAP actual has to come out of the release, where it is
+ * anywhere. So the non-GAAP actual comes out of the release, where it is
  * printed as a headline.
  *
  * This is narrow on purpose. It is not asked what the company reported. It is
- * asked, for a specific list of metrics that were guided a quarter ago, what
- * the figure turned out to be. A model given a shorter question gives a better
- * answer, and everything it is not asked for is one less thing to be wrong
- * about.
+ * asked, for a specific list of metrics guided a quarter ago, what the figure
+ * turned out to be. A model given a shorter question gives a better answer,
+ * and everything it is not asked for is one less thing to be wrong about.
  *
- * Nothing here scores, matches or judges. It reads figures and reports them
- * with the sentence they came from.
- *
- * NOTE: pickExhibit and htmlToText are deliberate copies of the versions in
- * guidance.js. Sharing them would mean editing a file that works, for the sake
- * of a second fetch that EDGAR serves from cache anyway. They get merged once
- * both extractions are proven, not before.
+ * The filing is read through guidance.js now rather than by a private copy.
+ * The duplication was there to stop a change to shared code silently changing
+ * both extractions at once - but reading the whole 99-series is a fact about
+ * the FILING, not about either extraction, and having the two disagree about
+ * which documents exist would be worse than the risk it avoided.
  */
 
-import { secJson, fetchDoc } from "./sec.js";
+import { readFiling } from "./guidance.js";
 
 const MODEL = "deepseek-chat";
 const ENDPOINT = "https://api.deepseek.com/chat/completions";
-const MAX_CHARS = 80000;
-
-/* --- copies of guidance.js internals, to be merged later --- */
-
-async function pickExhibit(env, cik, accession) {
-  const noDash = accession.replace(/-/g, "");
-  const base = "https://www.sec.gov/Archives/edgar/data/" + Number(cik) + "/" + noDash;
-  const dir = await secJson(env, base + "/index.json");
-  const items = ((dir.directory && dir.directory.item) || [])
-    .filter((f) => /\.html?$/i.test(f.name) && !/-index/i.test(f.name));
-
-  if (!items.length) throw new Error("No HTML document in filing " + accession + ".");
-
-  const named = items.filter((f) => /(^|[^0-9])99[._-]?1([^0-9]|$)|ex-?99/i.test(f.name));
-  const pool = named.length ? named : items;
-  pool.sort((a, b) => Number(b.size || 0) - Number(a.size || 0));
-
-  return {
-    url: base + "/" + pool[0].name,
-    file: pool[0].name,
-    bytes: Number(pool[0].size || 0),
-    pickedBy: named.length ? "exhibit 99.1 by filename" : "largest HTML in the filing",
-  };
-}
-
-function htmlToText(html) {
-  return html
-    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ")
-    .replace(/<\/(p|div|tr|h[1-6]|li)>/gi, "\n")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;|&#160;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&#8217;|&rsquo;/gi, "'")
-    .replace(/&#8212;|&mdash;/gi, "-")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/[ \t\u00a0]+/g, " ")
-    .replace(/\n\s*\n\s*\n+/g, "\n\n")
-    .trim();
-}
-
-/* --- end copies --- */
 
 /**
  * Is this guide a level, or a change?
@@ -79,12 +34,12 @@ function htmlToText(html) {
  * guided net sales to "increase 4.0% to 5.0%" and the answer came back as
  * 184,574 - a dollar figure, from a table row printing the quarter and the
  * year to date side by side. Both the kind of number and the column were
- * wrong, and the reason is that the model was told the metric name and the
- * basis and nothing about what sort of answer the question had.
+ * wrong, because the model was told the metric name and the basis and nothing
+ * about what sort of answer the question had.
  *
  * A guide expressed as a change can only be answered by a change. There is no
- * conversion available here: constant-currency growth cannot be recovered from
- * a reported level, and a percentage of revenue is not a revenue figure.
+ * conversion available: constant-currency growth cannot be recovered from a
+ * reported level, and a percentage of revenue is not a revenue figure.
  */
 function expectedAnswer(shape, unit) {
   const isChange = shape === "growth_range" || shape === "growth_point";
@@ -110,6 +65,43 @@ function expectedAnswer(shape, unit) {
 }
 
 /**
+ * The metric name, with the guidance stripped out of it.
+ *
+ * Broadcom returned zero actuals from three perfectly good guides, and the
+ * model was right to return nothing. It had been asked to find "Third quarter
+ * revenue guidance" in the third-quarter results - a metric whose name
+ * contains the word guidance and a period label that is now in the past. There
+ * is no such line in a results release, and an instruction elsewhere in the
+ * prompt says never to report a forecast.
+ *
+ * The company's own words are still what gets matched on. Only the scaffolding
+ * around them is removed: the period, and the words that mark it as an
+ * expectation rather than a result.
+ */
+export function cleanMetricName(written) {
+  let s = " " + String(written || "") + " ";
+
+  s = s
+    .replace(/\b(first|second|third|fourth)\s+quarter\b/gi, " ")
+    .replace(/\bfourth\s+quarter\s+of\s+fiscal\s+year\s*\d{2,4}\b/gi, " ")
+    .replace(/\bof\s+fiscal\s+year\s*\d{2,4}\b/gi, " ")
+    .replace(/\bfiscal\s+(year\s+)?\d{2,4}\b/gi, " ")
+    .replace(/\bfull[-\s]?year\b/gi, " ")
+    .replace(/\b[1-4]Q\s?\d{0,4}\b/gi, " ")
+    .replace(/\bQ[1-4]\b/gi, " ")
+    .replace(/\bFY\s?\d{2,4}\b/gi, " ")
+    .replace(/\b(19|20)\d{2}\b/g, " ")
+    .replace(/\b(guidance|outlook|forecast|expectations?|expected|projected)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .replace(/^[\s,.:;-]+|[\s,.:;-]+$/g, "")
+    .trim();
+
+  // If stripping consumed the whole name, the original was nothing but
+  // scaffolding and the original is still the better question.
+  return s.length >= 3 ? s : String(written || "").trim();
+}
+
+/**
  * What to look for, built from the guides in the previous release.
  *
  * A guide with no number is not a request. There is nothing to score it
@@ -118,17 +110,13 @@ function expectedAnswer(shape, unit) {
  * The test is the numbers themselves rather than the shape, which covers four
  * cases at once and cannot fall out of step with a shape added later:
  *
- *   reaffirmed  - the shape carries no figures
+ *   reaffirmed  - unless its numbers were recovered from the quote
  *   withdrawn   - there is no guide any more
  *   qualitative - "up low-teens", or a figure the quote guard rejected
  *   anything else that arrived empty
  *
  * Delta's "Total Revenue YoY - up low-teens" went looking for an actual under
  * the old rule, found a real 19%, and had nothing to compare it to.
- *
- * Deduplicated on how the company writes the metric, not on the internal
- * name, because a company that guided a quarter and a year for the same
- * measure wrote it once and means one thing.
  */
 export function requestsFrom(guides) {
   const seen = new Set();
@@ -144,13 +132,16 @@ export function requestsFrom(guides) {
     const written = String(g.metric_as_written || "").trim();
     if (!written) continue;
 
-    const key = written.toLowerCase() + "|" + (g.basis || "");
+    const query = cleanMetricName(written);
+
+    const key = query.toLowerCase() + "|" + (g.basis || "");
     if (seen.has(key)) continue;
     seen.add(key);
 
     out.push({
       metric: g.metric || "other",
       metric_as_written: written,
+      query,
       basis: g.basis || "unclear",
       unit: g.unit || "other",
       shape: g.shape || "point",
@@ -163,26 +154,26 @@ export function requestsFrom(guides) {
 /**
  * The prompt.
  *
- * Deliberately short. The single instruction that matters is the one
- * separating a result from a forecast, because a release states both, often in
- * neighbouring sentences, and reading a forecast as a result would have the
- * product tell a subscriber a company missed a number it has not yet reported.
+ * Deliberately short. The instruction that matters is the one separating a
+ * result from a forecast, because a release states both, often in neighbouring
+ * sentences, and reading a forecast as a result would have the product tell a
+ * subscriber a company missed a number it has not yet reported.
  *
- * The second instruction, added after the Walmart failure, is that each metric
- * comes with the kind of answer it takes. A guide stated as a percentage
- * increase is not answered by a dollar figure, and a model that produces one
- * anyway has not found the actual - it has found a different number that
- * happens to sit near the right label.
+ * The second, added after the Walmart failure, is that each metric carries the
+ * kind of answer it takes. A guide stated as a percentage increase is not
+ * answered by a dollar figure, and a model that produces one anyway has not
+ * found the actual - it has found a different number sitting near the right
+ * label.
  *
  * Nothing checkable is asked for. The period is taken verbatim and resolved in
- * code against the fiscal-label logic already built and verified in xbrl.js.
+ * code against the fiscal-label logic proven in xbrl.js.
  */
 const SYSTEM = [
   "You read one company earnings press release and report ACTUAL REPORTED RESULTS.",
   "",
-  "You are given a list of metrics. Each one carries an EXPECTS field saying what",
-  "kind of number answers it. For each metric, find the figure this release reports",
-  "for the period that has just ENDED.",
+  "You are given a list of metrics. Each carries an EXPECTS field saying what kind",
+  "of number answers it. For each metric, find the figure this release reports for",
+  "the period that has just ENDED.",
   "",
   "A result is a figure for a completed period. A forecast, outlook, guidance or",
   "expectation is NOT a result. Never report one. If a metric appears only as a",
@@ -193,20 +184,21 @@ const SYSTEM = [
   "If it asks for an absolute figure and only a percentage is reported, return null.",
   "A number of the wrong kind is not the actual, however close its label sits.",
   "",
-  "Match on meaning, not on wording. 'Net sales' and 'total revenue' may be the",
-  "same figure. 'Adjusted diluted EPS' and 'adjusted earnings per share' are the",
-  "same. But an adjusted figure is never a substitute for a GAAP one, or the",
-  "reverse.",
+  "Where a table prints several columns - the quarter and the year to date, or this",
+  "year and last - the quarter just ended is the one wanted.",
   "",
-  "Prefer the current-period figure over the prior-year comparative. Releases",
-  "print them side by side, and the prior-year column is not the result.",
+  "Match on meaning, not on wording. 'Net sales' and 'total revenue' may be the same",
+  "figure. 'Adjusted diluted EPS' and 'adjusted earnings per share' are the same. But",
+  "an adjusted figure is never a substitute for a GAAP one, or the reverse.",
   "",
-  "Return one row for EVERY metric you were given, in the same order, including",
-  "the ones you could not find.",
+  "The document may contain several exhibits, separated by ===== markers. Read all.",
+  "",
+  "Return one row for EVERY metric you were given, in the same order, including the",
+  "ones you could not find.",
   "",
   "Reply with JSON only. No prose, no markdown fences. Shape:",
   '{"actuals":[{',
-  '  "metric_as_written": "the metric you were asked for, copied back unchanged",',
+  '  "metric": "the metric you were asked for, copied back unchanged",',
   '  "found_as": "what this release calls it, verbatim, or null",',
   '  "period_text": "the period as written, e.g. third quarter, full year 2025, or null",',
   '  "value": number or null,',
@@ -214,8 +206,8 @@ const SYSTEM = [
   '  "quote": "the sentence or table row it came from, verbatim, 40 words or fewer, or null"',
   "}]}",
   "",
-  "Numbers exactly as written: $4.6 billion is value 4.6 with unit USD billions,",
-  "not 4600. A percentage is the number without the sign: 23.5.",
+  "Numbers exactly as written: $4.6 billion is value 4.6 with unit USD billions, not",
+  "4600. A percentage is the number without the sign: 23.5.",
   "",
   "If a metric is genuinely absent, or only the wrong kind of number is reported,",
   "value null, found_as null, quote null.",
@@ -227,7 +219,7 @@ async function callModel(env, requests, text) {
   const user = [
     "METRICS TO FIND:",
     JSON.stringify(requests.map((r) => ({
-      metric_as_written: r.metric_as_written,
+      metric: r.query,
       basis: r.basis,
       expects: r.expect.describe,
       expects_unit: r.expect.unit,
@@ -276,8 +268,8 @@ async function callModel(env, requests, text) {
 /**
  * One release and a list of metrics in, the reported figures out.
  *
- * Every requested metric comes back whether it was found or not. A missing row
- * and a row reporting nothing must not look the same: the first is the model
+ * Every requested metric comes back whether found or not. A missing row and a
+ * row reporting nothing must not look the same: the first is the model
  * ignoring an instruction, the second is a fact about the release.
  *
  * The expected unit is checked here as well as asked for in the prompt. An
@@ -285,36 +277,26 @@ async function callModel(env, requests, text) {
  * than dropped, because a mismatch is usually the model finding a real number
  * of the wrong kind, and seeing which number it found is how the next fix gets
  * written.
- *
- * Fails loudly on a failed call, for the same reason guidance.js does.
  */
 export async function actualsFrom(env, cik, release, requests) {
-  const exhibit = await pickExhibit(env, cik, release.accession);
+  const filing = await readFiling(env, cik, release.accession);
+  const rows = await callModel(env, requests, filing.text);
 
-  const full = htmlToText(await fetchDoc(env, exhibit.url));
-  const truncated = full.length > MAX_CHARS;
-  const text = truncated ? full.slice(0, MAX_CHARS) : full;
-
-  const rows = await callModel(env, requests, text);
-
-  // Returned rows are keyed back to what was asked for. The model is told to
-  // copy the name unchanged and to keep the order, and mostly does - but a row
-  // that cannot be tied back to a request is not usable, so the request list
-  // leads and the rows follow it.
+  // Rows are keyed back to what was asked for. The model is told to copy the
+  // name unchanged and keep the order, and mostly does - but a row that cannot
+  // be tied back to a request is not usable, so the request list leads and the
+  // rows follow it.
   const byName = new Map();
   for (const row of rows) {
-    const k = String(row.metric_as_written || "").trim().toLowerCase();
+    const k = String(row.metric || row.metric_as_written || "").trim().toLowerCase();
     if (k && !byName.has(k)) byName.set(k, row);
   }
 
   const actuals = requests.map((req, i) => {
-    const row = byName.get(req.metric_as_written.toLowerCase()) || rows[i] || {};
+    const row = byName.get(req.query.toLowerCase()) || rows[i] || {};
     const value = typeof row.value === "number" ? row.value : null;
     const unit = row.unit || null;
 
-    // A percentage answer to a percentage question is the same kind of number
-    // even when one says "percent" and the other says "percent change"; a
-    // dollar answer to a percentage question is not.
     const wantedPercent = req.expect.unit === "percent";
     const gotPercent = unit === "percent";
     const unitMismatch = value !== null && Boolean(unit) && wantedPercent !== gotPercent;
@@ -322,6 +304,7 @@ export async function actualsFrom(env, cik, release, requests) {
     return {
       metric: req.metric,
       metric_as_written: req.metric_as_written,
+      asked_as: req.query,
       basis: req.basis,
       guided_shape: req.shape,
       guided_unit: req.unit,
@@ -340,11 +323,9 @@ export async function actualsFrom(env, cik, release, requests) {
       accession: release.accession,
       filed: release.filed,
       items: release.items,
-      exhibit: exhibit.file,
-      pickedBy: exhibit.pickedBy,
-      bytes: exhibit.bytes,
-      textChars: full.length,
-      truncated,
+      pickedBy: filing.pickedBy,
+      files: filing.files,
+      textChars: filing.chars,
     },
     requested: requests.length,
     found: actuals.filter((a) => a.value !== null).length,
