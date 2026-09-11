@@ -6,8 +6,7 @@
  * XBRL holds actuals exactly, but only GAAP ones, and only weeks later when
  * the 10-Q is filed. Six large caps produced four GAAP-scoreable guides
  * between them: management guides adjusted EPS, constant-currency sales and
- * segment margin, and none of those is tagged anywhere. So the non-GAAP actual
- * comes out of the release, where it is printed as a headline.
+ * segment margin, and none of those is tagged anywhere.
  *
  * Narrow on purpose. It is not asked what the company reported. It is asked,
  * for a specific list of metrics guided a quarter ago, what the figure turned
@@ -21,26 +20,39 @@ const MODEL = "deepseek-chat";
 const ENDPOINT = "https://api.deepseek.com/chat/completions";
 
 /**
- * Is this guide a level, or a change?
+ * What kind of number answers this guide?
  *
  * The distinction the first version lost, at real cost. Walmart guided net
  * sales to "increase 4.0% to 5.0%" and the answer came back as 184,574 - a
  * dollar figure, from a table row printing the quarter and the year to date
- * side by side. Both the kind of number and the column were wrong, because the
- * model was told the metric name and the basis and nothing about what sort of
- * answer the question had.
+ * side by side. The model had been told the metric name and the basis and
+ * nothing about what sort of answer the question had.
  *
- * A guide expressed as a change can only be answered by a change. There is no
- * conversion available: constant-currency growth cannot be recovered from a
- * reported level, and a percentage of revenue is not a revenue figure.
+ * The fix then assumed every change is a percentage, and that was wrong in the
+ * other direction. Walmart also guides "Interest, net Increase approximately
+ * $200M to $300M" - a change measured in dollars. Asked for a percentage, the
+ * model returned -74.7%, a real number from the right row and no answer to the
+ * question.
+ *
+ * So a change keeps the unit the company guided it in. The only thing the
+ * shape decides is whether the answer is a movement or a position.
  */
 function expectedAnswer(shape, unit) {
   const isChange = shape === "growth_range" || shape === "growth_point";
-  if (isChange) {
+
+  if (isChange && unit === "percent") {
     return {
       kind: "change",
       unit: "percent",
       describe: "a percentage CHANGE versus the prior year, not a dollar or share figure",
+    };
+  }
+  if (isChange) {
+    return {
+      kind: "change",
+      unit: unit || "other",
+      describe: "the CHANGE versus the prior year, measured in " + (unit || "the unit the release uses")
+        + " - the movement, not the level",
     };
   }
   if (unit === "percent") {
@@ -63,18 +75,15 @@ function expectedAnswer(shape, unit) {
  * Broadcom returned zero actuals from three perfectly good guides, and the
  * model was right to return nothing. It had been asked to find "Third quarter
  * revenue guidance" in the third-quarter results - a metric whose name
- * contains the word guidance and a period label now in the past. There is no
- * such line in a results release, and an instruction elsewhere says never to
- * report a forecast.
+ * contains the word guidance and a period label now in the past.
  *
  * The company's own words are still what gets matched on. Only the scaffolding
  * around them is removed.
  */
 export function cleanMetricName(written) {
-  let s = " " + String(written || "") + " ";
-
-  s = s
+  const s = (" " + String(written || "") + " ")
     .replace(/\b(first|second|third|fourth)\s+quarter\b/gi, " ")
+    .replace(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+quarter\b/gi, " ")
     .replace(/\bof\s+fiscal\s+year\s*\d{2,4}\b/gi, " ")
     .replace(/\bfiscal\s+(year\s+)?\d{2,4}\b/gi, " ")
     .replace(/\bfull[-\s]?year\b/gi, " ")
@@ -87,8 +96,6 @@ export function cleanMetricName(written) {
     .replace(/^[\s,.:;-]+|[\s,.:;-]+$/g, "")
     .trim();
 
-  // If stripping consumed the whole name, the original was nothing but
-  // scaffolding and the original is still the better question.
   return s.length >= 3 ? s : String(written || "").trim();
 }
 
@@ -96,12 +103,10 @@ export function cleanMetricName(written) {
  * What to look for, built from the guides in the previous release.
  *
  * A guide with no number is not a request. There is nothing to score it
- * against, so looking for its actual spends a lookup to learn nothing.
- *
- * The test is the numbers themselves rather than the shape, which covers four
- * cases at once and cannot fall out of step with a shape added later:
- * reaffirmed without recoverable figures, withdrawn, qualitative, and anything
- * that arrived empty.
+ * against, so looking for its actual spends a lookup to learn nothing. The
+ * test is the numbers themselves rather than the shape, which covers
+ * reaffirmed, withdrawn, qualitative and anything that arrived empty in one
+ * rule.
  */
 export function requestsFrom(guides) {
   const seen = new Set();
@@ -118,7 +123,7 @@ export function requestsFrom(guides) {
     if (!written) continue;
 
     const query = cleanMetricName(written);
-    const key = query.toLowerCase() + "|" + (g.basis || "");
+    const key = query.toLowerCase() + "|" + (g.basis || "") + "|" + (g.period || "");
     if (seen.has(key)) continue;
     seen.add(key);
 
@@ -136,18 +141,6 @@ export function requestsFrom(guides) {
   return out;
 }
 
-/**
- * The prompt.
- *
- * The instruction that matters is the one separating a result from a forecast,
- * because a release states both, often in neighbouring sentences, and reading
- * a forecast as a result would tell a subscriber a company missed a number it
- * has not yet reported.
- *
- * The second, added after the Walmart failure, is that each metric carries the
- * kind of answer it takes. A number of the wrong kind is not the actual,
- * however close its label sits.
- */
 const SYSTEM = [
   "You read one company earnings press release and report ACTUAL REPORTED RESULTS.",
   "",
@@ -159,10 +152,10 @@ const SYSTEM = [
   "expectation is NOT a result. Never report one. If a metric appears only as a",
   "forecast, return it with value null.",
   "",
-  "The EXPECTS field is binding. If it asks for a percentage change and the release",
-  "reports only an absolute figure, return null - do NOT return the absolute figure.",
-  "If it asks for an absolute figure and only a percentage is reported, return null.",
-  "A number of the wrong kind is not the actual, however close its label sits.",
+  "The EXPECTS field is binding. If it asks for a change and the release reports",
+  "only a level, return null - do NOT return the level. If it asks for a figure in",
+  "one unit and only another unit is reported, return null. A number of the wrong",
+  "kind is not the actual, however close its label sits.",
   "",
   "Where a table prints several columns - the quarter and the year to date, or this",
   "year and last - the quarter just ended is the one wanted. Say in period_text",
@@ -257,6 +250,10 @@ async function callModel(env, requests, text) {
  * period that has ended. Without it, Walmart's full-year reaffirmations were
  * answered with quarterly figures and every one would have scored as a wild
  * beat or miss.
+ *
+ * The calendar passed in must be the one the guidance call refined, not a
+ * fresh one. Two sides disagreeing about the fiscal convention would put every
+ * pair a year apart.
  */
 export async function actualsFrom(env, cik, release, requests, cal) {
   const filing = await readFiling(env, cik, release.accession);
