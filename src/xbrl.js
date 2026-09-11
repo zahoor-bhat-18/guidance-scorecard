@@ -11,7 +11,7 @@
  * wins.
  */
 
-import { secJson } from "./sec.js";
+import { secJson, fetchDoc } from "./sec.js";
 
 /** The company's fiscal year end, as month and day, from EDGAR. */
 async function fiscalYearEnd(env, cik) {
@@ -48,80 +48,127 @@ function fiscalPosition(endDate, fye) {
   return { endsIn, quarter };
 }
 
+const MONTHS = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+};
+
 /**
  * Does this filer label a fiscal year by the year it starts or the year it
- * ends?
+ * ends, from the company's own cover page?
  *
- * There is no rule. Macy's year ending January 2026 is its fiscal 2025;
- * Walmart's year ending January 2027 is its fiscal 2027; Autodesk is like
- * Walmart. All three close in late January, so the month settles nothing.
+ * There is no rule and the year-end month settles nothing. Macy's, Walmart and
+ * Autodesk all close in late January. Macy's year ending January 2026 is its
+ * fiscal 2025. Walmart's year ending January 2027 is its fiscal 2027.
  *
- * The original detector read dei.DocumentFiscalYearFocus out of companyfacts
- * and never once succeeded - that payload does not carry dei document tags for
- * any filer tested, which the evidence block finally made visible after it had
- * been silently guessing for days.
+ * Two sources were tried and both are now ruled out by evidence rather than
+ * suspicion: companyfacts carries no dei document tags at all, and
+ * companyconcept returns 404 for DocumentFiscalYearFocus on every company
+ * tested. The guess that replaced them was wrong for Walmart and cost a real
+ * scoreable pair - a net sales guide of 4.0-5.0% answered by a reported 5.0%,
+ * thrown away because the two sides were labelled a year apart.
  *
- * So it is tried at the companyconcept endpoint instead, which serves one tag
- * at a time and may carry what companyfacts omits. If that is empty too, the
- * release text decides - see conventionFromText in period.js - and only if
- * both fail does it fall back to the year-end month, which is a guess and is
- * labelled as one.
+ * But the company does state it, on the cover page of its own 10-K. SEC
+ * renders that page as R1.htm inside the filing, and it carries Document
+ * Fiscal Year Focus and Document Period End Date as adjacent rows. One says
+ * the label, the other says when the year ended. The offset is the difference,
+ * with nothing inferred and no proximity heuristic involved.
+ *
+ * A 10-Q cover page carries the same two fields and is used if no 10-K is to
+ * hand.
  */
-async function focusFromConcept(env, cik, fye) {
-  const url = "https://data.sec.gov/api/xbrl/companyconcept/CIK" + cik
-    + "/dei/DocumentFiscalYearFocus.json";
+async function latestAnnualFiling(env, cik) {
+  const subs = await secJson(env, "https://data.sec.gov/submissions/CIK" + cik + ".json");
+  const r = (subs.filings && subs.filings.recent) || {};
+  const forms = r.form || [];
 
-  let doc;
+  let fallback = null;
+  for (let i = 0; i < forms.length; i++) {
+    if (forms[i] === "10-K") {
+      return { accession: r.accessionNumber[i], form: "10-K", filed: r.filingDate[i] };
+    }
+    if (!fallback && forms[i] === "10-Q") {
+      fallback = { accession: r.accessionNumber[i], form: "10-Q", filed: r.filingDate[i] };
+    }
+  }
+  return fallback;
+}
+
+/* R1.htm is a rendered table. Rows out, cells spaced, tags gone - enough to
+   read two labelled values out of it and no more. */
+function coverPageText(html) {
+  return html
+    .replace(/<\/tr>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))
+    .replace(/&nbsp;/gi, " ")
+    .replace(/[ \t\u00a0]+/g, " ")
+    .trim();
+}
+
+async function focusFromCoverPage(env, cik, fye) {
+  const filing = await latestAnnualFiling(env, cik);
+  if (!filing) {
+    return { offset: null, evidence: [{ rejected: "no 10-K or 10-Q found in the submissions index" }] };
+  }
+
+  const noDash = filing.accession.replace(/-/g, "");
+  const base = "https://www.sec.gov/Archives/edgar/data/" + Number(cik) + "/" + noDash;
+
+  let html;
   try {
-    doc = await secJson(env, url);
+    html = await fetchDoc(env, base + "/R1.htm");
   } catch (e) {
-    return { offset: null, evidence: [{ rejected: "companyconcept has no DocumentFiscalYearFocus (" + e.message + ")" }] };
+    return {
+      offset: null,
+      evidence: [{ form: filing.form, accession: filing.accession, rejected: "no rendered cover page (" + e.message + ")" }],
+    };
   }
 
-  const evidence = [];
-  const all = [];
-  for (const facts of Object.values((doc && doc.units) || {})) {
-    for (const f of facts) all.push(f);
+  const text = coverPageText(html);
+
+  const label = text.match(/Document Fiscal Year Focus\s*(\d{4})/i);
+  const ended = text.match(
+    /Document Period End Date\s*([A-Za-z]{3,9})\.?\s*(\d{1,2}),?\s*(\d{4})/i
+  );
+
+  const row = { form: filing.form, accession: filing.accession, filed: filing.filed };
+
+  if (!label) {
+    row.rejected = "the cover page does not state a fiscal year focus";
+    return { offset: null, evidence: [row] };
   }
-  all.sort((a, b) => (String(a.end || "") < String(b.end || "") ? 1 : -1));
+  if (!ended) {
+    row.rejected = "the cover page does not state a period end date";
+    row.fiscalYearFocus = label[1];
+    return { offset: null, evidence: [row] };
+  }
 
-  for (const f of all.slice(0, 12)) {
-    const row = { form: f.form, end: f.end, val: f.val };
+  const month = MONTHS[ended[1].slice(0, 3).toLowerCase()];
+  const day = parseInt(ended[2], 10);
+  const year = parseInt(ended[3], 10);
 
-    if (f.form !== "10-K" && f.form !== "10-Q") {
-      row.rejected = "not an annual or quarterly report";
-      evidence.push(row);
-      continue;
-    }
-    if (!f.end) {
-      row.rejected = "no period end date";
-      evidence.push(row);
-      continue;
-    }
+  if (!month || !day || !year) {
+    row.rejected = "the period end date could not be read: " + ended[0];
+    return { offset: null, evidence: [row] };
+  }
 
-    const label = parseInt(f.val, 10);
-    if (!Number.isFinite(label)) {
-      row.rejected = "fiscal year focus is not a number";
-      evidence.push(row);
-      continue;
-    }
+  const iso = year + "-" + String(month).padStart(2, "0") + "-" + String(day).padStart(2, "0");
+  const focus = parseInt(label[1], 10);
+  const { endsIn } = fiscalPosition(iso, fye);
+  const offset = endsIn - focus;
 
-    const { endsIn } = fiscalPosition(f.end, fye);
-    const offset = endsIn - label;
-    row.impliedOffset = offset;
+  row.fiscalYearFocus = focus;
+  row.periodEnd = iso;
+  row.impliedOffset = offset;
 
-    if (offset === 0 || offset === 1) {
-      row.used = true;
-      evidence.push(row);
-      return { offset, evidence };
-    }
-
+  if (offset !== 0 && offset !== 1) {
     row.rejected = "implied offset of " + offset + " is not 0 or 1";
-    evidence.push(row);
+    return { offset: null, evidence: [row] };
   }
 
-  if (!evidence.length) evidence.push({ rejected: "companyconcept returned no usable facts" });
-  return { offset: null, evidence };
+  row.used = true;
+  return { offset, evidence: [row] };
 }
 
 /* The last resort, and a guess. Right for Macy's, wrong for Walmart and
@@ -139,15 +186,29 @@ function assumeFromMonth(fye) {
  * its start or its end - and must get them from the same place, or a guide and
  * an actual for the same period get different labels and never match.
  *
- * refineWithText() in the callers can improve labelOffset once a release has
- * been read. This is the starting point, not the last word.
+ * A calendar-year filer needs none of this: if the year ends in December the
+ * label is the year it ends in, and there is nothing to learn. The cover page
+ * is only fetched when the answer is genuinely open.
  */
 export async function companyCalendar(env, cik) {
   const fye = await fiscalYearEnd(env, cik);
-  const concept = await focusFromConcept(env, cik, fye);
 
-  const chosen = concept.offset !== null
-    ? { offset: concept.offset, source: "DocumentFiscalYearFocus, from companyconcept" }
+  if (fye.month === 12) {
+    return {
+      fye: { month: fye.month, day: fye.day },
+      labelOffset: 0,
+      meta: {
+        fiscalYearEnd: "12/" + String(fye.day).padStart(2, "0"),
+        labelConvention: "fiscal year is labelled by the year it ENDS in",
+        conventionFrom: "calendar year end, which admits no other reading",
+        evidence: [],
+      },
+    };
+  }
+
+  const cover = await focusFromCoverPage(env, cik, fye);
+  const chosen = cover.offset !== null
+    ? { offset: cover.offset, source: "Document Fiscal Year Focus on the company's own cover page" }
     : assumeFromMonth(fye);
 
   return {
@@ -160,7 +221,7 @@ export async function companyCalendar(env, cik) {
         ? "fiscal year is labelled by the year it STARTS in"
         : "fiscal year is labelled by the year it ENDS in",
       conventionFrom: chosen.source,
-      evidence: concept.evidence,
+      evidence: cover.evidence,
     },
   };
 }
@@ -210,9 +271,8 @@ function normalise(metric, value, unit) {
  * scorecard reads 300% beats out of nothing.
  */
 export async function factsFor(env, cik, calendar) {
-  const url = "https://data.sec.gov/api/xbrl/companyfacts/CIK" + cik + ".json";
   const cal = calendar || await companyCalendar(env, cik);
-  const doc = await secJson(env, url);
+  const doc = await secJson(env, "https://data.sec.gov/api/xbrl/companyfacts/CIK" + cik + ".json");
   const us = (doc.facts && doc.facts["us-gaap"]) || {};
   const fye = cal.fye;
   const labelOffset = cal.labelOffset;
