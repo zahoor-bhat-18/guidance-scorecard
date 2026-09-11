@@ -107,6 +107,8 @@ function pairUp(guides, actuals) {
     base.actual_unit = a.unit;
     base.actual_period = a.period;
     base.actual_period_text = a.period_text;
+    base.actual_found_as = a.found_as;
+    base.expected_basis = a.expected_basis;
     base.quote = a.quote;
 
     if (a.value === null) {
@@ -131,6 +133,10 @@ function pairUp(guides, actuals) {
     }
     if (a.unit_mismatch) {
       pairs.push({ ...base, comparable: false, why: "The figure reported is not the kind of number that was guided." });
+      continue;
+    }
+    if (a.basis_mismatch) {
+      pairs.push({ ...base, comparable: false, why: a.basis_mismatch });
       continue;
     }
 
