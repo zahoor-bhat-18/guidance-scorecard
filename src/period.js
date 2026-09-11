@@ -8,20 +8,22 @@
  * "first quarter 2026" in the narrative. Broadcom writes "fourth quarter of
  * fiscal year 2026". Walmart writes "Q3 FY27". Delta writes "3Q26".
  *
- * All of those have to become the same labels xbrl.js already produces -
- * 2026Q1, 2026FY - or nothing can be matched.
+ * All of those have to become the same labels xbrl.js produces - 2026Q1,
+ * 2026FY - or nothing can be matched.
  *
  * Why this is code and not a model:
  *
- * Pairing the wrong periods is the failure that ends the product. Macy's guides
- * the full year and reports a quarter, and a matcher that shrugged and paired
- * them would have said the company missed its adjusted EBITDA margin by two
- * points ten months before the year finished. That has to fail the same way
- * every time, be inspectable when it is wrong, and never improvise.
+ * Pairing the wrong periods is the failure that ends the product. Macy's
+ * guides the full year and reports a quarter, and a matcher that shrugged and
+ * paired them would have said the company missed its adjusted EBITDA margin by
+ * two points ten months before the year finished. Walmart's full-year
+ * reaffirmations were answered with quarterly figures - a 6-8% growth guide
+ * against a 17.4% quarter. That has to fail the same way every time, be
+ * inspectable when it is wrong, and never improvise.
  *
  * So this returns a period or it returns null with a reason. It never guesses,
- * and an unresolved period is not an error - it is a fact about the text,
- * and the caller declines to score that row.
+ * and an unresolved period is not an error - it is a fact about the text, and
+ * the caller declines to score that row.
  */
 
 /* Month names as EDGAR and press releases write them. Built by hand rather
@@ -49,14 +51,16 @@ const ORDINALS = {
   fourth: 4, "4th": 4,
 };
 
+/* A date written out in full, anywhere in the text. */
+const DATE_RE = /\b(january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|august|aug|september|sept|sep|october|oct|november|nov|december|dec)\.?\s+(\d{1,2})\s*,?\s*(\d{4})\b/;
+
 /**
  * Which fiscal year does a date fall in, and which quarter of it?
  *
  * Deliberately identical to the function of the same name in xbrl.js, and it
  * must stay that way: the two produce the labels that get compared to each
  * other, so a divergence here is a silent mismatch rather than a visible
- * error. It is duplicated rather than imported only because xbrl.js is proven
- * and is not being edited in the same change that introduces this file.
+ * error.
  */
 function fiscalPosition(endDate, fye) {
   const d = new Date(endDate + "T00:00:00Z");
@@ -142,13 +146,13 @@ export function resolvePeriod(text, cal, opts) {
      reliable form there is: the date fixes everything, and the duration says
      whether it is a quarter or a year. */
 
-  const ended = t.match(
-    /(?:ended|ending)\s+([a-z]+)\.?\s+(\d{1,2})\s*,?\s*(\d{4})/
-  );
-  if (ended) {
-    const month = MONTHS[ended[1]];
-    const day = parseInt(ended[2], 10);
-    const year = parseInt(ended[3], 10);
+  const hasEnded = /\b(ended|ending)\b/.test(t);
+  const dateMatch = t.match(DATE_RE);
+
+  if (hasEnded && dateMatch) {
+    const month = MONTHS[dateMatch[1]];
+    const day = parseInt(dateMatch[2], 10);
+    const year = parseInt(dateMatch[3], 10);
 
     if (month && day >= 1 && day <= 31) {
       const iso =
@@ -165,15 +169,12 @@ export function resolvePeriod(text, cal, opts) {
       const pos = fiscalPosition(iso, cal.fye);
       const label = pos.endsIn - cal.labelOffset;
 
-      if (span === "year") {
-        return { period: label + "FY", how: "fiscal year ended " + iso };
-      }
-      if (span === "quarter") {
-        return { period: label + "Q" + pos.quarter, how: "quarter ended " + iso };
-      }
+      if (span === "year") return { period: label + "FY", how: "fiscal year ended " + iso };
+      if (span === "quarter") return { period: label + "Q" + pos.quarter, how: "quarter ended " + iso };
+
       // A date with no stated duration. The date alone cannot say whether the
-      // figure covers the quarter or the year that ends on it, and guessing
-      // is how a full year gets scored as a fourth quarter.
+      // figure covers the quarter or the year that ends on it, and guessing is
+      // how a full year gets scored as a fourth quarter.
       return {
         period: null,
         why: "An end date was given without a length, so this could be the quarter or the year ending " + iso + ".",
@@ -191,7 +192,6 @@ export function resolvePeriod(text, cal, opts) {
   if (ordinal) quarter = ORDINALS[ordinal[1]];
 
   if (!quarter) {
-    // "q3", "q3 fy27", "q3 2026"
     const qFirst = t.match(/\bq([1-4])\b/);
     if (qFirst) quarter = parseInt(qFirst[1], 10);
   }
@@ -204,7 +204,24 @@ export function resolvePeriod(text, cal, opts) {
     }
   }
 
-  /* ---- 3. The year ----
+  const saysFullYear = /\b(full[-\s]?year|fiscal year|for the year|annual)\b/.test(t)
+    || (/\bfiscal\s*\d/.test(t) && quarter === null)
+    || (/\bfy\s?\d/.test(t) && quarter === null);
+
+  /* ---- 3. A bare date is not a period ----
+     Added after "May 2, 2026" resolved to a full year. The four digits at the
+     end are a year, so the year-only rule below claimed it, and a stray date
+     lifted out of a statement heading became an annual label. A date names a
+     day. Only "ended" turns it into a period, and that case is handled above. */
+
+  if (dateMatch && !quarter && !saysFullYear) {
+    return {
+      period: null,
+      why: "This is a date, not a period. A date only names a period when the text says what ended on it.",
+    };
+  }
+
+  /* ---- 4. The year ----
      "fiscal 2026", "fiscal year 2026", "full year 2026", "fy27", or a bare
      four-digit year. Taken as the company's OWN label, because that is what a
      release prints - and the labels produced here are the company's own too. */
@@ -236,24 +253,18 @@ export function resolvePeriod(text, cal, opts) {
     }
   }
 
-  const saysFullYear = /\b(full[-\s]?year|fiscal year|for the year|annual)\b/.test(t)
-    || (/\bfiscal\s*\d/.test(t) && quarter === null)
-    || (/\bfy\s?\d/.test(t) && quarter === null);
-
-  /* ---- 4. Halves and other spans we do not score ---- */
+  /* ---- 5. Halves and other spans we do not score ---- */
   if (!quarter && /\b(first|second|1st|2nd)\s+half\b|\bh[12]\b|\b[12]h\b/.test(t)) {
     return { period: null, why: "A half-year is not a period this scores." };
   }
 
-  /* ---- 5. Put it together ---- */
+  /* ---- 6. Put it together ---- */
 
   if (quarter && year !== null) {
     return { period: year + "Q" + quarter, how: "quarter and year both stated" };
   }
 
   if (quarter && year === null) {
-    // "third quarter", no year. Anchored on the filing date and the direction
-    // of travel: an actual looks back, a guide looks forward.
     const label = nearestQuarterLabel(quarter, cal, reference, direction);
     if (label === null) {
       return { period: null, why: "A quarter was named with no year, and no filing date was available to anchor it." };
@@ -307,8 +318,8 @@ function classifySpan(t) {
 function nearestQuarterLabel(quarter, cal, referenceMs, direction) {
   if (!Number.isFinite(referenceMs)) return null;
   const centre = labelOf(new Date(referenceMs).toISOString().slice(0, 10), cal);
-
   const candidates = [centre - 1, centre, centre + 1];
+
   if (direction === "past") {
     let best = null;
     for (const label of candidates) {
