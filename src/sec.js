@@ -76,12 +76,46 @@ function sleep(ms) {
 }
 
 /**
+ * Bytes to text, decided here rather than by the response header.
+ *
+ * The symptom was quotes and bullets arriving as "Companyâ€™s" and "â€¢", and
+ * a cent sign as "Â¢". That is the signature of UTF-8 bytes read through a
+ * single-byte decoder: SEC sends many exhibits with a legacy charset declared
+ * in the Content-Type, response.text() believes the header, and every
+ * non-ASCII character is mangled.
+ *
+ * It was patched twice at the wrong end - first by decoding more entities,
+ * which only exposed more of it, then by rewriting the broken sequences after
+ * the fact, which did not fire. The cause is the decoder, so the decoder is
+ * what gets fixed.
+ *
+ * UTF-8 first, because in practice that is what SEC sends whatever the header
+ * says. A document that genuinely is single-byte produces replacement
+ * characters when read as UTF-8, and a scattering of those is the signal to
+ * decode it the other way instead. The threshold is deliberately low: one bad
+ * character per two thousand is already far more than a real UTF-8 document
+ * produces.
+ */
+function decodeBody(buffer) {
+  const utf8 = new TextDecoder("utf-8").decode(buffer);
+  const bad = (utf8.match(/\uFFFD/g) || []).length;
+
+  if (bad === 0 || bad < utf8.length / 2000) return utf8;
+
+  try {
+    return new TextDecoder("windows-1252").decode(buffer);
+  } catch {
+    return utf8;
+  }
+}
+
+/**
  * Server-side fetch of an EDGAR HTML document.
  *
- * Written after a Delta exhibit that had been read successfully minutes
- * earlier started returning 403 and kept returning it. Two candidates - SEC
- * throttling, or a 403 stored in the edge cache for a day - and no way to tell
- * them apart, because the old code threw the status and discarded the body.
+ * Written after a Delta exhibit read successfully minutes earlier started
+ * returning 403 and kept returning it. Two candidates - SEC throttling, or a
+ * 403 stored in the edge cache for a day - and no way to tell them apart,
+ * because the old code threw the status and discarded the body.
  *
  * SEC says which it is. A throttled request comes back with a page explaining
  * the request-rate threshold; a rejected one explains that the tool is
@@ -89,17 +123,14 @@ function sleep(ms) {
  * away, and two rounds were spent guessing at something the server had already
  * answered.
  *
- * So: keep the first part of the body, and put it in the error.
+ * The retry handles the other half. The first attempt may be served from
+ * cache, and a cached failure does not improve with waiting - in production it
+ * would take a company offline for a day. Later attempts bypass the cache, so
+ * a stored 403 is stepped over rather than waited out, and the error says
+ * whether the bypass ran. Slow retries, because the likeliest cause of a 403
+ * is asking too often.
  *
- * The retry exists for the other half of the problem. The first attempt may be
- * served from cache, and a cached failure does not improve with waiting - in
- * production it would take a company offline for a day. Later attempts bypass
- * the cache, so a stored 403 is stepped over rather than waited out, and the
- * error says whether the bypass was tried. Slow retries, because the most
- * likely cause of a 403 is asking too often.
- *
- * Nothing here hides a failure. Every path either returns the document or
- * throws with what EDGAR said.
+ * It turned out to be the cache, in a single call.
  */
 export async function fetchDoc(env, url) {
   if (!env.SEC_USER_AGENT) throw new Error("SEC_USER_AGENT is not set on the Worker.");
@@ -114,8 +145,6 @@ export async function fetchDoc(env, url) {
     try {
       res = await fetch(url, {
         headers: { "User-Agent": env.SEC_USER_AGENT, Accept: "text/html, */*" },
-        // First attempt takes the cache. Later ones deliberately do not, so a
-        // stored failure cannot repeat itself.
         cf: bypass ? { cacheTtl: 0, cacheEverything: false } : { cacheTtl: 86400 },
       });
     } catch (e) {
@@ -124,7 +153,7 @@ export async function fetchDoc(env, url) {
       continue;
     }
 
-    if (res.ok) return await res.text();
+    if (res.ok) return decodeBody(await res.arrayBuffer());
 
     // What EDGAR actually said, tags stripped, first 300 characters.
     let explain = "";
