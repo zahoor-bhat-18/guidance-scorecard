@@ -3,27 +3,15 @@
  *
  * This is the half of the product that needs no model at all. SEC publishes
  * every figure a company files as XBRL, with the concept, the period and the
- * unit attached. One request per company returns all of it.
+ * unit attached.
  *
  * The label is never the thing to match on. A company guides "net sales" and
  * files "RevenueFromContractWithCustomerExcludingAssessedTax". So each metric
- * carries an ORDERED list of concepts and the first one that has a fact for
- * the period wins.
+ * carries an ORDERED list of concepts and the first with a fact for the period
+ * wins.
  */
 
 import { secJson } from "./sec.js";
-
-/**
- * fy and fp cannot be trusted as a fact's period.
- *
- * In companyfacts they describe the REPORT the fact was filed in, not the
- * period the fact covers. A 10-Q for FY2026 Q1 also carries last year's
- * comparative column, and both rows come back tagged fy 2026, fp Q1 - so
- * Macy's quarter ending May 2025 arrived labelled 2026Q1. Every match built on
- * that would be a year out.
- *
- * The dates are reliable, so the period is derived from them instead.
- */
 
 /** The company's fiscal year end, as month and day, from EDGAR. */
 async function fiscalYearEnd(env, cik) {
@@ -35,12 +23,14 @@ async function fiscalYearEnd(env, cik) {
 }
 
 /**
- * Which fiscal year does a date fall in, and which quarter of it?
+ * fy and fp cannot be trusted as a fact's period.
  *
- * Returned as the calendar year the fiscal year ENDS in, plus a quarter
- * number. Turning that into the company's own label needs one more step,
- * because the conventions disagree: Macy's FY2025 ends January 2026, while
- * Autodesk's FY2027 also ends January 2027. Nothing in a date says which.
+ * In companyfacts they describe the REPORT the fact was filed in, not the
+ * period the fact covers. A 10-Q for FY2026 Q1 also carries last year's
+ * comparative column, and both rows come back tagged fy 2026, fp Q1 - so
+ * Macy's quarter ending May 2025 arrived labelled 2026Q1.
+ *
+ * The dates are reliable, so the period is derived from them instead.
  */
 function fiscalPosition(endDate, fye) {
   const d = new Date(endDate + "T00:00:00Z");
@@ -63,114 +53,120 @@ function fiscalPosition(endDate, fye) {
  * ends?
  *
  * There is no rule. Macy's year ending January 2026 is its fiscal 2025;
- * Autodesk's year ending January 2027 is its fiscal 2027. Nothing in a date
- * distinguishes them, and fy in companyfacts cannot help - it is the year of
- * the REPORT, which is what sent the first two attempts at this a year out.
+ * Walmart's year ending January 2027 is its fiscal 2027; Autodesk is like
+ * Walmart. All three close in late January, so the month settles nothing.
  *
- * The company states its own answer in dei.DocumentFiscalYearFocus. Pairing
- * that with the period end gives the offset directly, with nothing inferred.
+ * The original detector read dei.DocumentFiscalYearFocus out of companyfacts
+ * and never once succeeded - that payload does not carry dei document tags for
+ * any filer tested, which the evidence block finally made visible after it had
+ * been silently guessing for days.
  *
- * TWO CHANGES, both because this kept falling through to the fallback and
- * reporting "assumed from the year end month" on a company whose 10-K clearly
- * carries the tag:
- *
- *   - 10-Q filings are read as well as 10-K. A quarterly report states the
- *     same fiscal year focus, and there are four times as many of them, so a
- *     filer whose annual tag is missing or oddly formed is still covered.
- *   - Every candidate examined is reported in `evidence`, whether it was used
- *     or rejected and why. Guessing at why a detector is silent has cost this
- *     project more time than any other single thing, and the answer is always
- *     the same: make it say what it saw.
+ * So it is tried at the companyconcept endpoint instead, which serves one tag
+ * at a time and may carry what companyfacts omits. If that is empty too, the
+ * release text decides - see conventionFromText in period.js - and only if
+ * both fail does it fall back to the year-end month, which is a guess and is
+ * labelled as one.
  */
-function learnLabelOffset(dei, fye) {
-  const node = dei && dei.DocumentFiscalYearFocus;
-  const evidence = [];
+async function focusFromConcept(env, cik, fye) {
+  const url = "https://data.sec.gov/api/xbrl/companyconcept/CIK" + cik
+    + "/dei/DocumentFiscalYearFocus.json";
 
-  if (node && node.units) {
-    const all = [];
-    for (const facts of Object.values(node.units)) {
-      for (const f of facts) all.push(f);
-    }
-    // Newest first: a company that changed convention is read on its current
-    // one.
-    all.sort((a, b) => (String(a.end || "") < String(b.end || "") ? 1 : -1));
-
-    for (const f of all.slice(0, 12)) {
-      const row = { form: f.form, end: f.end, val: f.val };
-
-      if (f.form !== "10-K" && f.form !== "10-Q") {
-        row.rejected = "not an annual or quarterly report";
-        evidence.push(row);
-        continue;
-      }
-      if (!f.end) {
-        row.rejected = "no period end date";
-        evidence.push(row);
-        continue;
-      }
-
-      const label = parseInt(f.val, 10);
-      if (!Number.isFinite(label)) {
-        row.rejected = "fiscal year focus is not a number";
-        evidence.push(row);
-        continue;
-      }
-
-      const { endsIn } = fiscalPosition(f.end, fye);
-      const offset = endsIn - label;
-      row.impliedOffset = offset;
-
-      if (offset === 0 || offset === 1) {
-        row.used = true;
-        evidence.push(row);
-        return { offset, source: "DocumentFiscalYearFocus", evidence };
-      }
-
-      row.rejected = "implied offset of " + offset + " is not 0 or 1";
-      evidence.push(row);
-    }
-  } else {
-    evidence.push({ rejected: "companyfacts carries no dei.DocumentFiscalYearFocus" });
+  let doc;
+  try {
+    doc = await secJson(env, url);
+  } catch (e) {
+    return { offset: null, evidence: [{ rejected: "companyconcept has no DocumentFiscalYearFocus (" + e.message + ")" }] };
   }
 
-  // Fallback: whichever calendar year holds most of the fiscal year. Right for
-  // Macy's and wrong for Autodesk, which is why it is only a fallback and why
-  // the answer is reported for checking.
-  if (fye.month === 12) return { offset: 0, source: "calendar year end", evidence };
-  return { offset: fye.month <= 6 ? 1 : 0, source: "assumed from the year end month", evidence };
+  const evidence = [];
+  const all = [];
+  for (const facts of Object.values((doc && doc.units) || {})) {
+    for (const f of facts) all.push(f);
+  }
+  all.sort((a, b) => (String(a.end || "") < String(b.end || "") ? 1 : -1));
+
+  for (const f of all.slice(0, 12)) {
+    const row = { form: f.form, end: f.end, val: f.val };
+
+    if (f.form !== "10-K" && f.form !== "10-Q") {
+      row.rejected = "not an annual or quarterly report";
+      evidence.push(row);
+      continue;
+    }
+    if (!f.end) {
+      row.rejected = "no period end date";
+      evidence.push(row);
+      continue;
+    }
+
+    const label = parseInt(f.val, 10);
+    if (!Number.isFinite(label)) {
+      row.rejected = "fiscal year focus is not a number";
+      evidence.push(row);
+      continue;
+    }
+
+    const { endsIn } = fiscalPosition(f.end, fye);
+    const offset = endsIn - label;
+    row.impliedOffset = offset;
+
+    if (offset === 0 || offset === 1) {
+      row.used = true;
+      evidence.push(row);
+      return { offset, evidence };
+    }
+
+    row.rejected = "implied offset of " + offset + " is not 0 or 1";
+    evidence.push(row);
+  }
+
+  if (!evidence.length) evidence.push({ rejected: "companyconcept returned no usable facts" });
+  return { offset: null, evidence };
+}
+
+/* The last resort, and a guess. Right for Macy's, wrong for Walmart and
+   Autodesk, which is why it is labelled and reported. */
+function assumeFromMonth(fye) {
+  if (fye.month === 12) return { offset: 0, source: "calendar year end" };
+  return { offset: fye.month <= 6 ? 1 : 0, source: "assumed from the year end month" };
 }
 
 /**
- * The company's calendar, on its own.
+ * The company's calendar.
  *
- * The period normaliser needs the same two facts every fact here is labelled
+ * The period normaliser needs the same two facts every XBRL fact is labelled
  * with - where the fiscal year ends, and whether the company names a year by
  * its start or its end - and must get them from the same place, or a guide and
- * an actual for the same period end up with different labels and never match.
+ * an actual for the same period get different labels and never match.
+ *
+ * refineWithText() in the callers can improve labelOffset once a release has
+ * been read. This is the starting point, not the last word.
  */
 export async function companyCalendar(env, cik) {
-  const url = "https://data.sec.gov/api/xbrl/companyfacts/CIK" + cik + ".json";
-  const [doc, fye] = await Promise.all([secJson(env, url), fiscalYearEnd(env, cik)]);
-  const dei = (doc.facts && doc.facts.dei) || {};
-  const convention = learnLabelOffset(dei, fye);
+  const fye = await fiscalYearEnd(env, cik);
+  const concept = await focusFromConcept(env, cik, fye);
+
+  const chosen = concept.offset !== null
+    ? { offset: concept.offset, source: "DocumentFiscalYearFocus, from companyconcept" }
+    : assumeFromMonth(fye);
 
   return {
     fye: { month: fye.month, day: fye.day },
-    labelOffset: convention.offset,
+    labelOffset: chosen.offset,
     meta: {
       fiscalYearEnd:
         String(fye.month).padStart(2, "0") + "/" + String(fye.day).padStart(2, "0"),
-      labelConvention: convention.offset === 1
+      labelConvention: chosen.offset === 1
         ? "fiscal year is labelled by the year it STARTS in"
         : "fiscal year is labelled by the year it ENDS in",
-      conventionFrom: convention.source,
-      evidence: convention.evidence,
+      conventionFrom: chosen.source,
+      evidence: concept.evidence,
     },
   };
 }
 
 /* Ordered fallbacks per metric. First match wins, so the most specific and
-   most modern tag goes first. These lists grow as filers are tested. */
+   most modern tag goes first. */
 export const CONCEPTS = {
   revenue: [
     "RevenueFromContractWithCustomerExcludingAssessedTax",
@@ -197,8 +193,6 @@ export const CONCEPTS = {
   net_income: ["NetIncomeLoss", "ProfitLoss"],
 };
 
-/* Units that mean the same thing. XBRL reports EPS in "USD/shares" and money
-   in "USD"; a rate arrives as a decimal fraction, not a percentage. */
 function normalise(metric, value, unit) {
   if (metric === "tax_rate") {
     return { value: Math.abs(value) <= 1.5 ? value * 100 : value, unit: "percent" };
@@ -211,17 +205,17 @@ function normalise(metric, value, unit) {
 /**
  * Every usable fact for one company, keyed by metric and fiscal period.
  *
- * A fact is usable when it has a duration matching what the period claims to
- * be - a quarterly tag carrying a year-to-date figure is the single most
- * common way a scorecard reads 300% beats out of nothing.
+ * A fact is usable when its duration matches what the period claims to be - a
+ * quarterly tag carrying a year-to-date figure is the single most common way a
+ * scorecard reads 300% beats out of nothing.
  */
-export async function factsFor(env, cik) {
+export async function factsFor(env, cik, calendar) {
   const url = "https://data.sec.gov/api/xbrl/companyfacts/CIK" + cik + ".json";
-  const [doc, fye] = await Promise.all([secJson(env, url), fiscalYearEnd(env, cik)]);
+  const cal = calendar || await companyCalendar(env, cik);
+  const doc = await secJson(env, url);
   const us = (doc.facts && doc.facts["us-gaap"]) || {};
-  const dei = (doc.facts && doc.facts.dei) || {};
-  const convention = learnLabelOffset(dei, fye);
-  const labelOffset = convention.offset;
+  const fye = cal.fye;
+  const labelOffset = cal.labelOffset;
 
   const out = {};
 
@@ -253,33 +247,15 @@ export async function factsFor(env, cik) {
             end: f.end, filed: f.filed, accession: f.accn,
           };
 
-          // Keep the EARLIEST filing of a period, not the latest. XBRL carries
-          // every restatement, and a figure restated two years later is not
-          // what management was judged against at the time.
+          // Keep the EARLIEST filing of a period. XBRL carries every
+          // restatement, and a figure restated two years later is not what
+          // management was judged against at the time.
           const held = out[key];
           if (!held || rec.filed < held.filed) out[key] = rec;
         }
       }
       if (Object.keys(out).some((k) => k.startsWith(metric + "|"))) break;
     }
-  }
-
-  // Free cash flow is not a tag. It is operating cash flow less capex, and
-  // both are, so it is derived exactly rather than estimated.
-  for (const key of Object.keys(out)) {
-    if (!key.startsWith("operating_cash_flow|")) continue;
-    const period = key.split("|")[1];
-    const ocf = out[key];
-    const capex = out["capex|" + period];
-    if (!capex) continue;
-    out["fcf|" + period] = {
-      metric: "fcf", period,
-      value: ocf.value - Math.abs(capex.value),
-      unit: ocf.unit,
-      concept: ocf.concept + " less " + capex.concept,
-      form: ocf.form, end: ocf.end, filed: ocf.filed, accession: ocf.accession,
-      derived: "operating cash flow less capital expenditure",
-    };
   }
 
   // Fourth quarter, by subtraction. Companies do not tag Q4; the 10-K reports
@@ -306,7 +282,9 @@ export async function factsFor(env, cik) {
     }
   }
 
-  // Free cash flow again, so a derived Q4 gets one too.
+  // Free cash flow is not a tag. It is operating cash flow less capex, and
+  // both are, so it is derived exactly rather than estimated. Run after the Q4
+  // derivation so a derived quarter gets one too.
   for (const key of Object.keys(out)) {
     if (!key.startsWith("operating_cash_flow|")) continue;
     const period = key.split("|")[1];
@@ -316,22 +294,14 @@ export async function factsFor(env, cik) {
     out["fcf|" + period] = {
       metric: "fcf", period,
       value: ocf.value - Math.abs(capex.value),
-      unit: ocf.unit, concept: ocf.concept + " less " + capex.concept,
+      unit: ocf.unit,
+      concept: ocf.concept + " less " + capex.concept,
       form: ocf.form, end: ocf.end, filed: ocf.filed, accession: ocf.accession,
       derived: "operating cash flow less capital expenditure",
     };
   }
 
-  const meta = {
-    fiscalYearEnd: String(fye.month).padStart(2, "0") + "/" + String(fye.day).padStart(2, "0"),
-    labelConvention: labelOffset === 1
-      ? "fiscal year is labelled by the year it STARTS in"
-      : "fiscal year is labelled by the year it ENDS in",
-    conventionFrom: convention.source,
-    evidence: convention.evidence,
-  };
-
-  return { facts: out, meta };
+  return { facts: out, meta: cal.meta };
 }
 
 /** Ticker to CIK, from SEC's own list. */
