@@ -4,25 +4,18 @@
  * The companion to guidance.js, and the part that had to be conceded.
  *
  * XBRL holds actuals exactly, but only GAAP ones, and only weeks later when
- * the 10-Q is filed. Testing six large caps showed GAAP-only leaves four
- * scoreable guides across six companies: management guides adjusted EPS,
- * constant-currency sales and segment margin, and none of those is tagged
- * anywhere. So the non-GAAP actual comes out of the release, where it is
- * printed as a headline.
+ * the 10-Q is filed. Six large caps produced four GAAP-scoreable guides
+ * between them: management guides adjusted EPS, constant-currency sales and
+ * segment margin, and none of those is tagged anywhere. So the non-GAAP actual
+ * comes out of the release, where it is printed as a headline.
  *
- * This is narrow on purpose. It is not asked what the company reported. It is
- * asked, for a specific list of metrics guided a quarter ago, what the figure
- * turned out to be. A model given a shorter question gives a better answer,
- * and everything it is not asked for is one less thing to be wrong about.
- *
- * The filing is read through guidance.js now rather than by a private copy.
- * The duplication was there to stop a change to shared code silently changing
- * both extractions at once - but reading the whole 99-series is a fact about
- * the FILING, not about either extraction, and having the two disagree about
- * which documents exist would be worse than the risk it avoided.
+ * Narrow on purpose. It is not asked what the company reported. It is asked,
+ * for a specific list of metrics guided a quarter ago, what the figure turned
+ * out to be.
  */
 
 import { readFiling } from "./guidance.js";
+import { resolvePeriod } from "./period.js";
 
 const MODEL = "deepseek-chat";
 const ENDPOINT = "https://api.deepseek.com/chat/completions";
@@ -30,12 +23,12 @@ const ENDPOINT = "https://api.deepseek.com/chat/completions";
 /**
  * Is this guide a level, or a change?
  *
- * The distinction the first version of this file lost, at real cost. Walmart
- * guided net sales to "increase 4.0% to 5.0%" and the answer came back as
- * 184,574 - a dollar figure, from a table row printing the quarter and the
- * year to date side by side. Both the kind of number and the column were
- * wrong, because the model was told the metric name and the basis and nothing
- * about what sort of answer the question had.
+ * The distinction the first version lost, at real cost. Walmart guided net
+ * sales to "increase 4.0% to 5.0%" and the answer came back as 184,574 - a
+ * dollar figure, from a table row printing the quarter and the year to date
+ * side by side. Both the kind of number and the column were wrong, because the
+ * model was told the metric name and the basis and nothing about what sort of
+ * answer the question had.
  *
  * A guide expressed as a change can only be answered by a change. There is no
  * conversion available: constant-currency growth cannot be recovered from a
@@ -70,20 +63,18 @@ function expectedAnswer(shape, unit) {
  * Broadcom returned zero actuals from three perfectly good guides, and the
  * model was right to return nothing. It had been asked to find "Third quarter
  * revenue guidance" in the third-quarter results - a metric whose name
- * contains the word guidance and a period label that is now in the past. There
- * is no such line in a results release, and an instruction elsewhere in the
- * prompt says never to report a forecast.
+ * contains the word guidance and a period label now in the past. There is no
+ * such line in a results release, and an instruction elsewhere says never to
+ * report a forecast.
  *
  * The company's own words are still what gets matched on. Only the scaffolding
- * around them is removed: the period, and the words that mark it as an
- * expectation rather than a result.
+ * around them is removed.
  */
 export function cleanMetricName(written) {
   let s = " " + String(written || "") + " ";
 
   s = s
     .replace(/\b(first|second|third|fourth)\s+quarter\b/gi, " ")
-    .replace(/\bfourth\s+quarter\s+of\s+fiscal\s+year\s*\d{2,4}\b/gi, " ")
     .replace(/\bof\s+fiscal\s+year\s*\d{2,4}\b/gi, " ")
     .replace(/\bfiscal\s+(year\s+)?\d{2,4}\b/gi, " ")
     .replace(/\bfull[-\s]?year\b/gi, " ")
@@ -109,14 +100,8 @@ export function cleanMetricName(written) {
  *
  * The test is the numbers themselves rather than the shape, which covers four
  * cases at once and cannot fall out of step with a shape added later:
- *
- *   reaffirmed  - unless its numbers were recovered from the quote
- *   withdrawn   - there is no guide any more
- *   qualitative - "up low-teens", or a figure the quote guard rejected
- *   anything else that arrived empty
- *
- * Delta's "Total Revenue YoY - up low-teens" went looking for an actual under
- * the old rule, found a real 19%, and had nothing to compare it to.
+ * reaffirmed without recoverable figures, withdrawn, qualitative, and anything
+ * that arrived empty.
  */
 export function requestsFrom(guides) {
   const seen = new Set();
@@ -133,7 +118,6 @@ export function requestsFrom(guides) {
     if (!written) continue;
 
     const query = cleanMetricName(written);
-
     const key = query.toLowerCase() + "|" + (g.basis || "");
     if (seen.has(key)) continue;
     seen.add(key);
@@ -145,6 +129,7 @@ export function requestsFrom(guides) {
       basis: g.basis || "unclear",
       unit: g.unit || "other",
       shape: g.shape || "point",
+      guidePeriod: g.period || null,
       expect: expectedAnswer(g.shape, g.unit),
     });
   }
@@ -154,19 +139,14 @@ export function requestsFrom(guides) {
 /**
  * The prompt.
  *
- * Deliberately short. The instruction that matters is the one separating a
- * result from a forecast, because a release states both, often in neighbouring
- * sentences, and reading a forecast as a result would have the product tell a
- * subscriber a company missed a number it has not yet reported.
+ * The instruction that matters is the one separating a result from a forecast,
+ * because a release states both, often in neighbouring sentences, and reading
+ * a forecast as a result would tell a subscriber a company missed a number it
+ * has not yet reported.
  *
  * The second, added after the Walmart failure, is that each metric carries the
- * kind of answer it takes. A guide stated as a percentage increase is not
- * answered by a dollar figure, and a model that produces one anyway has not
- * found the actual - it has found a different number sitting near the right
- * label.
- *
- * Nothing checkable is asked for. The period is taken verbatim and resolved in
- * code against the fiscal-label logic proven in xbrl.js.
+ * kind of answer it takes. A number of the wrong kind is not the actual,
+ * however close its label sits.
  */
 const SYSTEM = [
   "You read one company earnings press release and report ACTUAL REPORTED RESULTS.",
@@ -185,7 +165,8 @@ const SYSTEM = [
   "A number of the wrong kind is not the actual, however close its label sits.",
   "",
   "Where a table prints several columns - the quarter and the year to date, or this",
-  "year and last - the quarter just ended is the one wanted.",
+  "year and last - the quarter just ended is the one wanted. Say in period_text",
+  "which period the figure you took belongs to.",
   "",
   "Match on meaning, not on wording. 'Net sales' and 'total revenue' may be the same",
   "figure. 'Adjusted diluted EPS' and 'adjusted earnings per share' are the same. But",
@@ -272,20 +253,15 @@ async function callModel(env, requests, text) {
  * row reporting nothing must not look the same: the first is the model
  * ignoring an instruction, the second is a fact about the release.
  *
- * The expected unit is checked here as well as asked for in the prompt. An
- * instruction is a request; a check is a fact. Mismatches are reported rather
- * than dropped, because a mismatch is usually the model finding a real number
- * of the wrong kind, and seeing which number it found is how the next fix gets
- * written.
+ * Each row carries a resolved period, read BACKWARD - an actual reports a
+ * period that has ended. Without it, Walmart's full-year reaffirmations were
+ * answered with quarterly figures and every one would have scored as a wild
+ * beat or miss.
  */
-export async function actualsFrom(env, cik, release, requests) {
+export async function actualsFrom(env, cik, release, requests, cal) {
   const filing = await readFiling(env, cik, release.accession);
   const rows = await callModel(env, requests, filing.text);
 
-  // Rows are keyed back to what was asked for. The model is told to copy the
-  // name unchanged and keep the order, and mostly does - but a row that cannot
-  // be tied back to a request is not usable, so the request list leads and the
-  // rows follow it.
   const byName = new Map();
   for (const row of rows) {
     const k = String(row.metric || row.metric_as_written || "").trim().toLowerCase();
@@ -301,6 +277,10 @@ export async function actualsFrom(env, cik, release, requests) {
     const gotPercent = unit === "percent";
     const unitMismatch = value !== null && Boolean(unit) && wantedPercent !== gotPercent;
 
+    const resolved = cal
+      ? resolvePeriod(row.period_text, cal, { referenceDate: release.filed, direction: "past" })
+      : { period: null, why: "No fiscal calendar was supplied." };
+
     return {
       metric: req.metric,
       metric_as_written: req.metric_as_written,
@@ -308,9 +288,13 @@ export async function actualsFrom(env, cik, release, requests) {
       basis: req.basis,
       guided_shape: req.shape,
       guided_unit: req.unit,
+      guide_period: req.guidePeriod,
       expected: req.expect.describe,
       found_as: row.found_as ?? null,
       period_text: row.period_text ?? null,
+      period: resolved.period,
+      period_how: resolved.how || null,
+      period_why: resolved.why || null,
       value,
       unit,
       unit_mismatch: unitMismatch,
