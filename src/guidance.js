@@ -1,26 +1,23 @@
 /**
  * Guidance, from the earnings release.
  *
- * The other half. XBRL cannot carry guidance: nobody tags a forecast, and a
- * forecast is prose. So this is the one place a model is unavoidable - and it
- * is deliberately the ONLY place. Actuals never come through here.
- *
- * The old product asked one model call to read a release for guidance AND
- * actuals, and got both wrong slowly. This asks for guidance only.
+ * XBRL cannot carry guidance: nobody tags a forecast, and a forecast is prose.
+ * So this is the one place a model is unavoidable - and deliberately the ONLY
+ * place a guide comes from.
  *
  * Nothing here is matched or scored. A guide is recorded as the company wrote
  * it, in the units it used, with the sentence it came from.
  */
 
 import { secJson, fetchDoc } from "./sec.js";
+import { resolvePeriod } from "./period.js";
 
 const MODEL = "deepseek-chat";
 const ENDPOINT = "https://api.deepseek.com/chat/completions";
 
-/* How much of the release the model sees. Releases run long because the
-   financial statements are appended, and guidance is never in them. The
-   response reports whether the cut happened, because "no guidance found" and
-   "the guidance was past the cut" look identical otherwise. */
+/* How much of the release the model sees. The response reports whether the cut
+   happened, because "no guidance found" and "the guidance was past the cut"
+   look identical otherwise. */
 const MAX_CHARS = 80000;
 
 /* Two filings closer together than this are one event reported twice. A real
@@ -36,16 +33,15 @@ const SAME_EVENT_DAYS = 45;
  * Almost. Honeywell filed an 8-K carrying items 1.01, 2.01, 2.02, 3.03, 5.02,
  * 5.03, 7.01 and 9.01 three weeks before its actual results - a transaction
  * filing mentioning results in passing. Taking it as the previous release cost
- * a whole quarter, silently, because it produced no guidance and a company
- * with no guidance looks exactly like one we failed to read.
+ * a whole quarter, silently, because a company with no guidance looks exactly
+ * like one we failed to read.
  *
- * Macy's produced the mirror image: two item-2.02 filings three weeks apart
- * for one quarter, preliminary results followed by full ones.
+ * Macy's produced the mirror image: two item-2.02 filings three weeks apart,
+ * preliminary results followed by full ones.
  *
- * Both are fixed by one rule. Filings within six weeks of each other are one
- * event and the LATER one wins - the full results in Macy's case, the real
- * earnings release in Honeywell's. What was dropped is reported, so a wrong
- * merge is visible rather than inferred.
+ * One rule fixes both. Filings within six weeks are one event and the LATER
+ * wins - the full results in Macy's case, the real earnings release in
+ * Honeywell's. What was dropped is reported, so a wrong merge is visible.
  */
 export async function earningsReleases(env, cik, limit) {
   const subs = await secJson(env, "https://data.sec.gov/submissions/CIK" + cik + ".json");
@@ -65,7 +61,6 @@ export async function earningsReleases(env, cik, limit) {
     });
   }
 
-  // Newest first. EDGAR returns them that way, but it is not promised.
   all.sort((a, b) => (a.filed < b.filed ? 1 : -1));
 
   const kept = [];
@@ -75,12 +70,7 @@ export async function earningsReleases(env, cik, limit) {
     if (previous) {
       const gap = (Date.parse(previous.filed) - Date.parse(f.filed)) / 86400000;
       if (gap >= 0 && gap < SAME_EVENT_DAYS) {
-        merged.push({
-          dropped: f.accession,
-          filed: f.filed,
-          items: f.items,
-          inFavourOf: previous.accession,
-        });
+        merged.push({ dropped: f.accession, filed: f.filed, items: f.items, inFavourOf: previous.accession });
         continue;
       }
     }
@@ -112,10 +102,6 @@ function exhibitRank(name) {
  * So the whole 99-series is read, 99.1 first. Ordering matters because the
  * character budget is finite: if a filer attaches long supplemental tables,
  * those are what gets cut, never the press release.
- *
- * Filings with no 99-series exhibit fall back to the largest HTML document,
- * which is how Delta and Walmart are read - they file the release as the
- * primary document under their own naming.
  */
 async function collectExhibits(env, cik, accession) {
   const noDash = accession.replace(/-/g, "");
@@ -132,11 +118,7 @@ async function collectExhibits(env, cik, accession) {
     named.sort((a, b) => exhibitRank(a.name) - exhibitRank(b.name));
     return {
       pickedBy: "the 99-series exhibits, in order",
-      files: named.slice(0, 4).map((f) => ({
-        name: f.name,
-        url: base + "/" + f.name,
-        bytes: Number(f.size || 0),
-      })),
+      files: named.slice(0, 4).map((f) => ({ name: f.name, url: base + "/" + f.name, bytes: Number(f.size || 0) })),
     };
   }
 
@@ -151,17 +133,17 @@ async function collectExhibits(env, cik, accession) {
  * Entities, decoded.
  *
  * The diagnostic showed the model reading raw &#34; and &#8226; and &#58;
- * throughout: only a handful of named entities were handled and no numeric
- * ones at all. Noise around a number is exactly where an extractor makes
+ * throughout. Noise around a number is exactly where an extractor makes
  * mistakes, and it is free to remove.
  *
  * Decoded AFTER tags are stripped, deliberately. A document containing &#60;
  * would otherwise produce a "<" that the tag stripper reads as markup and eats
  * the text after it.
  *
- * The last three replacements are for a cent sign that arrived as "Â¢" in a
- * Delta quote - UTF-8 bytes read through a single-byte decoder somewhere
- * upstream. The stray marker before a symbol is dropped.
+ * The mojibake that appeared alongside this - "Companyâ€™s", "Â¢" - is NOT
+ * handled here any more. It was never an entity problem: SEC declares a legacy
+ * charset and the response was being decoded through it. That is fixed in
+ * fetchDoc, at the decoder, which is where it belongs.
  */
 function decodeEntities(s) {
   const named = {
@@ -185,10 +167,7 @@ function decodeEntities(s) {
     .replace(/&([a-z]+);/gi, (m, name) => {
       const k = name.toLowerCase();
       return Object.prototype.hasOwnProperty.call(named, k) ? named[k] : m;
-    })
-    .replace(/\u00C2(?=[\u00A0-\u00BF])/g, "")
-    .replace(/\u00E2\u20AC\u2122/g, "'")
-    .replace(/\u00E2\u20AC\u201C/g, "-");
+    });
 }
 
 /* Tags out, text in. Deliberately crude: this is not parsing, it is stripping.
@@ -205,13 +184,7 @@ export function htmlToText(html) {
     .trim();
 }
 
-/**
- * Every exhibit, read and joined, within the character budget.
- *
- * Each is labelled in the text so the model knows when it has crossed from the
- * press release into the investor update, and so a quote can be traced back to
- * a file.
- */
+/** Every exhibit, read and joined, within the character budget. */
 export async function readFiling(env, cik, accession) {
   const chosen = await collectExhibits(env, cik, accession);
   const parts = [];
@@ -231,12 +204,7 @@ export async function readFiling(env, cik, accession) {
     const slice = text.length > room ? text.slice(0, room) : text;
     parts.push(header + slice);
     spent += header.length + slice.length;
-    used.push({
-      file: file.name,
-      chars: text.length,
-      included: true,
-      truncated: slice.length < text.length,
-    });
+    used.push({ file: file.name, chars: text.length, included: true, truncated: slice.length < text.length });
   }
 
   return { text: parts.join(""), pickedBy: chosen.pickedBy, files: used, chars: spent };
@@ -249,19 +217,13 @@ export async function readFiling(env, cik, accession) {
 /**
  * Every number appearing in a quote.
  *
- * Written after Delta's non-fuel unit cost guide came back as 6 percent from
- * this sentence:
- *
- *   "we expect non-fuel unit costs to grow at a rate similar to the March
- *    quarter, reflecting the impact of our capacity actions"
- *
- * There is no 6 in it. The number was invented, then compared against a real
- * 6.8% actual to produce a near-miss out of nothing. Nobody reading the row
- * would have doubted it.
+ * Written after Delta's non-fuel unit cost guide came back as 6 percent from a
+ * sentence reading "we expect non-fuel unit costs to grow at a rate similar to
+ * the March quarter". There is no 6 in it. The number was invented, then
+ * compared against a real 6.8% actual to produce a near-miss out of nothing.
  *
  * Parenthesised figures are recorded as both signs. "(0.5%) to 0.5%" runs from
- * minus a half to plus a half, and a model may report either sign for the
- * first one.
+ * minus a half to plus a half.
  */
 export function quoteNumbers(quote) {
   const found = new Set();
@@ -279,8 +241,7 @@ export function quoteNumbers(quote) {
 }
 
 /* Numbers agree when they are the same number. The tolerance is for
-   representation only - 2 against 2.00 - not for closeness. A guide of 7.7 is
-   NOT supported by a 7.8 in the quote. */
+   representation only - 2 against 2.00 - not for closeness. */
 function present(value, pool) {
   if (typeof value !== "number" || !Number.isFinite(value)) return true;
   for (const n of pool) {
@@ -290,38 +251,64 @@ function present(value, pool) {
 }
 
 /**
- * A reaffirmed guide, with its numbers put back.
+ * A reaffirmed guide, with its numbers and its SHAPE put back.
  *
  * Walmart reaffirmed six full-year guides and every one came back with its
  * figures nulled, because the instruction says reaffirmations carry no
  * numbers. But the quotes restate them: "Net sales (cc) Increase 3.5% to 4.5%
  * Unchanged". The company did not withdraw a number, it repeated one - and
- * Walmart's entire full-year outlook fell out of the pipeline as a result.
+ * Walmart's entire full-year outlook fell out of the pipeline.
  *
- * The numbers are in the quote, so they are recovered in code without asking
- * the model anything. Two become a range, one becomes a point. Three or more
- * is ambiguous - a row carrying a prior column and a current one - and is left
- * alone rather than guessed at.
+ * Recovering the numbers alone was not enough. "Interest, net Increase
+ * approximately $200M to $300M" is a guide about a CHANGE, and with the shape
+ * still reading "reaffirmed" the actuals call was told to look for a level. It
+ * dutifully returned 171 - the quarter's interest expense - against a guide
+ * for a $200-300m increase.
+ *
+ * So the shape is read back out of the quote too. The words that mark a change
+ * are the company's own, in the sentence, and they are the same words in every
+ * release: increase, decrease, growth, up, down.
+ *
+ * Three or more numbers is ambiguous - a row carrying a prior column and a
+ * current one - and is left alone rather than guessed at.
  */
 function recoverReaffirmed(g) {
   const distinct = Array.from(quoteNumbers(g.quote))
     .filter((n) => n >= 0)
     .sort((a, b) => a - b);
 
+  if (!distinct.length || distinct.length > 2) return g;
+
+  const isChange = /\b(increase|increased|decrease|decreased|growth|grow|up|down|higher|lower)\b/i
+    .test(String(g.quote || ""));
+
   if (distinct.length === 2) {
-    return { ...g, low: distinct[0], high: distinct[1], numbers_recovered: "range read from the reaffirmed quote" };
+    return {
+      ...g,
+      shape: isChange ? "growth_range" : "range",
+      was_reaffirmed: true,
+      low: distinct[0],
+      high: distinct[1],
+      numbers_recovered: "range read from the reaffirmed quote"
+        + (isChange ? ", stated as a change" : ""),
+    };
   }
-  if (distinct.length === 1) {
-    return { ...g, value: distinct[0], numbers_recovered: "point read from the reaffirmed quote" };
-  }
-  return g;
+
+  return {
+    ...g,
+    shape: isChange ? "growth_point" : "point",
+    was_reaffirmed: true,
+    value: distinct[0],
+    numbers_recovered: "point read from the reaffirmed quote"
+      + (isChange ? ", stated as a change" : ""),
+  };
 }
 
 /**
  * A guide, checked against its own quote.
  *
  * If any stated number is absent from the quote, ALL of them are dropped and
- * the guide becomes qualitative. Deliberately strict, and worth knowing about:
+ * the guide becomes qualitative. Deliberately strict:
  *
  * United guided capacity "flat to up approximately 2%". A model reports that
  * as a range from 0 to 2. The 2 is in the sentence; the 0 is an inference from
@@ -329,14 +316,9 @@ function recoverReaffirmed(g) {
  * Under this rule the whole range is dropped and the guide is kept as an event
  * with no score.
  *
- * The alternative is to keep the supported half, which turns a range into a
- * one-sided guide and changes what it means. A guide that cannot be scored is
- * a small loss. A guide scored against a number nobody wrote is the loss that
- * ends the product.
- *
- * Nothing is deleted. The original numbers and the reason are both reported,
- * so a rule that proves too strict can be loosened by looking at what it
- * caught.
+ * Keeping the supported half would turn a range into a one-sided guide and
+ * change what it means. A guide that cannot be scored is a small loss. A guide
+ * scored against a number nobody wrote is the loss that ends the product.
  */
 function guardGuide(input) {
   const g = input.shape === "reaffirmed" ? recoverReaffirmed(input) : input;
@@ -355,9 +337,7 @@ function guardGuide(input) {
   return {
     ...g,
     shape: "qualitative",
-    low: null,
-    high: null,
-    value: null,
+    low: null, high: null, value: null,
     numbers_verified: false,
     unsupported_numbers: unsupported,
     reported_numbers: { low: g.low ?? null, high: g.high ?? null, value: g.value ?? null },
@@ -371,15 +351,12 @@ function guardGuide(input) {
  * The same guide, reported twice.
  *
  * Delta prints its outlook in a table AND describes it in the narrative, so
- * one guide arrives as "Total Revenue YoY (%)" and again as "total revenue
+ * one guide can arrive as "Total Revenue YoY (%)" and again as "total revenue
  * growth". Scoring both counts one company decision twice.
  *
- * Only exact duplicates are merged here: same metric, basis, unit, numbers and
- * period wording. The Delta pair is NOT caught, because its two rows label the
- * period differently ("2Q26" and "June quarter") and nothing in this file
- * knows those are the same quarter. That needs the period normaliser wired in,
- * and merging on a guess before then would merge two genuinely different
- * guides.
+ * Now that periods are resolved before this runs, the RESOLVED period is the
+ * key rather than the wording - which is what lets the Delta pair merge, since
+ * "2Q26" and "June quarter" finally arrive as the same label.
  */
 function dedupeGuides(guides) {
   const seen = new Map();
@@ -393,7 +370,7 @@ function dedupeGuides(guides) {
       g.low ?? "-",
       g.high ?? "-",
       g.value ?? "-",
-      String(g.period_text || "").toLowerCase().replace(/\s+/g, " ").trim(),
+      g.period || String(g.period_text || "").toLowerCase().replace(/\s+/g, " ").trim(),
     ].join("|");
 
     const held = seen.get(key);
@@ -415,12 +392,11 @@ function dedupeGuides(guides) {
  * 25 to zero.
  *
  * A line telling the model not to report numbers absent from its quote was
- * tried here and then removed. It worked - Delta's invented 6 stopped
- * appearing - but two real guides stated in prose, a pre-tax profit and a
- * refinery benefit, went missing in both runs that carried it. Accuracy paid
- * for in recall is the trade this product should not make, because the check
- * belongs in guardGuide, where it costs nothing and cannot compete with the
- * task.
+ * tried here and removed. It worked - Delta's invented 6 stopped appearing -
+ * but two real guides stated in prose went missing in both runs that carried
+ * it. Accuracy paid for in recall is the trade this product should not make,
+ * because the check belongs in guardGuide, where it costs nothing and cannot
+ * compete with the task.
  */
 const SYSTEM = [
   "You read one company earnings press release and report only FORWARD-LOOKING GUIDANCE.",
@@ -499,16 +475,29 @@ async function callModel(env, text) {
 /**
  * One release in, the guides it contains out.
  *
- * Fails loudly. An empty result and a failed call must never look the same: an
- * empty result is a finding about the company, a failed call is a finding
- * about us, and an email built on the second tells a subscriber a company
- * stopped guiding when it did not.
+ * cal is the company's fiscal calendar. With it, every guide carries a
+ * resolved period label as well as the words the company used - which is what
+ * the matcher compares, and what stops a full-year guide being answered by a
+ * first-quarter figure.
+ *
+ * Guidance looks FORWARD, so a period named without a year resolves to the
+ * next one, not the last.
+ *
+ * Fails loudly. An empty result and a failed call must never look the same.
  */
-export async function guidanceFrom(env, cik, release) {
+export async function guidanceFrom(env, cik, release, cal) {
   const filing = await readFiling(env, cik, release.accession);
 
   const raw = await callModel(env, filing.text);
-  const guides = dedupeGuides(raw.map(guardGuide));
+
+  const withPeriods = raw.map(guardGuide).map((g) => {
+    const r = cal
+      ? resolvePeriod(g.period_text, cal, { referenceDate: release.filed, direction: "future" })
+      : { period: null, why: "No fiscal calendar was supplied." };
+    return { ...g, period: r.period, period_how: r.how || null, period_why: r.why || null };
+  });
+
+  const guides = dedupeGuides(withPeriods);
 
   return {
     release: {
@@ -521,6 +510,7 @@ export async function guidanceFrom(env, cik, release) {
     },
     guarded: guides.filter((g) => g.numbers_verified === false).length,
     recovered: guides.filter((g) => g.numbers_recovered).length,
+    unresolvedPeriods: guides.filter((g) => !g.period).length,
     guides,
   };
 }
