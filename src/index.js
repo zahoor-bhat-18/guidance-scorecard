@@ -21,6 +21,7 @@ import { factsFor, resolveCik, companyCalendar } from "./xbrl.js";
 import { earningsReleases, guidanceFrom, readFiling, refineCalendar } from "./guidance.js";
 import { requestsFrom, actualsFrom } from "./actuals.js";
 import { resolvePeriod, samePeriod } from "./period.js";
+import { scoreAll } from "./score.js";
 import { releaseText } from "./text.js";
 
 /**
@@ -187,7 +188,8 @@ async function checkOne(env, ticker, full) {
   }
 
   const result = await actualsFrom(env, cik, current, requests, priorGuidance.calendar || calendar);
-  const pairs = pairUp(priorGuidance.guides, result.actuals);
+  const scored = scoreAll(pairUp(priorGuidance.guides, result.actuals));
+  const pairs = scored.pairs;
 
   const rejections = {};
   for (const p of pairs) {
@@ -203,7 +205,9 @@ async function checkOne(env, ticker, full) {
     unresolvedGuidePeriods: priorGuidance.unresolvedPeriods,
     requested: result.requested,
     found: result.found,
+    basisMismatches: result.basisMismatches,
     comparable: pairs.filter((p) => p.comparable).length,
+    landed: scored.tally,
     rejections,
     comparablePairs: pairs.filter((p) => p.comparable).map((p) => ({
       metric: p.metric_as_written,
@@ -211,6 +215,8 @@ async function checkOne(env, ticker, full) {
       guide: p.guide,
       actual: p.actual,
       unit: p.unit,
+      position: p.score ? p.score.position : null,
+      summary: p.score ? p.score.summary : null,
     })),
   };
 }
@@ -360,7 +366,8 @@ export default {
 
         // Step two: what did they actually do?
         const result = await actualsFrom(env, cik, current, requests, calendar);
-        const pairs = pairUp(priorGuidance.guides, result.actuals);
+        const scored = scoreAll(pairUp(priorGuidance.guides, result.actuals));
+        const pairs = scored.pairs;
 
         return json({
           ticker: ticker.toUpperCase(),
@@ -371,6 +378,7 @@ export default {
           guides: priorGuidance.guides,
           comparable: pairs.filter((p) => p.comparable).length,
           notComparable: pairs.filter((p) => !p.comparable).length,
+          landed: scored.tally,
           pairs,
           ...result,
         });
