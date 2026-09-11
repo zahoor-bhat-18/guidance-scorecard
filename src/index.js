@@ -22,6 +22,7 @@ import { earningsReleases, guidanceFrom, readFiling, refineCalendar } from "./gu
 import { requestsFrom, actualsFrom } from "./actuals.js";
 import { resolvePeriod, samePeriod } from "./period.js";
 import { scoreAll } from "./score.js";
+import { revisionsBetween } from "./revisions.js";
 import { releaseText } from "./text.js";
 
 /**
@@ -184,12 +185,25 @@ async function checkOne(env, ticker, full) {
   const requests = requestsFrom(priorGuidance.guides);
 
   if (!requests.length) {
-    return { ...summary, guides: priorGuidance.guides.length, requested: 0, comparable: 0, rejections: {} };
+    const onlyNew = await guidanceFrom(env, cik, current, calendar);
+    const firstMoved = revisionsBetween(priorGuidance.guides, onlyNew.guides);
+    return {
+      ...summary,
+      guides: priorGuidance.guides.length,
+      requested: 0,
+      comparable: 0,
+      rejections: {},
+      moved: firstMoved.tally,
+      revisions: firstMoved.revisions.map((r) => r.summary),
+    };
   }
 
   const result = await actualsFrom(env, cik, current, requests, priorGuidance.calendar || calendar);
   const scored = scoreAll(pairUp(priorGuidance.guides, result.actuals));
   const pairs = scored.pairs;
+
+  const currentGuidance = await guidanceFrom(env, cik, current, priorGuidance.calendar || calendar);
+  const moved = revisionsBetween(priorGuidance.guides, currentGuidance.guides);
 
   const rejections = {};
   for (const p of pairs) {
@@ -218,6 +232,8 @@ async function checkOne(env, ticker, full) {
       position: p.score ? p.score.position : null,
       summary: p.score ? p.score.summary : null,
     })),
+    moved: moved.tally,
+    revisions: moved.revisions.map((r) => r.summary),
   };
 }
 
@@ -369,6 +385,13 @@ export default {
         const scored = scoreAll(pairUp(priorGuidance.guides, result.actuals));
         const pairs = scored.pairs;
 
+        // The current release's own guidance, which the live engine needs
+        // anyway - the email carries what they guided next - and which is what
+        // makes the revision path possible. For a full-year guider this is the
+        // only finding available for three quarters out of four.
+        const currentGuidance = await guidanceFrom(env, cik, current, calendar);
+        const moved = revisionsBetween(priorGuidance.guides, currentGuidance.guides);
+
         return json({
           ticker: ticker.toUpperCase(),
           company: name,
@@ -376,9 +399,12 @@ export default {
           calendar: calendar.meta,
           prior: priorGuidance.release,
           guides: priorGuidance.guides,
+          newGuides: currentGuidance.guides,
           comparable: pairs.filter((p) => p.comparable).length,
           notComparable: pairs.filter((p) => !p.comparable).length,
           landed: scored.tally,
+          moved: moved.tally,
+          revisions: moved.revisions,
           pairs,
           ...result,
         });

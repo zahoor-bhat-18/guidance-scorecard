@@ -151,21 +151,33 @@ function originalDelta(actual, originalGuide, word) {
   return {};
 }
 
-/** Every pair, scored, with a count of how each landed. */
+/**
+ * Every pair, scored, with a count of how each landed.
+ *
+ * The tally covers COMPARABLE pairs only. An earlier version counted every
+ * rejected pair as "unscored", so Broadcom reported three unscored against one
+ * comparable pair and the number meant nothing. A pair that was refused for a
+ * period or basis mismatch already carries its reason; it is not an outcome
+ * and does not belong in a count of outcomes.
+ *
+ * Point guides are counted on their own. They were scored - they carry a
+ * distance - but deliberately carry no verdict, and folding them into
+ * "unscored" would hide that the figure is there.
+ */
 export function scoreAll(pairs, originals) {
   const scored = (pairs || []).map((p) => {
     const key = (p.metric_as_written || "") + "|" + (p.guide_period || "");
     return scorePair(p, originals ? originals[key] : null);
   });
 
-  const tally = { above: 0, within: 0, below: 0, unscored: 0 };
+  const tally = { above: 0, within: 0, below: 0, noVerdict: 0 };
   for (const p of scored) {
-    if (!p.score) { tally.unscored += 1; continue; }
+    if (!p.comparable || !p.score) continue;
     if (p.score.position === "above") tally.above += 1;
     else if (p.score.position === "within") tally.within += 1;
     else if (p.score.position === "below") tally.below += 1;
-    else tally.unscored += 1;
+    else tally.noVerdict += 1;
   }
 
-  return { pairs: scored, tally };
+  return { pairs: scored, tally, notComparable: scored.filter((p) => !p.comparable).length };
 }
