@@ -203,7 +203,9 @@ async function checkOne(env, ticker, full) {
   const pairs = scored.pairs;
 
   const currentGuidance = await guidanceFrom(env, cik, current, priorGuidance.calendar || calendar);
-  const moved = revisionsBetween(priorGuidance.guides, currentGuidance.guides);
+  const moved = revisionsBetween(priorGuidance.guides, currentGuidance.guides, {
+    reportedPeriods: result.actuals.map((a) => a.period).filter(Boolean),
+  });
 
   const rejections = {};
   for (const p of pairs) {
@@ -390,7 +392,9 @@ export default {
         // makes the revision path possible. For a full-year guider this is the
         // only finding available for three quarters out of four.
         const currentGuidance = await guidanceFrom(env, cik, current, calendar);
-        const moved = revisionsBetween(priorGuidance.guides, currentGuidance.guides);
+        const moved = revisionsBetween(priorGuidance.guides, currentGuidance.guides, {
+          reportedPeriods: result.actuals.map((a) => a.period).filter(Boolean),
+        });
 
         return json({
           ticker: ticker.toUpperCase(),
