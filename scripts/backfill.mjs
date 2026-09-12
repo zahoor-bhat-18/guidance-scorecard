@@ -37,11 +37,19 @@ import { samePeriod } from "../src/period.js";
 import { scoreAll } from "../src/score.js";
 import { revisionsBetween } from "../src/revisions.js";
 
-/* How many releases to read. Eight scoreable quarters needs more than eight
-   releases, because a guide for a period is issued in the release BEFORE it -
-   so the oldest guide scored comes from a release older than the oldest
-   quarter scored. */
-const RELEASES = 11;
+/* How many releases to read.
+   Eight scoreable quarters needs more than eight releases, because a guide for
+   a period is issued in the release BEFORE it - so the oldest guide scored
+   comes from a release older than the oldest quarter scored.
+
+   It was eleven, and that quietly made one whole class of company impossible.
+   A company that guides only the full year gets ONE matched pair a year, when
+   the year closes. Three matched pairs therefore needs three completed fiscal
+   years, which is thirteen or fourteen releases. At eleven, Macy's produced
+   two pairs per metric and failed a rule it had never been given the chance to
+   pass. Fourteen is the smallest number at which an annual-only guider can
+   qualify at all. */
+const RELEASES = 14;
 
 /* SEC asks for no more than ten requests a second and means it. A pause
    between companies costs nothing on a job that runs once. */
@@ -139,18 +147,33 @@ function pairUp(guides, actuals) {
  */
 function coverageOf(scoredPairs) {
   const byMetric = {};
+
   for (const p of scoredPairs) {
     if (!p.comparable) continue;
-    const key = p.metric_as_written;
-    (byMetric[key] = byMetric[key] || []).push(p.guide_period);
+
+    // Grouped on the NORMALISED metric, not the label as written.
+    //
+    // Macy's renamed one line between years - "Adjusted EBITDA as a percent of
+    // total revenue" became "Core Adjusted EBITDA as a percent of total
+    // revenue" - and the coverage count read 1 and 1 instead of 2. Its
+    // earnings-per-share label drifted the same way. A company that keeps
+    // clarifying its own wording was being punished for it, and the number the
+    // publication rule depends on was wrong.
+    const key = metricKey(p);
+    if (!byMetric[key]) {
+      byMetric[key] = { label: p.metric_as_written, labels: new Set(), periods: [] };
+    }
+    byMetric[key].labels.add(p.metric_as_written);
+    byMetric[key].periods.push(p.guide_period);
   }
 
-  const metrics = Object.entries(byMetric).map(([metric, periods]) => ({
-    metric,
-    matchedPairs: periods.length,
-    periods,
-    qualifies: periods.length >= 3,
-  }));
+  const metrics = Object.values(byMetric).map((m) => ({
+    metric: m.label,
+    alsoCalled: Array.from(m.labels).filter((l) => l !== m.label),
+    matchedPairs: m.periods.length,
+    periods: m.periods,
+    qualifies: m.periods.length >= 3,
+  })).sort((a, b) => b.matchedPairs - a.matchedPairs);
 
   const qualifying = metrics.filter((m) => m.qualifies);
 
@@ -291,6 +314,9 @@ function markdownFor(records, failures) {
       for (const m of r.metrics) {
         lines.push("- " + m.matchedPairs + " — " + m.metric
           + (m.qualifies ? "" : " (below the three needed)")
+          + (m.alsoCalled && m.alsoCalled.length
+            ? "  \n  also called: " + m.alsoCalled.join("; ")
+            : "")
           + "  \n  " + m.periods.join(", "));
       }
     } else {
