@@ -100,6 +100,39 @@ function expectedBasis(guide) {
 }
 
 /**
+ * The period the actual must be for, in words.
+ *
+ * The omission that wasted an entire backfill. Every one of Macy's 34 pairs
+ * was rejected for a period mismatch, and the mismatch was this prompt's
+ * fault: it asked for "the period that has just ENDED" and added that where a
+ * table shows several columns the quarter is the one wanted.
+ *
+ * Macy's guides the full year. Its March release reports the fourth quarter
+ * AND the full year, on the same page, in the same table. Asked for the
+ * quarter, the model correctly returned the quarter - against a full-year
+ * guide, which the pairing then refused. Three years of full-year outcomes
+ * were sitting in those filings and none of them was ever looked for.
+ *
+ * So the period is named. Not as a label the release would never print, but
+ * described the way the company writes it, and the model is told to return
+ * nothing rather than substitute a different period.
+ */
+function describePeriod(period) {
+  const m = String(period || "").match(/^(\d{4})(FY|Q([1-4]))$/);
+  if (!m) return null;
+
+  const year = m[1];
+  if (m[2] === "FY") {
+    return "the FULL FISCAL YEAR that the company labels " + year
+      + " - the twelve-month or 52-week figure, NOT the fourth quarter";
+  }
+
+  const ordinal = { 1: "first", 2: "second", 3: "third", 4: "fourth" }[m[3]];
+  return "the " + ordinal + " quarter of the fiscal year the company labels " + year
+    + " - that quarter alone, not the year to date and not the full year";
+}
+
+/**
  * Is this guide a level, or a change?
  *
  * Walmart guided net sales to "increase 4.0% to 5.0%" and the answer came back
@@ -202,6 +235,7 @@ export function requestsFrom(guides) {
       unit: g.unit || "other",
       shape: g.shape || "point",
       guidePeriod: g.period || null,
+      periodWanted: describePeriod(g.period),
       expect: expectedAnswer(g.shape, g.unit),
       expectBasis: expectedBasis(g),
     });
@@ -212,27 +246,31 @@ export function requestsFrom(guides) {
 const SYSTEM = [
   "You read one company earnings press release and report ACTUAL REPORTED RESULTS.",
   "",
-  "You are given a list of metrics. Each carries an EXPECTS field saying what kind",
-  "of number answers it, and a BASIS field saying which version of the measure.",
-  "For each metric, find the figure this release reports for the period that has",
-  "just ENDED.",
+  "You are given a list of metrics. Each carries three binding fields:",
+  "  PERIOD  - which period the figure must cover",
+  "  BASIS   - which version of the measure",
+  "  EXPECTS - what kind of number answers it",
   "",
   "A result is a figure for a completed period. A forecast, outlook, guidance or",
   "expectation is NOT a result. Never report one. If a metric appears only as a",
   "forecast, return it with value null.",
   "",
-  "The EXPECTS field is binding. If it asks for a change and the release reports",
-  "only a level, return null - do NOT return the level. If it asks for a figure in",
-  "one unit and only another unit is reported, return null.",
+  "PERIOD is the field most easily got wrong. A release reporting a fourth quarter",
+  "also reports the full year, in the same table, and they are different numbers.",
+  "Find the period asked for. If the release does not report that period, return",
+  "null - never substitute a different period, however adjacent.",
   "",
-  "The BASIS field is binding too. A release often reports the same measure twice -",
-  "as reported and adjusted, reported currency and constant currency. Take the one",
-  "the basis asks for. If it asks for adjusted and only an as-reported figure",
-  "exists, return null.",
+  "BASIS: a release often reports the same measure twice - as reported and",
+  "adjusted, reported currency and constant currency. Take the one asked for. If",
+  "it asks for adjusted and only an as-reported figure exists, return null.",
   "",
-  "Where a table prints several columns - the quarter and the year to date, or this",
-  "year and last - the quarter just ended is the one wanted. Say in period_text",
-  "which period the figure you took belongs to.",
+  "EXPECTS: if it asks for a change and the release reports only a level, return",
+  "null - do NOT return the level. If it asks for a figure in one unit and only",
+  "another unit is reported, return null. A number of the wrong kind is not the",
+  "actual, however close its label sits.",
+  "",
+  "Say in period_text which period the figure you took actually belongs to, in the",
+  "release's own words. It is checked against what was asked for.",
   "",
   "Match on meaning, not on wording. 'Net sales' and 'total revenue' may be the same",
   "figure. 'Adjusted diluted EPS' and 'adjusted earnings per share' are the same.",
@@ -246,7 +284,7 @@ const SYSTEM = [
   '{"actuals":[{',
   '  "metric": "the metric you were asked for, copied back unchanged",',
   '  "found_as": "what this release calls it, verbatim, or null",',
-  '  "period_text": "the period as written, e.g. third quarter, full year 2025, or null",',
+  '  "period_text": "the period the figure covers, in the release\'s words, or null",',
   '  "value": number or null,',
   '  "unit": "USD millions|USD billions|USD per share|percent|other",',
   '  "quote": "the sentence or table row it came from, verbatim, 40 words or fewer, or null"',
@@ -255,8 +293,8 @@ const SYSTEM = [
   "Numbers exactly as written: $4.6 billion is value 4.6 with unit USD billions, not",
   "4600. A percentage is the number without the sign: 23.5.",
   "",
-  "If a metric is genuinely absent, or only the wrong kind or wrong basis of number",
-  "is reported, value null, found_as null, quote null.",
+  "If a metric is genuinely absent, or the release reports only the wrong period,",
+  "wrong basis or wrong kind of number, value null, found_as null, quote null.",
 ].join("\n");
 
 async function callModel(env, requests, text) {
@@ -266,6 +304,7 @@ async function callModel(env, requests, text) {
     "METRICS TO FIND:",
     JSON.stringify(requests.map((r) => ({
       metric: r.query,
+      period: r.periodWanted || "the period that has just ended",
       basis: r.expectBasis.describe,
       expects: r.expect.describe,
       expects_unit: r.expect.unit,
@@ -371,6 +410,7 @@ export async function actualsFrom(env, cik, release, requests, cal) {
       guided_shape: req.shape,
       guided_unit: req.unit,
       guide_period: req.guidePeriod,
+      period_wanted: req.periodWanted,
       expected: req.expect.describe,
       found_as: row.found_as ?? null,
       period_text: row.period_text ?? null,
