@@ -1,0 +1,302 @@
+/**
+ * The historical engine.
+ *
+ * Builds the eight-quarter record for each company in the universe and writes
+ * it to a file per company. The workflow uploads those to KV; nothing here
+ * talks to Cloudflare, so it can be run and read locally without credentials
+ * beyond the two it needs to read filings and call the model.
+ *
+ * WHY THIS RUNS IN ACTIONS AND NOT IN THE WORKER
+ *
+ * Eleven releases per company, each needing its guidance extracted, plus a
+ * second call per consecutive pair to find the actuals. Twenty-odd model calls
+ * and forty-odd EDGAR fetches for one company. A Cloudflare Worker has ten
+ * milliseconds of CPU and a subrequest cap; it cannot do this and should not
+ * try. The Worker keeps the live path - one release, three calls - which fits
+ * comfortably.
+ *
+ * This is the same split that works on the other product: the Worker watches,
+ * Actions does the heavy reading.
+ *
+ * WHAT IT COSTS, AND WHY THAT IS ACCEPTABLE
+ *
+ * The full backfill is a one-off. After it, each company gains one release a
+ * quarter, and the incremental run reads one release rather than eleven.
+ *
+ * EVERY MODULE IN src/ IS SHARED WITH THE WORKER, UNCHANGED. Not copied. If
+ * the backfill and the live path disagreed about how a period is labelled or
+ * which exhibit to read, the stored record and the new email would be built on
+ * different rules and the mismatch would be invisible.
+ */
+
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { resolveCik, companyCalendar } from "../src/xbrl.js";
+import { earningsReleases, guidanceFrom } from "../src/guidance.js";
+import { requestsFrom, actualsFrom } from "../src/actuals.js";
+import { samePeriod } from "../src/period.js";
+import { scoreAll } from "../src/score.js";
+import { revisionsBetween } from "../src/revisions.js";
+
+/* How many releases to read. Eight scoreable quarters needs more than eight
+   releases, because a guide for a period is issued in the release BEFORE it -
+   so the oldest guide scored comes from a release older than the oldest
+   quarter scored. */
+const RELEASES = 11;
+
+/* SEC asks for no more than ten requests a second and means it. A pause
+   between companies costs nothing on a job that runs once. */
+const PAUSE_MS = 1500;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * The env object the src modules expect.
+ *
+ * They take it as a parameter rather than reading a global, which is exactly
+ * what makes them runnable in both places. In the Worker it is the bindings;
+ * here it is process.env.
+ */
+const env = {
+  SEC_USER_AGENT: process.env.SEC_USER_AGENT,
+  DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY,
+};
+
+/* The same normalisation revisions.js uses to match a metric across releases.
+   Six lines, deliberately duplicated rather than exported, because changing it
+   there should not silently re-key every stored record. */
+function metricKey(guide) {
+  return String(guide.metric_as_written || "")
+    .toLowerCase()
+    .replace(/\badj(\.|usted)?\b/g, "")
+    .replace(/\(cc\)|constant[-\s]currency/g, "")
+    .replace(/[^a-z ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Pair a guide to its actual. The same rule as the Worker: identical periods
+ * or nothing.
+ */
+function pairUp(guides, actuals) {
+  const byName = new Map();
+  for (const a of actuals) byName.set(String(a.metric_as_written || "").toLowerCase(), a);
+
+  const pairs = [];
+  for (const g of guides) {
+    const hasNumber =
+      typeof g.low === "number" || typeof g.high === "number" || typeof g.value === "number";
+    if (!hasNumber) continue;
+
+    const a = byName.get(String(g.metric_as_written || "").toLowerCase());
+    const base = {
+      metric: g.metric,
+      metric_as_written: g.metric_as_written,
+      basis: g.basis,
+      unit: g.unit,
+      shape: g.shape,
+      guide: { low: g.low ?? null, high: g.high ?? null, value: g.value ?? null },
+      guide_period: g.period,
+      guide_period_text: g.period_text,
+    };
+
+    if (!a) { pairs.push({ ...base, comparable: false, why: "No actual was looked for under this metric." }); continue; }
+
+    base.actual = a.value;
+    base.actual_unit = a.unit;
+    base.actual_period = a.period;
+    base.actual_found_as = a.found_as;
+    base.quote = a.quote;
+
+    if (a.value === null) { pairs.push({ ...base, comparable: false, why: "The release does not report this figure." }); continue; }
+    if (!g.period) { pairs.push({ ...base, comparable: false, why: "The guide's period could not be read." }); continue; }
+    if (!a.period) { pairs.push({ ...base, comparable: false, why: "The actual's period could not be read." }); continue; }
+    if (!samePeriod(g.period, a.period)) {
+      pairs.push({ ...base, comparable: false, why: "Different periods: the guide is for " + g.period + " and the figure reported is for " + a.period + "." });
+      continue;
+    }
+    if (a.unit_mismatch) { pairs.push({ ...base, comparable: false, why: "The figure reported is not the kind of number that was guided." }); continue; }
+    if (a.basis_mismatch) { pairs.push({ ...base, comparable: false, why: a.basis_mismatch }); continue; }
+
+    pairs.push({ ...base, comparable: true });
+  }
+  return pairs;
+}
+
+/**
+ * Coverage, measured rather than assumed.
+ *
+ * The rules were set before any of this was built and they are applied here
+ * rather than at display time, so a record that does not qualify is a fact
+ * about the company recorded once, not a decision remade on every page load:
+ *
+ *   a metric needs three matched pairs to earn a block
+ *   a company needs two qualifying metrics to be published
+ *
+ * A company that fails is still stored, with its numbers, because "how many
+ * companies actually clear this bar" is the open question the universe
+ * depends on and throwing away the failures would destroy the answer.
+ */
+function coverageOf(scoredPairs) {
+  const byMetric = {};
+  for (const p of scoredPairs) {
+    if (!p.comparable) continue;
+    const key = p.metric_as_written;
+    (byMetric[key] = byMetric[key] || []).push(p.guide_period);
+  }
+
+  const metrics = Object.entries(byMetric).map(([metric, periods]) => ({
+    metric,
+    matchedPairs: periods.length,
+    periods,
+    qualifies: periods.length >= 3,
+  }));
+
+  const qualifying = metrics.filter((m) => m.qualifies);
+
+  return {
+    metrics,
+    qualifyingMetrics: qualifying.length,
+    publishable: qualifying.length >= 2,
+    reason: qualifying.length >= 2
+      ? null
+      : "Fewer than two metrics have three matched pairs, so there is not enough here to publish.",
+  };
+}
+
+/** One company, end to end. */
+async function buildOne(ticker) {
+  const { cik, name } = await resolveCik(env, ticker);
+  const startingCalendar = await companyCalendar(env, cik);
+  const releases = await earningsReleases(env, cik, RELEASES);
+
+  if (releases.length < 2) throw new Error("Fewer than two earnings releases found.");
+
+  // Guidance is extracted ONCE per release and used twice - for the pairing
+  // against the next release's actuals, and for the revision path. Reading the
+  // same document twice would double the bill for nothing.
+  const guidanceByRelease = [];
+  let calendar = startingCalendar;
+
+  for (const release of releases) {
+    const g = await guidanceFrom(env, cik, release, calendar);
+    // The first release to settle the fiscal convention settles it for all of
+    // them. Both sides of every pair must label periods the same way.
+    if (g.calendar) calendar = g.calendar;
+    guidanceByRelease.push(g);
+    await sleep(300);
+  }
+
+  // Newest first, so releases[i + 1] is the one before releases[i].
+  const allPairs = [];
+  const allRevisions = [];
+
+  for (let i = 0; i < releases.length - 1; i++) {
+    const current = releases[i];
+    const priorGuidance = guidanceByRelease[i + 1];
+    const currentGuidance = guidanceByRelease[i];
+
+    const requests = requestsFrom(priorGuidance.guides);
+
+    let actuals = [];
+    if (requests.length) {
+      const result = await actualsFrom(env, cik, current, requests, calendar);
+      actuals = result.actuals;
+    }
+
+    const scored = scoreAll(pairUp(priorGuidance.guides, actuals));
+    for (const p of scored.pairs) {
+      allPairs.push({ ...p, fromRelease: priorGuidance.release.accession, answeredBy: current.accession });
+    }
+
+    const moved = revisionsBetween(priorGuidance.guides, currentGuidance.guides, {
+      reportedPeriods: actuals.map((a) => a.period).filter(Boolean),
+    });
+    for (const r of moved.revisions) {
+      allRevisions.push({ ...r, release: current.accession, filed: current.filed });
+    }
+
+    await sleep(300);
+  }
+
+  const coverage = coverageOf(allPairs);
+  const comparable = allPairs.filter((p) => p.comparable);
+
+  return {
+    ticker,
+    company: name,
+    cik,
+    builtAt: new Date().toISOString(),
+    calendar: calendar.meta,
+    releasesRead: releases.map((r) => ({ accession: r.accession, filed: r.filed })),
+    coverage,
+    landed: {
+      above: comparable.filter((p) => p.score && p.score.position === "above").length,
+      within: comparable.filter((p) => p.score && p.score.position === "within").length,
+      below: comparable.filter((p) => p.score && p.score.position === "below").length,
+      noVerdict: comparable.filter((p) => p.score && p.score.position === null).length,
+    },
+    pairs: allPairs,
+    revisions: allRevisions,
+    currentGuidance: guidanceByRelease[0].guides,
+  };
+}
+
+async function main() {
+  if (!env.SEC_USER_AGENT) throw new Error("SEC_USER_AGENT is not set.");
+  if (!env.DEEPSEEK_API_KEY) throw new Error("DEEPSEEK_API_KEY is not set.");
+
+  const fromArg = process.argv.slice(2).join(",").trim();
+  const universe = JSON.parse(await readFile("config/universe.json", "utf8"));
+  const tickers = fromArg
+    ? fromArg.split(",").map((t) => t.trim().toUpperCase()).filter(Boolean)
+    : universe.tickers;
+
+  await mkdir("out", { recursive: true });
+
+  const summary = [];
+  let failures = 0;
+
+  for (const ticker of tickers) {
+    try {
+      console.log("Building " + ticker + "...");
+      const record = await buildOne(ticker);
+      await writeFile("out/" + ticker + ".json", JSON.stringify(record, null, 2));
+
+      summary.push({
+        ticker,
+        company: record.company,
+        comparablePairs: record.pairs.filter((p) => p.comparable).length,
+        qualifyingMetrics: record.coverage.qualifyingMetrics,
+        publishable: record.coverage.publishable,
+        landed: record.landed,
+        revisions: record.revisions.length,
+      });
+
+      console.log("  " + ticker + ": " + record.pairs.filter((p) => p.comparable).length
+        + " comparable pairs, " + record.coverage.qualifyingMetrics + " qualifying metrics, "
+        + (record.coverage.publishable ? "publishable" : "not publishable"));
+    } catch (e) {
+      failures += 1;
+      console.error("  " + ticker + " FAILED: " + e.message);
+      summary.push({ ticker, error: e.message });
+    }
+
+    await sleep(PAUSE_MS);
+  }
+
+  await writeFile("out/summary.json", JSON.stringify({ builtAt: new Date().toISOString(), summary }, null, 2));
+  console.log("\n" + JSON.stringify(summary, null, 2));
+
+  // The silent-miss guard, carried over from the other product. A run where
+  // everything failed must not look like a run where everything worked, or a
+  // broken key sits there for a week producing empty records.
+  if (failures === tickers.length) {
+    throw new Error("Every company failed. Not writing this run off as a success.");
+  }
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
