@@ -41,6 +41,12 @@ jobs:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: node scripts/backfill.mjs ${{ inputs.tickers }}
 
+      # Straight onto the run page, so a run can be read on a phone without
+      # downloading a zip and unzipping 60KB of JSON to find out it worked.
+      - name: Show the summary
+        if: always()
+        run: cat out/summary.md >> $GITHUB_STEP_SUMMARY || echo "No summary was produced." >> $GITHUB_STEP_SUMMARY
+
       # Kept for 30 days, so a run can be read afterwards without going near
       # KV - and so a bad record can be compared against the one that replaced
       # it.
