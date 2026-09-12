@@ -1,0 +1,4 @@
+{
+  "note": "The companies the backfill builds a record for. Deliberately short to begin with - these six are the ones the extraction has actually been tested against, and they cover the awkward cases: a full-year-only guider, two different fiscal-year conventions at the same year end, an airline that names quarters by month, and a filer whose guidance lives in a second exhibit. Add names once coverage has been measured, not before.",
+  "tickers": ["M", "WMT", "AVGO", "UAL", "DAL", "HON"]
+}
