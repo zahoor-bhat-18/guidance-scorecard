@@ -1,0 +1,67 @@
+name: backfill
+
+# Manual only, and deliberately so.
+#
+# NO pull_request TRIGGER. This repository is public, and a workflow that runs
+# on pull_request will run for anyone who opens one - with the repository's
+# secrets available to it. Manual dispatch, scheduled runs and repository
+# dispatch can only be started by someone with write access.
+#
+# The full backfill is a one-off. Once records exist, each company gains one
+# release a quarter and the live path in the Worker handles it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tickers:
+        description: "Comma-separated tickers. Leave blank to build the whole universe in config/universe.json."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Eleven releases per company at two model calls each. Generous, because a
+    # job that dies at ninety per cent has spent the money and stored nothing.
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build the records
+        env:
+          SEC_USER_AGENT: ${{ vars.SEC_USER_AGENT }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: node scripts/backfill.mjs ${{ inputs.tickers }}
+
+      # Kept for 30 days, so a run can be read afterwards without going near
+      # KV - and so a bad record can be compared against the one that replaced
+      # it.
+      - name: Keep the output
+        uses: actions/upload-artifact@v4
+        with:
+          name: records
+          path: out/
+          retention-days: 30
+
+      # One key per company, holding the whole record. It is read whole when an
+      # email is built, and a lot of small writes is how the other product went
+      # through the KV free tier in a day.
+      - name: Write to KV
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          for file in out/*.json; do
+            key="record:$(basename "$file" .json)"
+            echo "Writing $key"
+            npx --yes wrangler@4 kv key put "$key" --path "$file" --binding CACHE --remote
+          done
