@@ -242,6 +242,98 @@ async function buildOne(ticker) {
   };
 }
 
+/**
+ * The run, written so it can be read on a phone.
+ *
+ * Downloading a zip, unzipping it and opening 60KB of JSON is not a way to
+ * check whether a run worked. This goes straight onto the Actions run page:
+ * the table answers "did it work", and the per-company detail answers "why
+ * not" without opening anything.
+ *
+ * The full records stay in the artifact for when the detail is actually
+ * needed.
+ */
+function markdownFor(records, failures) {
+  const lines = [];
+  lines.push("## Backfill");
+  lines.push("");
+  lines.push("| | company | pairs | metrics ≥3 | publishable | above | within | below | revisions |");
+  lines.push("|---|---|---|---|---|---|---|---|---|");
+
+  for (const r of records) {
+    if (r.error) {
+      lines.push("| " + r.ticker + " | — | — | — | FAILED | | | | |");
+      continue;
+    }
+    lines.push("| " + r.ticker + " | " + r.company + " | " + r.comparablePairs + " | "
+      + r.qualifyingMetrics + " | " + (r.publishable ? "**yes**" : "no") + " | "
+      + r.landed.above + " | " + r.landed.within + " | " + r.landed.below + " | "
+      + r.revisions + " |");
+  }
+
+  for (const r of records) {
+    lines.push("");
+    lines.push("### " + r.ticker + (r.company ? " — " + r.company : ""));
+
+    if (r.error) {
+      lines.push("");
+      lines.push("Failed: " + r.error);
+      continue;
+    }
+
+    lines.push("");
+    lines.push(r.fiscal || "");
+    lines.push("");
+
+    if (r.metrics && r.metrics.length) {
+      lines.push("**Matched pairs by metric**");
+      lines.push("");
+      for (const m of r.metrics) {
+        lines.push("- " + m.matchedPairs + " — " + m.metric
+          + (m.qualifies ? "" : " (below the three needed)")
+          + "  \n  " + m.periods.join(", "));
+      }
+    } else {
+      lines.push("No metric produced a single matched pair.");
+    }
+
+    if (r.reason) {
+      lines.push("");
+      lines.push("Not published: " + r.reason);
+    }
+
+    if (r.rejections && Object.keys(r.rejections).length) {
+      lines.push("");
+      lines.push("**Why pairs were refused**");
+      lines.push("");
+      for (const [why, n] of Object.entries(r.rejections)) {
+        lines.push("- " + n + " — " + why);
+      }
+    }
+
+    if (r.sampleScores && r.sampleScores.length) {
+      lines.push("");
+      lines.push("**Scored**");
+      lines.push("");
+      for (const s of r.sampleScores) lines.push("- " + s);
+    }
+
+    if (r.sampleRevisions && r.sampleRevisions.length) {
+      lines.push("");
+      lines.push("**Revisions, most recent first**");
+      lines.push("");
+      for (const s of r.sampleRevisions) lines.push("- " + s);
+    }
+  }
+
+  if (failures) {
+    lines.push("");
+    lines.push("**" + failures + " company/companies failed. See the log.**");
+  }
+
+  return lines.join("\n") + "\n";
+}
+
 async function main() {
   if (!env.SEC_USER_AGENT) throw new Error("SEC_USER_AGENT is not set.");
   if (!env.DEEPSEEK_API_KEY) throw new Error("DEEPSEEK_API_KEY is not set.");
@@ -263,17 +355,32 @@ async function main() {
       const record = await buildOne(ticker);
       await writeFile("out/" + ticker + ".json", JSON.stringify(record, null, 2));
 
+      const comparable = record.pairs.filter((p) => p.comparable);
+      const rejections = {};
+      for (const p of record.pairs) {
+        if (p.comparable) continue;
+        const why = String(p.why || "unknown").replace(/\b20\d\d(FY|Q[1-4])\b/g, "<period>");
+        rejections[why] = (rejections[why] || 0) + 1;
+      }
+
       summary.push({
         ticker,
         company: record.company,
-        comparablePairs: record.pairs.filter((p) => p.comparable).length,
+        fiscal: "Year end " + record.calendar.fiscalYearEnd + ". "
+          + record.calendar.labelConvention + ", from " + record.calendar.conventionFrom + ".",
+        comparablePairs: comparable.length,
         qualifyingMetrics: record.coverage.qualifyingMetrics,
         publishable: record.coverage.publishable,
+        reason: record.coverage.reason,
+        metrics: record.coverage.metrics,
+        rejections,
         landed: record.landed,
         revisions: record.revisions.length,
+        sampleScores: comparable.slice(0, 12).map((p) => p.score ? p.score.summary : ""),
+        sampleRevisions: record.revisions.slice(0, 12).map((r) => r.summary),
       });
 
-      console.log("  " + ticker + ": " + record.pairs.filter((p) => p.comparable).length
+      console.log("  " + ticker + ": " + comparable.length
         + " comparable pairs, " + record.coverage.qualifyingMetrics + " qualifying metrics, "
         + (record.coverage.publishable ? "publishable" : "not publishable"));
     } catch (e) {
@@ -286,7 +393,7 @@ async function main() {
   }
 
   await writeFile("out/summary.json", JSON.stringify({ builtAt: new Date().toISOString(), summary }, null, 2));
-  console.log("\n" + JSON.stringify(summary, null, 2));
+  await writeFile("out/summary.md", markdownFor(summary, failures));
 
   // The silent-miss guard, carried over from the other product. A run where
   // everything failed must not look like a run where everything worked, or a
