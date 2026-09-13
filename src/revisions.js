@@ -118,8 +118,14 @@ function figure(g, unit) {
  * Growth rates and margins are exempt: those move around for ordinary reasons
  * and a percentage is not a level.
  */
-function looksLikeScopeChange(before, after, unit) {
+function looksLikeScopeChange(before, after, unit, label) {
   if (unit === "percent" || !unit || unit === "other") return false;
+
+  // Earnings are exempt. United cut adjusted earnings per share from $12-14 to
+  // $7-11 on fuel prices - a 42% cut, brutal and entirely real - and it was
+  // reported as a spin-off. Earnings are leveraged and can halve for ordinary
+  // reasons. Revenue and cash flow cannot: those halve when the company does.
+  if (/eps|earnings per share|earnings/i.test(String(label || ""))) return false;
 
   const b = before.low !== null ? before.low : before.value;
   const a = after.low !== null ? after.low : after.value;
@@ -253,7 +259,7 @@ export function revisionsBetween(beforeGuides, afterGuides, opts) {
 
     seen.add(key);
     const b = numbersOf(before);
-    const scope = looksLikeScopeChange(b, n, g.unit);
+    const scope = looksLikeScopeChange(b, n, g.unit, g.metric_as_written);
     const dir = scope ? "scope change" : direction(b, n);
 
     out.push({
