@@ -10,6 +10,8 @@
  * /api/period?ticker=M      the period normaliser, over phrasings this product
  *                           has actually met. No model, no cost.
  * /api/text?ticker=M        the release as the extractor sees it. No model.
+ * /api/records              every stored record, and when each was built
+ * /api/record?ticker=M      one stored record, as a subscriber would see it
  * /api/check?tickers=M,WMT  the whole battery across several companies at once
  * /sec?url=...              host-locked EDGAR proxy, for the browser
  *
@@ -24,6 +26,7 @@ import { resolvePeriod, samePeriod } from "./period.js";
 import { scoreAll } from "./score.js";
 import { revisionsBetween } from "./revisions.js";
 import { releaseText } from "./text.js";
+import { readRecord, listRecords, forEmail, headline } from "./records.js";
 
 /**
  * Period phrasings seen so far, kept as a fixture.
@@ -527,6 +530,54 @@ export default {
         mode: full ? "full - extractions run, two model calls per company" : "free - no model calls",
         results,
       });
+    }
+
+    /**
+     * What has been stored, and when.
+     *
+     * The first thing to check after a backfill. A KV upload that silently did
+     * nothing looks exactly like one that worked, and that question has cost
+     * hours on the other product.
+     */
+    if (url.pathname === "/api/records") {
+      try {
+        return json(await listRecords(env));
+      } catch (e) {
+        return json({ error: e.message }, 502);
+      }
+    }
+
+    /**
+     * One company's record, as a subscriber would see it.
+     *
+     * A single KV read. Nothing is extracted, nothing is scored, no filing is
+     * fetched - all of that happened in Actions, which is the whole reason the
+     * old version's five-minute wait is gone.
+     *
+     * ?full=1 returns the stored record untouched, including the pairs held
+     * back for review and the reasons every refused pair was refused. That is
+     * the version for looking into something, not the version to send.
+     */
+    if (url.pathname === "/api/record") {
+      const ticker = url.searchParams.get("ticker");
+      if (!ticker) return json({ error: "Add ?ticker=M" }, 400);
+
+      try {
+        const record = await readRecord(env, ticker);
+        if (!record) {
+          return json({
+            error: "No record stored for " + ticker.toUpperCase() + "."
+              + " Run the backfill workflow for it.",
+          }, 404);
+        }
+
+        if (url.searchParams.get("full") === "1") return json(record);
+
+        const shown = forEmail(record);
+        return json({ ...shown, headline: headline(shown.landed) });
+      } catch (e) {
+        return json({ error: e.message }, 502);
+      }
     }
 
     return env.ASSETS.fetch(request);
