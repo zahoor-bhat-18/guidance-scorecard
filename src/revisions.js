@@ -103,6 +103,31 @@ function figure(g, unit) {
  * has not been raised or cut; it has been narrowed or widened, and saying so
  * is more useful than forcing it into one of two words.
  */
+/**
+ * Has the company changed shape rather than changed its mind?
+ *
+ * Honeywell's sales guide went from $38.8bn to $39.8bn to $19.8bn to $20.0bn
+ * between two releases. Reported as a "cut" - which is what the arithmetic
+ * says - it would be the most damaging line this product could send. Honeywell
+ * did not cut its outlook by half. It separated its businesses.
+ *
+ * A level guide that moves by more than a third is not a revision. No
+ * management team cuts revenue by that much between quarters and stays in
+ * post; a spin-off, a divestiture or a restatement does it routinely.
+ *
+ * Growth rates and margins are exempt: those move around for ordinary reasons
+ * and a percentage is not a level.
+ */
+function looksLikeScopeChange(before, after, unit) {
+  if (unit === "percent" || !unit || unit === "other") return false;
+
+  const b = before.low !== null ? before.low : before.value;
+  const a = after.low !== null ? after.low : after.value;
+  if (typeof b !== "number" || typeof a !== "number" || b === 0) return false;
+
+  return Math.abs(a - b) / Math.abs(b) > 0.33;
+}
+
 function direction(before, after) {
   if (before.low !== null && before.high !== null && after.low !== null && after.high !== null) {
     const lowMove = after.low - before.low;
@@ -191,7 +216,8 @@ export function revisionsBetween(beforeGuides, afterGuides, opts) {
   for (const g of beforeGuides || []) {
     const n = numbersOf(g);
     if (n.low === null && n.high === null && n.value === null) continue;
-    index.set(labelKey(g) + "|" + (g.period || ""), g);
+    if (!g.period) continue;
+    index.set(labelKey(g) + "|" + g.period, g);
   }
 
   const seen = new Set();
@@ -200,6 +226,11 @@ export function revisionsBetween(beforeGuides, afterGuides, opts) {
   for (const g of afterGuides || []) {
     const n = numbersOf(g);
     if (n.low === null && n.high === null && n.value === null) continue;
+
+    // "organic growth for null is guided for the first time" reached a summary
+    // once. A guide whose period could not be read cannot be placed on a
+    // revision path, and saying nothing is better than saying null.
+    if (!g.period) continue;
 
     const label = displayLabel(g.metric_as_written);
     const key = labelKey(g) + "|" + (g.period || "");
@@ -222,7 +253,8 @@ export function revisionsBetween(beforeGuides, afterGuides, opts) {
 
     seen.add(key);
     const b = numbersOf(before);
-    const dir = direction(b, n);
+    const scope = looksLikeScopeChange(b, n, g.unit);
+    const dir = scope ? "scope change" : direction(b, n);
 
     out.push({
       metric: label,
@@ -236,7 +268,18 @@ export function revisionsBetween(beforeGuides, afterGuides, opts) {
       moveHigh: b.high !== null && n.high !== null ? tidy(n.high - b.high) : null,
       movePoint: b.value !== null && n.value !== null ? tidy(n.value - b.value) : null,
       wasReaffirmed: Boolean(g.was_reaffirmed),
-      summary: describe(label, g.period, b, n, g.unit, dir),
+      relativeMove: (() => {
+        const bb = b.low !== null ? b.low : b.value;
+        const aa = n.low !== null ? n.low : n.value;
+        return typeof bb === "number" && typeof aa === "number" && bb !== 0
+          ? Math.abs(aa - bb) / Math.abs(bb) : null;
+      })(),
+      summary: scope
+        ? label + " for " + g.period + " changed scale. Was " + figure(b, g.unit)
+          + ", now " + figure(n, g.unit) + ". A move that large is not a revision - it"
+          + " usually means a spin-off, a disposal or a restatement has changed what is"
+          + " being counted. Not reported as a raise or a cut."
+        : describe(label, g.period, b, n, g.unit, dir),
       quote: g.quote,
     });
   }
@@ -261,6 +304,31 @@ export function revisionsBetween(beforeGuides, afterGuides, opts) {
         + " in the previous release and does not appear in this one."
         + " That is not necessarily a withdrawal.",
     });
+  }
+
+  /**
+   * One scope change taints its neighbours.
+   *
+   * When Honeywell separated its businesses the sales guide halved, which is
+   * unmistakable. But its adjusted earnings per share guide fell 22% in the
+   * same release - large, below the scale threshold, and reported as a plain
+   * cut. It was not a cut either; the company had fewer businesses.
+   *
+   * So once any metric in a release has changed scale, every other sizeable
+   * move in that same release is noted as possibly part of it. Noted, not
+   * relabelled: earnings really may have been cut as well, and the reader is
+   * told what is uncertain rather than having it decided for him.
+   */
+  const scoped = out.some((r) => r.direction === "scope change");
+  if (scoped) {
+    for (const r of out) {
+      if (r.direction === "scope change") continue;
+      if (typeof r.relativeMove === "number" && r.relativeMove > 0.15) {
+        r.possibleScopeChange = true;
+        r.summary += " Another metric in this release changed scale, so some of this move"
+          + " may be the same change in what is being counted rather than a revision.";
+      }
+    }
   }
 
   const tally = {};
