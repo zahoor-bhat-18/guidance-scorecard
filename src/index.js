@@ -12,6 +12,7 @@
  * /api/text?ticker=M        the release as the extractor sees it. No model.
  * /api/records              every stored record, and when each was built
  * /api/record?ticker=M      one stored record, as a subscriber would see it
+ * /api/preview?ticker=M     the email itself, rendered. Nothing is sent.
  * /api/check?tickers=M,WMT  the whole battery across several companies at once
  * /sec?url=...              host-locked EDGAR proxy, for the browser
  *
@@ -27,6 +28,7 @@ import { scoreAll } from "./score.js";
 import { revisionsBetween } from "./revisions.js";
 import { releaseText } from "./text.js";
 import { readRecord, listRecords, forEmail, headline } from "./records.js";
+import { renderEmail } from "./email.js";
 
 /**
  * Period phrasings seen so far, kept as a fixture.
@@ -575,6 +577,49 @@ export default {
 
         const shown = forEmail(record);
         return json({ ...shown, headline: headline(shown.landed) });
+      } catch (e) {
+        return json({ error: e.message }, 502);
+      }
+    }
+
+    /**
+     * The email, rendered but not sent.
+     *
+     * Opens in a browser as the subscriber would see it. &format=text returns
+     * the plain-text half, which is what most mail clients on a phone will
+     * actually show and is the version worth reading critically.
+     *
+     * Nothing is sent from here and no address is involved. Sending waits
+     * until this has been read and judged right.
+     */
+    if (url.pathname === "/api/preview") {
+      const ticker = url.searchParams.get("ticker");
+      if (!ticker) return json({ error: "Add ?ticker=M" }, 400);
+
+      try {
+        const record = await readRecord(env, ticker);
+        if (!record) {
+          return json({ error: "No record stored for " + ticker.toUpperCase() + "." }, 404);
+        }
+
+        const shown = forEmail(record);
+        const mail = renderEmail(
+          { ...shown, headline: headline(shown.landed) },
+          { unsubscribeUrl: "https://example.invalid/unsubscribe", postalAddress: env.POSTAL_ADDRESS }
+        );
+
+        if (url.searchParams.get("format") === "text") {
+          return new Response(mail.subject + "\n\n" + mail.text, {
+            headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+          });
+        }
+        if (url.searchParams.get("format") === "json") {
+          return json(mail);
+        }
+
+        return new Response(mail.html, {
+          headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+        });
       } catch (e) {
         return json({ error: e.message }, 502);
       }
