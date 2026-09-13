@@ -190,7 +190,7 @@ function coverageOf(scoredPairs) {
     // publication rule depends on was wrong.
     const key = metricKey(p);
     if (!byMetric[key]) {
-      byMetric[key] = { label: p.metric_as_written, labels: new Set(), periods: [] };
+      byMetric[key] = { labels: new Set(), periods: [] };
     }
     byMetric[key].labels.add(p.metric_as_written);
     // One period counts once. United answered 2023Q4 from two different
@@ -201,13 +201,24 @@ function coverageOf(scoredPairs) {
     }
   }
 
-  const metrics = Object.values(byMetric).map((m) => ({
-    metric: m.label,
-    alsoCalled: Array.from(m.labels).filter((l) => l !== m.label),
+  // The name shown is the cleanest of the variants, not whichever arrived
+  // first. Broadcom's group was headed "Second quarter fiscal year 2026
+  // Adjusted EBITDA guidance" - a label carrying a period that has nothing to
+  // do with the five other quarters in the same group. Honeywell's carried
+  // footnote markers: "Organic 1 Growth", "Adjusted earnings per share 2,3".
+  const metrics = Object.values(byMetric).map((m) => {
+    const cleaned = Array.from(m.labels)
+      .map((l) => String(l).replace(/([a-zA-Z)])\s+\d{1,2}(?:\s*,\s*\d{1,2})*(?=\s|$)/g, "$1").replace(/\s+/g, " ").trim())
+      .sort((a, b) => a.length - b.length);
+    const label = cleaned[0];
+    return {
+    metric: label,
+    alsoCalled: cleaned.filter((l) => l !== label),
     matchedPairs: m.periods.length,
     periods: m.periods,
     qualifies: m.periods.length >= 3,
-  })).sort((a, b) => b.matchedPairs - a.matchedPairs);
+  };
+  }).sort((a, b) => b.matchedPairs - a.matchedPairs);
 
   const qualifying = metrics.filter((m) => m.qualifies);
 
