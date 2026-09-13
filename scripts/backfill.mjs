@@ -106,6 +106,10 @@ function metricKey(guide) {
     .replace(/\bcore\b/g, " ")
     .replace(/\bconstant[-\s]currency\b/g, " ")
     .replace(/\b(consolidated|total|company)\b/g, " ")
+    // Delta writes "Earnings Per Share" in its outlook table and "adjusted EPS"
+    // in the narrative. One measure, five matched pairs, counted as four and
+    // one.
+    .replace(/\beps\b/g, "earnings per share")
     .replace(/[^a-z ]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -208,7 +212,16 @@ function coverageOf(scoredPairs) {
   // footnote markers: "Organic 1 Growth", "Adjusted earnings per share 2,3".
   const metrics = Object.values(byMetric).map((m) => {
     const cleaned = Array.from(m.labels)
-      .map((l) => String(l).replace(/([a-zA-Z)])\s+\d{1,2}(?:\s*,\s*\d{1,2})*(?=\s|$)/g, "$1").replace(/\s+/g, " ").trim())
+      .map((l) => String(l)
+        .replace(/([a-zA-Z)])\s+\d{1,2}(?:\s*,\s*\d{1,2})*(?=\s|$)/g, "$1")
+        // Broadcom's group was still headed "First quarter Adjusted EBITDA
+        // guidance" - a label naming one quarter for a group spanning six.
+        .replace(/\b(first|second|third|fourth)\s+quarter\b/gi, " ")
+        .replace(/\bof\s+fiscal\s+year\s*\d{2,4}\b/gi, " ")
+        .replace(/\bfiscal\s+year\s*\d{2,4}\b/gi, " ")
+        .replace(/\b(guidance|outlook)\b/gi, " ")
+        .replace(/\s+/g, " ").trim())
+      .filter((l) => l.length >= 3)
       .sort((a, b) => a.length - b.length);
     const label = cleaned[0];
     return {
@@ -292,13 +305,32 @@ async function buildOne(ticker) {
   // "was guided at $6.5 to $7.5 ... does not appear in this one" immediately
   // followed by "is guided for the first time at $6.5 to $7.5". Only a guide
   // that never reappears anywhere in the history is worth reporting as absent.
+  // "Guided for the first time" said twice about the same metric and period is
+  // the same extraction variance as the vanishing guides above, seen from the
+  // other side: the guide was missed in one release, so its reappearance looks
+  // like a debut. Only the earliest is a debut.
+  const debuted = new Set();
+  for (let i = allRevisions.length - 1; i >= 0; i--) {
+    const r = allRevisions[i];
+    if (r.direction !== "new") continue;
+    const k = r.metric_as_written + "|" + r.period;
+    if (debuted.has(k)) r.direction = "repeat debut";
+    else debuted.add(k);
+  }
+
   const everGuided = new Set();
   for (const r of allRevisions) {
     if (r.direction !== "not repeated") everGuided.add(r.metric_as_written + "|" + r.period);
   }
-  const revisions = allRevisions.filter((r) =>
-    r.direction !== "not repeated" || !everGuided.has(r.metric_as_written + "|" + r.period)
-  );
+  const revisions = allRevisions.filter((r) => {
+    // A debut demoted above says "for the first time" and is no longer true of
+    // itself. Dropped rather than rewritten: the real debut is still listed.
+    if (r.direction === "repeat debut") return false;
+    if (r.direction === "not repeated") {
+      return !everGuided.has(r.metric_as_written + "|" + r.period);
+    }
+    return true;
+  });
 
   const coverage = coverageOf(allPairs);
   const comparable = allPairs.filter((p) => p.comparable);
@@ -423,6 +455,19 @@ function markdownFor(records, failures) {
     lines.push("");
     lines.push("**" + failures + " company/companies failed. See the log.**");
   }
+
+  /* The same thing again, fenced, so GitHub puts a copy button on it. Reading
+     a rendered table is easier; getting it OUT of one on a phone means
+     selecting text by hand. Both, rather than choosing. */
+  const plain = lines.join("\n");
+  lines.push("");
+  lines.push("<details><summary>Copy the whole summary</summary>");
+  lines.push("");
+  lines.push("FENCE");
+  lines.push(plain.split("FENCE").join("'''"));
+  lines.push("```");
+  lines.push("");
+  lines.push("</details>");
 
   return lines.join("\n") + "\n";
 }
