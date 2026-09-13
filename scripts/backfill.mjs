@@ -69,14 +69,43 @@ const env = {
   DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY,
 };
 
-/* The same normalisation revisions.js uses to match a metric across releases.
-   Six lines, deliberately duplicated rather than exported, because changing it
-   there should not silently re-key every stored record. */
+/**
+ * One measure, however the company labelled it that year.
+ *
+ * The key coverage is counted on, and it has been wrong twice.
+ *
+ * Broadcom bakes the period into its labels - "First quarter Adjusted EBITDA
+ * guidance", "Fourth quarter Adjusted EBITDA guidance" - so one measure with
+ * nine matched pairs was counted as five metrics with one or two each, and a
+ * company with a strong record looked like one with none.
+ *
+ * Walmart writes "Net sales (cc)" in some years and "Consolidated net sales
+ * (cc)" in others. United writes 'Adjusted diluted earnings per share' and
+ * then 'Adjusted diluted earnings per share ("EPS")'. Macy's renamed one line
+ * "Core Adjusted EBITDA...". Every one of those split a count.
+ *
+ * So everything that is scaffolding comes off: the period, the words that mark
+ * a forecast, parenthetical asides, footnote markers, and the prefixes that
+ * only say "the whole company".
+ */
 function metricKey(guide) {
   return String(guide.metric_as_written || "")
     .toLowerCase()
-    .replace(/\badj(\.|usted)?\b/g, "")
-    .replace(/\(cc\)|constant[-\s]currency/g, "")
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/\b(first|second|third|fourth)\s+quarter\b/g, " ")
+    .replace(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+quarter\b/g, " ")
+    .replace(/\bof\s+fiscal\s+year\s*\d{2,4}\b/g, " ")
+    .replace(/\bfiscal\s+(year\s+)?\d{2,4}\b/g, " ")
+    .replace(/\bfull[-\s]?year\b/g, " ")
+    .replace(/\b[1-4]q\s?\d{0,4}\b/g, " ")
+    .replace(/\bq[1-4]\b/g, " ")
+    .replace(/\bfy\s?\d{2,4}\b/g, " ")
+    .replace(/\b(19|20)\d{2}\b/g, " ")
+    .replace(/\b(guidance|outlook|forecast|expectations?|expected|projected)\b/g, " ")
+    .replace(/\badj(\.|usted)?\b/g, " ")
+    .replace(/\bcore\b/g, " ")
+    .replace(/\bconstant[-\s]currency\b/g, " ")
+    .replace(/\b(consolidated|total|company)\b/g, " ")
     .replace(/[^a-z ]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -164,7 +193,12 @@ function coverageOf(scoredPairs) {
       byMetric[key] = { label: p.metric_as_written, labels: new Set(), periods: [] };
     }
     byMetric[key].labels.add(p.metric_as_written);
-    byMetric[key].periods.push(p.guide_period);
+    // One period counts once. United answered 2023Q4 from two different
+    // releases and the coverage list read "2023Q4, 2023Q4", inflating a count
+    // the publication rule depends on.
+    if (!byMetric[key].periods.includes(p.guide_period)) {
+      byMetric[key].periods.push(p.guide_period);
+    }
   }
 
   const metrics = Object.values(byMetric).map((m) => ({
@@ -242,6 +276,19 @@ async function buildOne(ticker) {
     await sleep(300);
   }
 
+  // A guide that vanishes from one release and comes back in the next was
+  // never withdrawn - the extraction simply missed it once. Delta produced
+  // "was guided at $6.5 to $7.5 ... does not appear in this one" immediately
+  // followed by "is guided for the first time at $6.5 to $7.5". Only a guide
+  // that never reappears anywhere in the history is worth reporting as absent.
+  const everGuided = new Set();
+  for (const r of allRevisions) {
+    if (r.direction !== "not repeated") everGuided.add(r.metric_as_written + "|" + r.period);
+  }
+  const revisions = allRevisions.filter((r) =>
+    r.direction !== "not repeated" || !everGuided.has(r.metric_as_written + "|" + r.period)
+  );
+
   const coverage = coverageOf(allPairs);
   const comparable = allPairs.filter((p) => p.comparable);
 
@@ -258,9 +305,10 @@ async function buildOne(ticker) {
       within: comparable.filter((p) => p.score && p.score.position === "within").length,
       below: comparable.filter((p) => p.score && p.score.position === "below").length,
       noVerdict: comparable.filter((p) => p.score && p.score.position === null).length,
+      flagged: comparable.filter((p) => p.score && p.score.flags && p.score.flags.length).length,
     },
     pairs: allPairs,
-    revisions: allRevisions,
+    revisions,
     currentGuidance: guidanceByRelease[0].guides,
   };
 }
@@ -280,17 +328,18 @@ function markdownFor(records, failures) {
   const lines = [];
   lines.push("## Backfill");
   lines.push("");
-  lines.push("| | company | pairs | metrics ≥3 | publishable | above | within | below | revisions |");
-  lines.push("|---|---|---|---|---|---|---|---|---|");
+  lines.push("| | company | pairs | metrics 3+ | publishable | above | within | below | no verdict | flagged | revisions |");
+  lines.push("|---|---|---|---|---|---|---|---|---|---|---|");
 
   for (const r of records) {
     if (r.error) {
-      lines.push("| " + r.ticker + " | — | — | — | FAILED | | | | |");
+      lines.push("| " + r.ticker + " | - | - | - | FAILED | | | | | | |");
       continue;
     }
     lines.push("| " + r.ticker + " | " + r.company + " | " + r.comparablePairs + " | "
       + r.qualifyingMetrics + " | " + (r.publishable ? "**yes**" : "no") + " | "
       + r.landed.above + " | " + r.landed.within + " | " + r.landed.below + " | "
+      + (r.landed.noVerdict || 0) + " | " + (r.landed.flagged || 0) + " | "
       + r.revisions + " |");
   }
 
@@ -344,6 +393,13 @@ function markdownFor(records, failures) {
       for (const s of r.sampleScores) lines.push("- " + s);
     }
 
+    if (r.unreadablePeriods && r.unreadablePeriods.length) {
+      lines.push("");
+      lines.push("**Period wording that could not be resolved**");
+      lines.push("");
+      for (const t of r.unreadablePeriods) lines.push("- `" + t + "`");
+    }
+
     if (r.sampleRevisions && r.sampleRevisions.length) {
       lines.push("");
       lines.push("**Revisions, most recent first**");
@@ -385,7 +441,10 @@ async function main() {
       const rejections = {};
       for (const p of record.pairs) {
         if (p.comparable) continue;
-        const why = String(p.why || "unknown").replace(/\b20\d\d(FY|Q[1-4])\b/g, "<period>");
+        // NOT "<period>". GitHub renders the job summary as markdown and ate
+        // the angle brackets as an HTML tag, so every rejection line read
+        // "the guide is for and the figure reported is for ".
+        const why = String(p.why || "unknown").replace(/\b20\d\d(FY|Q[1-4])\b/g, "that period");
         rejections[why] = (rejections[why] || 0) + 1;
       }
 
@@ -404,6 +463,14 @@ async function main() {
         revisions: record.revisions.length,
         sampleScores: comparable.slice(0, 12).map((p) => p.score ? p.score.summary : ""),
         sampleRevisions: record.revisions.slice(0, 12).map((r) => r.summary),
+        // Still unexplained: some pairs are refused because the period text
+        // the model returned could not be resolved. Showing the actual wording
+        // is the only way to find out what it looked like.
+        unreadablePeriods: Array.from(new Set(
+          record.pairs
+            .filter((p) => !p.comparable && String(p.why || "").includes("period could not be read"))
+            .map((p) => String(p.actual_period_text || "(none returned)"))
+        )).slice(0, 8),
       });
 
       console.log("  " + ticker + ": " + comparable.length
