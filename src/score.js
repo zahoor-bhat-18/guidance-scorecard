@@ -76,32 +76,65 @@ function guidePrecision(guide) {
  * Growth guides are exempt. A percentage change is volatile by nature and a
  * large gap there is ordinary.
  */
+function looksLikeEarnings(pair) {
+  return /eps|earnings per share|earnings/i.test(String(pair.metric_as_written || ""))
+    || pair.metric === "eps";
+}
+
 function flagsFor(pair, actual, low, high, value) {
   const flags = [];
   const isGrowth = pair.shape === "growth_range" || pair.shape === "growth_point";
-  if (isGrowth) return flags;
 
   const bound = typeof low === "number" && typeof high === "number"
     ? (actual > high ? high : actual < low ? low : null)
     : typeof value === "number" ? value : null;
 
   if (bound === null) return flags;
-
   const gap = Math.abs(actual - bound);
 
-  if (pair.unit === "percent") {
-    // A margin or a rate. Three points off a guided margin is not a miss, it
-    // is a different business.
-    if (gap > 3) {
-      flags.push("The gap is " + tidy(gap) + " percentage points, which is very large for a"
-        + " margin or rate. Check for a change in scope, a restatement, or the wrong row"
-        + " before treating this as a miss or a beat.");
+  /* A growth guide answered with a level.
+     Honeywell guided adjusted earnings growth of 3% and the release reported
+     9.78 - which is not 9.78% growth, it is $9.78 of earnings per share. Both
+     are "percent" as far as the unit check is concerned, so nothing caught it.
+     A reported rate several times the guided one is far more likely to be a
+     different number entirely. */
+  if (isGrowth) {
+    const ceiling = Math.abs(typeof high === "number" ? high : value);
+    if (ceiling > 0 && Math.abs(actual) > ceiling * 3) {
+      flags.push("The figure is more than three times the guided rate. That usually means a"
+        + " level has been reported where a rate was guided. Check the row before using it.");
     }
     return flags;
   }
 
+  /* A margin or a rate. Three points off a guided margin is not a miss, it is
+     a different business. */
+  if (pair.unit === "percent") {
+    if (gap > 3) {
+      flags.push("The gap is " + Number(gap.toFixed(4)) + " percentage points, which is very"
+        + " large for a margin or rate. Check for a change in scope, a restatement, or the"
+        + " wrong row before treating this as a miss or a beat.");
+    }
+    return flags;
+  }
+
+  /* A percentage of a figure near zero is meaningless. United guided a LOSS of
+     $0.85 to $0.35 a share and delivered a loss of $0.15 - an ordinary result
+     that read as a 57% gap. */
   const scale = Math.abs(bound);
-  if (scale > 0 && gap / scale > 0.05) {
+  const spansZero = typeof low === "number" && typeof high === "number" && low * high <= 0;
+  if (!scale || spansZero || scale < 0.5) return flags;
+
+  /* The threshold has to differ by what is being measured, which the first
+     version ignored and so flagged every ordinary beat.
+     Earnings are leveraged: a company that beats revenue by one per cent beats
+     earnings by ten, and Macy's at 5.6%, Walmart's at 9.5% and Delta's at 6.7%
+     were all perfectly normal quarters wearing a warning label.
+     Revenue is not leveraged. Honeywell missing sales by 8% is not a quarter,
+     it is a company that sold half of itself. */
+  const limit = looksLikeEarnings(pair) ? 0.25 : 0.05;
+
+  if (gap / scale > limit) {
     flags.push("The gap is " + Math.round((gap / scale) * 1000) / 10 + "% of the guided figure."
       + " Check for a change in scope, a restatement, or the wrong row before treating this"
       + " as a miss or a beat.");
