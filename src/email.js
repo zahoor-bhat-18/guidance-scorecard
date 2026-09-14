@@ -27,6 +27,8 @@
  * product, and it fits in a short email.
  */
 
+import { metricKey, displayLabel } from "./metrics.js";
+
 const CREAM = "#faf7f0";
 const INK = "#1a2b23";
 const GREEN = "#1f4435";
@@ -57,11 +59,16 @@ function byMetric(pairs, limit) {
   const groups = new Map();
 
   for (const p of pairs) {
-    const key = p.metric;
+    // Grouped on the shared metric identity, NOT on the label as the company
+    // wrote it. Broadcom names the quarter inside its labels, so grouping by
+    // label split one measure into four and dropped three of them for having
+    // too few periods. The record said seven pairs; the email showed three.
+    const key = metricKey(p.metric);
     if (!groups.has(key)) {
-      groups.set(key, { metric: key, unit: p.unit, rows: [], above: 0, within: 0, below: 0, noVerdict: 0 });
+      groups.set(key, { labels: [], unit: p.unit, rows: [], above: 0, within: 0, below: 0, noVerdict: 0 });
     }
     const g = groups.get(key);
+    g.labels.push(p.metric);
     g.rows.push(p);
     if (p.position === "above") g.above += 1;
     else if (p.position === "within") g.within += 1;
@@ -71,6 +78,7 @@ function byMetric(pairs, limit) {
 
   const out = Array.from(groups.values());
   for (const g of out) {
+    g.metric = displayLabel(g.labels);
     g.rows.sort((a, b) => (a.period < b.period ? 1 : -1));
     g.total = g.rows.length;
   }
