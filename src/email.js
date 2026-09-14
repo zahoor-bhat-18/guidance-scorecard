@@ -173,7 +173,10 @@ export function renderEmail(view, options) {
 
   for (const g of metrics) {
     t.push(g.metric + " - " + countLine(g));
-    for (const p of g.rows.slice(0, 4)) t.push("   " + outcomeLine(p));
+    // Every period the block earned, up to the eight it was capped at in
+    // byMetric. An earlier version printed four while the heading said seven,
+    // which reads as a page that cannot count.
+    for (const p of g.rows) t.push("   " + outcomeLine(p));
     t.push("");
   }
 
@@ -217,7 +220,7 @@ export function renderEmail(view, options) {
     h.push('<div style="font-size:16px;color:' + GREEN + ';">' + esc(g.metric) + '</div>');
     h.push('<div style="font-size:14px;color:' + MUTED + ';margin-top:2px;">' + esc(countLine(g)) + '</div>');
     h.push('<div style="margin-top:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;line-height:1.7;">');
-    for (const p of g.rows.slice(0, 4)) {
+    for (const p of g.rows) {
       h.push('<div>' + esc(outcomeLine(p)) + '</div>');
     }
     h.push('</div></div>');
