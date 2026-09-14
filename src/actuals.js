@@ -403,20 +403,53 @@ export async function actualsFrom(env, cik, release, requests, cal) {
       ? resolvePeriod(row.period_text, cal, { referenceDate: release.filed, direction: "past" })
       : { period: null, why: "No fiscal calendar was supplied." };
 
-    // A figure with no period attached is not a failed answer, it is an answer
-    // from a bare table row. Rather than discard it, work out what period this
-    // release must be reporting - which is a fact about earnings releases, not
-    // a guess about this one. The pairing check still has to agree afterwards.
+    /* The period the release must be reporting, when the stated one cannot be
+     * used.
+     *
+     * The first version only fired when the period text was MISSING, and it
+     * almost never was. Broadcom returns wording we cannot parse rather than
+     * no wording at all, so nine answers a run fell through a recovery written
+     * for a case that barely happens.
+     *
+     * So it fires whenever the period is unresolved - absent, unparseable, or
+     * a phrase never met before.
+     *
+     * With one exception, and it is the important one. If the stated text says
+     * the figure covers a year-to-date or half-year span, that is not a period
+     * we failed to read, it is the WRONG period honestly reported. Overriding
+     * it would pair a six-month figure against a quarterly guide, which is the
+     * failure this whole product is built to avoid. Those stay refused.
+     */
     let periodAssumed = false;
-    if (cal && value !== null && !resolved.period && !row.period_text) {
-      const fromFiling = periodReportedBy(release.filed, cal);
-      if (fromFiling) {
-        resolved = {
-          period: fromFiling,
-          how: "no period was stated with the figure, so the quarter this release reports"
-            + " was taken from its filing date",
-        };
-        periodAssumed = true;
+    if (cal && value !== null && !resolved.period) {
+      /* Only text that names a year-to-date span AND NOTHING ELSE counts as
+       * honestly reporting the wrong period.
+       *
+       * "three and nine months ended August 2, 2026" is a table HEADER: the
+       * table carries the quarter and the year to date side by side, and the
+       * figure taken is almost certainly the quarter. Refusing it because the
+       * words "nine months" appear throws away the answer over wording that
+       * describes the table rather than the figure. */
+      const stated = String(row.period_text || "");
+      const namesYtd = /year[-\s]to[-\s]date|six months|nine months|26 weeks|39 weeks|half[-\s]year/i.test(stated);
+      // "three AND nine months" is the wording, not "three months" - the first
+      // attempt missed it and refused the very case it was written for.
+      const namesQuarter =
+        /three months|13 weeks|quarter|three\s+and\s+(six|nine)\s+months|13\s+and\s+(26|39)\s+weeks/i
+          .test(stated);
+      const statedWrongSpan = namesYtd && !namesQuarter;
+
+      if (!statedWrongSpan) {
+        const fromFiling = periodReportedBy(release.filed, cal);
+        if (fromFiling) {
+          resolved = {
+            period: fromFiling,
+            how: "the stated period could not be read"
+              + (row.period_text ? ' ("' + row.period_text + '")' : " and none was given")
+              + ", so the quarter this release reports was taken from its filing date",
+          };
+          periodAssumed = true;
+        }
       }
     }
 
