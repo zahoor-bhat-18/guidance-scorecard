@@ -103,6 +103,11 @@ function pairUp(guides, actuals) {
     base.actual = a.value;
     base.actual_unit = a.unit;
     base.actual_period = a.period;
+    // Carried so the diagnostic can tell the truth. Without it every company
+    // reported "(none returned)" for the period wording, whatever the model
+    // had actually said, and three rounds were spent reasoning from it.
+    base.actual_period_text = a.period_text;
+    base.period_assumed = Boolean(a.period_assumed);
     base.actual_found_as = a.found_as;
     base.quote = a.quote;
 
@@ -382,6 +387,12 @@ function markdownFor(records, failures) {
       for (const s of r.sampleScores) lines.push("- " + s);
     }
 
+    if (r.periodsTakenFromFilingDate) {
+      lines.push("");
+      lines.push("Periods taken from the filing date because the stated one could not be read: "
+        + r.periodsTakenFromFilingDate);
+    }
+
     if (r.unreadablePeriods && r.unreadablePeriods.length) {
       lines.push("");
       lines.push("**Period wording that could not be resolved**");
@@ -440,6 +451,7 @@ async function main() {
       await writeFile("out/" + ticker + ".json", JSON.stringify(record, null, 2));
 
       const comparable = record.pairs.filter((p) => p.comparable);
+      const assumed = record.pairs.filter((p) => p.comparable && p.period_assumed).length;
       const rejections = {};
       for (const p of record.pairs) {
         if (p.comparable) continue;
@@ -456,6 +468,7 @@ async function main() {
         fiscal: "Year end " + record.calendar.fiscalYearEnd + ". "
           + record.calendar.labelConvention + ", from " + record.calendar.conventionFrom + ".",
         comparablePairs: comparable.length,
+        periodsTakenFromFilingDate: assumed,
         qualifyingMetrics: record.coverage.qualifyingMetrics,
         publishable: record.coverage.publishable,
         reason: record.coverage.reason,
