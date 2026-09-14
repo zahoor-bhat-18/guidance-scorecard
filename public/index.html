@@ -2,32 +2,335 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex">
-<title>Guidance Scorecard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guidance Scorecard — how management guidance has held up</title>
+<meta name="description" content="Whether a company lands where it said it would. Read from its own filings, one guide against one period, on the same basis.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;1,6..72,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  body{margin:0;background:#F1F0EA;color:#16281F;
-       font:400 17px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
-  .wrap{max-width:520px;margin:14vh auto;padding:0 24px}
-  h1{font:400 30px/1.2 Georgia,serif;margin:0 0 14px}
-  p{color:#3E5248;margin:0 0 14px}
-  code{font:400 15px/1.5 ui-monospace,Menlo,monospace;background:#FBFBF8;
-       border:1px solid #DCDCD2;border-radius:4px;padding:2px 6px}
-  .v{font:400 11px/1.5 ui-monospace,Menlo,monospace;letter-spacing:.14em;
-     text-transform:uppercase;color:#5B7166;margin-top:34px}
+  :root{
+    --paper:#faf7f0;
+    --ink:#1a2b23;
+    --green:#1f4435;
+    --muted:#5f6f66;
+    --rule:#ded8ca;
+    --band:#cfd8ce;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0;background:var(--paper);color:var(--ink);
+    font-family:"Newsreader",Georgia,serif;font-weight:300;
+    font-size:19px;line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:640px;margin:0 auto;padding:0 22px}
+  h1,h2,h3{font-weight:400;line-height:1.15;margin:0}
+  h1{font-size:2.4rem;letter-spacing:-.01em;color:var(--green)}
+  h2{font-size:1.45rem;margin-top:3.4rem;color:var(--green)}
+  h3{font-size:1.05rem;margin:0 0 .2rem}
+  p{margin:.9rem 0}
+  a{color:var(--green)}
+  .lede{font-size:1.18rem;margin-top:1rem}
+  .quiet{color:var(--muted)}
+  .mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.8rem;letter-spacing:-.01em}
+
+  header{padding:3.2rem 0 .6rem}
+  .mark{font-size:.82rem;letter-spacing:.02em;color:var(--muted);margin-bottom:1.6rem}
+  .mark b{font-weight:500;color:var(--green)}
+
+  /* The range strip: the guided band, and where the figure landed. */
+  .strip{margin:1.5rem 0 0;padding-top:1.2rem;border-top:1px solid var(--rule)}
+  .strip:first-of-type{border-top:0}
+  .strip .top{display:flex;justify-content:space-between;align-items:baseline;gap:1rem}
+  .strip .metric{font-size:1rem}
+  .strip .period{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.78rem;color:var(--muted)}
+  .track{position:relative;height:30px;margin:.55rem 0 .1rem}
+  .track .line{position:absolute;left:0;right:0;top:14px;height:1px;background:var(--rule)}
+  .track .band{position:absolute;top:9px;height:11px;background:var(--band)}
+  .track .dot{position:absolute;top:8px;width:13px;height:13px;margin-left:-6.5px;border-radius:50%;
+    background:var(--green);border:2.5px solid var(--paper)}
+  .scale{display:flex;justify-content:space-between}
+  .scale span{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.72rem;color:var(--muted)}
+  .said{font-size:.95rem;color:var(--muted);margin:.35rem 0 0}
+
+  .rule{border:0;border-top:1px solid var(--rule);margin:3.2rem 0 0}
+
+  .method dt{font-size:1rem;margin-top:1.4rem}
+  .method dd{margin:.25rem 0 0;color:var(--muted);font-size:.98rem}
+
+  .pick{display:flex;flex-wrap:wrap;gap:.4rem;margin:1.2rem 0 .4rem}
+  .pick button{
+    font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.78rem;
+    background:transparent;color:var(--green);border:1px solid var(--rule);
+    padding:.4rem .6rem;cursor:pointer;border-radius:2px;
+  }
+  .pick button[aria-pressed="true"]{background:var(--green);color:var(--paper);border-color:var(--green)}
+  .pick button:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+
+  .count{font-size:1.05rem;margin:.9rem 0 .2rem}
+  .note{font-size:.9rem;color:var(--muted)}
+
+  form{margin:1.2rem 0 0;display:flex;flex-wrap:wrap;gap:.5rem}
+  input[type=email],input[type=text]{
+    flex:1 1 13rem;font-family:"Newsreader",serif;font-size:1rem;
+    padding:.62rem .7rem;border:1px solid var(--rule);background:#fff;color:var(--ink);border-radius:2px;
+  }
+  input:focus-visible{outline:2px solid var(--green);outline-offset:1px}
+  button.go{
+    font-family:"Newsreader",serif;font-size:1rem;padding:.62rem 1.1rem;
+    background:var(--green);color:var(--paper);border:1px solid var(--green);border-radius:2px;cursor:pointer;
+  }
+  footer{margin:4rem 0 3rem;padding-top:1.2rem;border-top:1px solid var(--rule);
+    font-size:.86rem;color:var(--muted)}
+  footer a{color:var(--muted)}
+  @media (max-width:480px){ h1{font-size:2rem} body{font-size:18px} }
 </style>
 </head>
 <body>
+
 <div class="wrap">
-  <h1>Guidance Scorecard</h1>
-  <p>Being rebuilt. Eight quarters of what management promised, against what
-     the company filed.</p>
-  <p>Nothing to see here yet. The only thing running is the facts endpoint:
-     <code>/api/facts?ticker=M</code></p>
-  <!-- The one place the version lives. Bump it in the same commit as any
-       change that alters behaviour. If this and the repo disagree, the deploy
-       did not happen. -->
-  <p class="v">v0.1</p>
+
+  <header>
+    <div class="mark"><b>Guidance Scorecard</b> · from the filings, nothing added</div>
+
+    <h1>Every company guides.<br>Not every company lands where it said.</h1>
+
+    <p class="lede">Management tells you what the quarter will look like. Three months later
+    they tell you what it was. Nobody keeps the score, so nobody knows which teams
+    routinely sandbag, which routinely disappoint, and which just stopped giving you a
+    number at all.</p>
+
+    <p class="lede">This keeps the score. Here is Delta, guide by guide.</p>
+  </header>
+
+  <!-- The hero: real pairs, drawn. Built statically so the page says something
+       before any request completes. -->
+  <div id="hero">
+    <div class="strip">
+      <div class="top"><span class="metric">Operating margin</span><span class="period">Q2 2026</span></div>
+      <div class="track">
+        <div class="line"></div>
+        <div class="band" style="left:18%;width:44%"></div>
+        <div class="dot" style="left:80%"></div>
+      </div>
+      <div class="scale"><span>6%</span><span>8%</span></div>
+      <p class="said">Guided 6 to 8. Reported 8.8.</p>
+    </div>
+
+    <div class="strip">
+      <div class="top"><span class="metric">Operating margin</span><span class="period">Q4 2025</span></div>
+      <div class="track">
+        <div class="line"></div>
+        <div class="band" style="left:30%;width:44%"></div>
+        <div class="dot" style="left:18%"></div>
+      </div>
+      <div class="scale"><span>10.5%</span><span>12%</span></div>
+      <p class="said">Guided 10.5 to 12. Reported 10.1.</p>
+    </div>
+
+    <div class="strip">
+      <div class="top"><span class="metric">Earnings per share</span><span class="period">Q2 2026</span></div>
+      <div class="track">
+        <div class="line"></div>
+        <div class="band" style="left:22%;width:46%"></div>
+        <div class="dot" style="left:78%"></div>
+      </div>
+      <div class="scale"><span>$1.00</span><span>$1.50</span></div>
+      <p class="said">Guided 1 to 1.5. Reported 1.6.</p>
+    </div>
+  </div>
+
+  <p class="note" style="margin-top:1.4rem">Delta has missed its own operating margin guidance
+  in six of the last twelve quarters. That is not on any screen you have.</p>
+
+  <hr class="rule">
+
+  <h2>What arrives, and when</h2>
+
+  <p>An email, minutes after the company files its results. It carries the record —
+  every guide it gave, and where the figure landed against it — and whatever the company
+  guided for next. You already have the release. What you do not have is whether this
+  management habitually lands where it said it would.</p>
+
+  <p>Nothing in it is a forecast. It counts; you decide what the count means.</p>
+
+  <h2>What it refuses to do</h2>
+
+  <dl class="method">
+    <dt>Score a full-year guide against a quarter</dt>
+    <dd>Macy's guides the year and reports a quarter. Comparing them reads as a two-point
+    miss ten months before the year is over. A guide is only scored against the period
+    it was for.</dd>
+
+    <dt>Mix adjusted with as-reported</dt>
+    <dd>Walmart guided operating income growth of 7 to 10 per cent and the release carries
+    two answers: 26.9 per cent against last year as first reported, 17.4 per cent against
+    the adjusted base the guide meant. The second is the honest one.</dd>
+
+    <dt>Take a midpoint</dt>
+    <dd>The middle of a range is a number management never gave. A result is reported by
+    where it fell against the range they printed.</dd>
+
+    <dt>Call a spin-off a guidance cut</dt>
+    <dd>Honeywell's sales guide halved between two releases. It did not cut its outlook by
+    half; it separated its businesses. Moves that large are named for what they are.</dd>
+
+    <dt>Publish a number it cannot stand behind</dt>
+    <dd>Where a gap is too large to take at face value, the comparison is held back and
+    the fact that something was held back is printed.</dd>
+  </dl>
+
+  <hr class="rule">
+
+  <h2>The record, as it stands</h2>
+  <p class="note">Read live from the stored records. Each is built from fourteen earnings
+  releases.</p>
+
+  <div class="pick" id="pick"></div>
+  <div id="detail"><p class="note">Loading the records…</p></div>
+
+  <hr class="rule">
+
+  <h2>Follow a company</h2>
+  <p>Tell us which tickers you care about. You will get one email per company per
+  quarter, when it reports. Confirm by clicking the link we send; leave at any time.</p>
+
+  <form id="signup">
+    <input type="email" name="email" placeholder="you@fund.com" required autocomplete="email">
+    <input type="text" name="tickers" placeholder="DAL, WMT" required>
+    <button class="go" type="submit">Send the confirmation link</button>
+  </form>
+  <p class="note" id="says" style="min-height:1.2em"></p>
+
+  <footer>
+    Built from SEC EDGAR filings. Guidance is read from the earnings release; results from
+    the release that reported the period.
+    <br><a href="https://zahoorbhat.com">zahoorbhat.com</a>
+  </footer>
+
 </div>
+
+<script>
+  const detail = document.getElementById("detail");
+  const pick = document.getElementById("pick");
+  let records = [];
+
+  const money = (n, unit) =>
+    unit === "percent" ? n + "%" :
+    unit === "USD billions" ? "$" + n + "bn" :
+    unit === "USD millions" ? "$" + n + "m" :
+    unit === "USD per share" ? "$" + n : String(n);
+
+  const periodLabel = (p) => {
+    const m = String(p || "").match(/^(\d{4})(FY|Q([1-4]))$/);
+    return !m ? String(p || "") : m[2] === "FY" ? "FY" + m[1] : "Q" + m[3] + " " + m[1];
+  };
+
+  /* The band sits in the middle two thirds of the track, so a figure outside the
+     guided range still has somewhere to sit. */
+  function strip(p) {
+    const lo = p.guide.low, hi = p.guide.high, val = p.guide.value;
+    const a = lo !== null ? lo : val, b = hi !== null ? hi : val;
+    if (a === null || b === null) return "";
+
+    const width = (b - a) || Math.abs(a * 0.02) || 1;
+    const pad = width * 1.4;
+    const min = a - pad, max = b + pad;
+    const at = (x) => Math.max(1, Math.min(99, ((x - min) / (max - min)) * 100));
+
+    const left = at(a), right = at(b);
+    return '<div class="strip">'
+      + '<div class="top"><span class="metric">' + esc(p.metric) + '</span>'
+      + '<span class="period">' + periodLabel(p.period) + '</span></div>'
+      + '<div class="track"><div class="line"></div>'
+      + '<div class="band" style="left:' + left + '%;width:' + Math.max(1, right - left) + '%"></div>'
+      + '<div class="dot" style="left:' + at(p.actual) + '%"></div></div>'
+      + '<div class="scale"><span>' + money(a, p.unit) + '</span><span>' + money(b, p.unit) + '</span></div>'
+      + '<p class="said">Guided ' + money(a, p.unit) + (b !== a ? " to " + money(b, p.unit) : "")
+      + '. Reported ' + money(p.actual, p.unit) + '.</p></div>';
+  }
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  }
+
+  async function show(ticker) {
+    for (const b of pick.querySelectorAll("button")) {
+      b.setAttribute("aria-pressed", String(b.dataset.ticker === ticker));
+    }
+    detail.innerHTML = '<p class="note">Reading ' + esc(ticker) + '…</p>';
+
+    try {
+      const r = await fetch("/api/record?ticker=" + encodeURIComponent(ticker));
+      const d = await r.json();
+      if (d.error) throw new Error(d.error);
+
+      const rows = (d.pairs || []).filter((p) => p.guide && p.actual !== null).slice(0, 6);
+      detail.innerHTML =
+        '<p class="count">' + esc(d.company) + ' — ' + esc(d.headline || "") + '</p>'
+        + (rows.length ? rows.map(strip).join("") : '<p class="note">No matched pairs to draw.</p>')
+        + (d.withheldForReview
+            ? '<p class="note" style="margin-top:1.2rem">' + d.withheldForReview
+              + ' comparison(s) held back: the gap was too large to take at face value.</p>'
+            : "");
+    } catch (e) {
+      detail.innerHTML = '<p class="note">Could not read that record: ' + esc(e.message) + '</p>';
+    }
+  }
+
+  (async function start() {
+    try {
+      const r = await fetch("/api/records");
+      const d = await r.json();
+      records = (d.records || []).filter((x) => x.publishable);
+
+      if (!records.length) {
+        detail.innerHTML = '<p class="note">No records are published yet.</p>';
+        return;
+      }
+
+      pick.innerHTML = records.map((x) =>
+        '<button data-ticker="' + esc(x.ticker) + '" aria-pressed="false">' + esc(x.ticker) + '</button>'
+      ).join("");
+
+      for (const b of pick.querySelectorAll("button")) {
+        b.addEventListener("click", () => show(b.dataset.ticker));
+      }
+
+      show(records.some((x) => x.ticker === "DAL") ? "DAL" : records[0].ticker);
+    } catch (e) {
+      detail.innerHTML = '<p class="note">Could not load the records: ' + esc(e.message) + '</p>';
+    }
+  })();
+
+  document.getElementById("signup").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const says = document.getElementById("says");
+    const form = ev.target;
+    says.textContent = "Sending…";
+
+    try {
+      const r = await fetch("/api/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: form.email.value.trim(),
+          tickers: form.tickers.value.trim(),
+        }),
+      });
+      const d = await r.json();
+      says.textContent = d.error
+        ? d.error
+        : "Check your inbox and click the link to confirm.";
+      if (!d.error) form.reset();
+    } catch (e) {
+      says.textContent = "That did not go through. Try again in a moment.";
+    }
+  });
+</script>
+
 </body>
 </html>
