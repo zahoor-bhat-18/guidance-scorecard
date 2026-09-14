@@ -74,8 +74,13 @@ function byMetric(pairs, limit) {
     g.rows.sort((a, b) => (a.period < b.period ? 1 : -1));
     g.total = g.rows.length;
   }
-  out.sort((a, b) => b.total - a.total);
-  return out.slice(0, limit || 4);
+
+  // Three matched pairs to earn a block. The rule the record already enforces,
+  // applied here too - the email was showing Delta's gross leverage on the
+  // strength of one period, which is not a record, it is an anecdote.
+  const earned = out.filter((g) => g.total >= 3);
+  earned.sort((a, b) => b.total - a.total);
+  return earned.slice(0, limit || 4);
 }
 
 /* "9 above, 2 within, 1 below" - counted, not characterised. */
@@ -101,24 +106,33 @@ function outcomeLine(p) {
 }
 
 /**
- * Only the revisions that are still open.
+ * What moved in THIS release, and nothing else.
  *
- * A revision to a period that has since been reported is history - it is
- * already answered in the record above. What matters is the guide the company
- * is still standing behind, and whether it moved today.
+ * The first version took the first six revisions in the record and called them
+ * "what moved in this release". The record holds fourteen releases of history,
+ * newest first, so the section led with guides issued months earlier. A
+ * section headed with today's date and filled with old news is the fastest way
+ * to lose a reader who checks.
+ *
+ * A revision to a period that has since been reported is history too - it is
+ * already answered in the record above.
  */
-function openRevisions(revisions, limit) {
+function movedInThisRelease(revisions, latest, limit) {
   const wanted = new Set(["raised", "cut", "unchanged", "new", "narrowed", "widened", "scope change"]);
-  return (revisions || [])
-    .filter((r) => wanted.has(r.direction))
-    .slice(0, limit || 6);
+  const accession = latest && latest.accession;
+
+  const rows = (revisions || []).filter((r) => wanted.has(r.direction));
+  if (!accession) return rows.slice(0, limit || 6);
+
+  const fromLatest = rows.filter((r) => r.release === accession);
+  return fromLatest.slice(0, limit || 6);
 }
 
 export function renderEmail(view, options) {
   const opts = options || {};
   const company = view.company || view.ticker;
   const metrics = byMetric(view.pairs || [], 4);
-  const moved = openRevisions(view.revisions, 6);
+  const moved = movedInThisRelease(view.revisions, view.latestRelease, 6);
 
   const subject = company + " reported - how their guidance has held up";
 

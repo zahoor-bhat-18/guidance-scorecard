@@ -58,9 +58,24 @@ export function forEmail(record) {
       period: r.period,
       direction: r.direction,
       summary: r.summary,
+      // Carried through so the email can tell today's revisions from the
+      // fourteen releases of history behind them.
+      release: r.release,
+      filed: r.filed,
     })),
+    latestRelease: latestRelease(record),
     currentGuidance: record.currentGuidance || [],
   };
+}
+
+/* Which release is the newest? The record lists them newest first, but a
+   record is not the place to depend on ordering that was never promised. */
+function latestRelease(record) {
+  let best = null;
+  for (const r of record.releasesRead || []) {
+    if (!best || String(r.filed) > String(best.filed)) best = r;
+  }
+  return best;
 }
 
 function trim(p) {
@@ -70,7 +85,14 @@ function trim(p) {
     basis: p.basis,
     unit: p.unit,
     guide: p.guide,
-    actual: p.actual,
+    // The figure that was JUDGED, not the raw one.
+    //
+    // Delta guided $1.60 to $1.90 and reported $1.55, which is $1.6 at the
+    // precision guided and therefore within the range. Printing "reported
+    // 1.55 (within)" reads as an error to anyone who can subtract, and an
+    // email that looks wrong is wrong.
+    actual: typeof p.score.actualAsGuided === "number" ? p.score.actualAsGuided : p.actual,
+    actualAsReported: p.actual,
     position: p.score.position,
     summary: p.score.summary,
     quote: p.quote,
