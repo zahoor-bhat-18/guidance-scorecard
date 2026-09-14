@@ -434,6 +434,59 @@ function nearestYearLabel(cal, referenceMs, direction) {
 }
 
 /**
+ * The period a release must be reporting, worked out from its filing date.
+ *
+ * A last resort, and only used when the model returns a figure with no period
+ * attached at all.
+ *
+ * Broadcom prints revenue as a bare table row - "Net revenue $ 29,591 $ 15,952
+ * +86 %" - with the period named in a heading several rows above. The figure
+ * comes back correct and the period comes back null, and seven of Broadcom's
+ * twelve pairs were discarded for it. Telling the model the field was required
+ * did not fix it, twice, which by now is the signal to stop asking and compute.
+ *
+ * A company reports the quarter that has just ended. That is not a guess about
+ * the document, it is what an earnings release IS, and the fiscal calendar
+ * already says which quarter that was.
+ *
+ * It does NOT assume the period that was asked for. That would defeat the
+ * check entirely - a full-year guide answered by a quarterly figure would pair
+ * happily and publish nonsense. This says only what the release must be
+ * reporting; whether that matches the guide is still decided afterwards.
+ *
+ * The buffer is three days, not the fortnight first tried. Delta files ten
+ * days after its quarter ends, and a fortnight's buffer skipped straight past
+ * the quarter it was reporting and named the one before - which is the exact
+ * class of error this whole product refuses to publish. Three days is enough
+ * to avoid a quarter that closed the day before filing, and short enough for
+ * the fastest filers.
+ */
+export function periodReportedBy(filedDate, cal) {
+  if (!filedDate || !cal || !cal.fye || typeof cal.labelOffset !== "number") return null;
+
+  const filed = Date.parse(filedDate + "T00:00:00Z");
+  if (!Number.isFinite(filed)) return null;
+
+  const cutoff = filed - 3 * 86400000;
+  const centre = labelOf(new Date(filed).toISOString().slice(0, 10), cal);
+
+  let best = null;
+  let bestEnd = -Infinity;
+
+  for (const label of [centre - 1, centre, centre + 1]) {
+    for (let q = 1; q <= 4; q++) {
+      const end = quarterEndMs(label, q, cal);
+      if (end <= cutoff && end > bestEnd) {
+        bestEnd = end;
+        best = label + "Q" + q;
+      }
+    }
+  }
+
+  return best;
+}
+
+/**
  * Two periods, compared.
  *
  * The only comparison the matcher is allowed to make. Identical or nothing -

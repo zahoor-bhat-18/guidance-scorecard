@@ -88,6 +88,24 @@ function byMetric(pairs, limit) {
   // strength of one period, which is not a record, it is an anecdote.
   const earned = out.filter((g) => g.total >= 3);
   earned.sort((a, b) => b.total - a.total);
+
+  // Eight periods, not the whole history.
+  //
+  // The record reaches back to 2023 for some companies, and a run that long
+  // takes in a different macro environment and sometimes a different business.
+  // Two years is long enough to be a pattern and recent enough to be about the
+  // management team running the company now. The full history stays in the
+  // record for the page.
+  for (const g of earned) {
+    g.allPeriods = g.rows.length;
+    g.rows = g.rows.slice(0, 8);
+    g.above = g.rows.filter((p) => p.position === "above").length;
+    g.within = g.rows.filter((p) => p.position === "within").length;
+    g.below = g.rows.filter((p) => p.position === "below").length;
+    g.noVerdict = g.rows.filter((p) => !p.position).length;
+    g.total = g.rows.length;
+  }
+
   return earned.slice(0, limit || 4);
 }
 

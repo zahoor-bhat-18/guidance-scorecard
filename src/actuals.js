@@ -14,7 +14,7 @@
  */
 
 import { readFiling } from "./guidance.js";
-import { resolvePeriod } from "./period.js";
+import { resolvePeriod, periodReportedBy } from "./period.js";
 
 const MODEL = "deepseek-chat";
 const ENDPOINT = "https://api.deepseek.com/chat/completions";
@@ -399,9 +399,26 @@ export async function actualsFrom(env, cik, release, requests, cal) {
       }
     }
 
-    const resolved = cal
+    let resolved = cal
       ? resolvePeriod(row.period_text, cal, { referenceDate: release.filed, direction: "past" })
       : { period: null, why: "No fiscal calendar was supplied." };
+
+    // A figure with no period attached is not a failed answer, it is an answer
+    // from a bare table row. Rather than discard it, work out what period this
+    // release must be reporting - which is a fact about earnings releases, not
+    // a guess about this one. The pairing check still has to agree afterwards.
+    let periodAssumed = false;
+    if (cal && value !== null && !resolved.period && !row.period_text) {
+      const fromFiling = periodReportedBy(release.filed, cal);
+      if (fromFiling) {
+        resolved = {
+          period: fromFiling,
+          how: "no period was stated with the figure, so the quarter this release reports"
+            + " was taken from its filing date",
+        };
+        periodAssumed = true;
+      }
+    }
 
     return {
       metric: req.metric,
@@ -417,6 +434,7 @@ export async function actualsFrom(env, cik, release, requests, cal) {
       found_as: row.found_as ?? null,
       period_text: row.period_text ?? null,
       period: resolved.period,
+      period_assumed: periodAssumed,
       period_how: resolved.how || null,
       period_why: resolved.why || null,
       value,
