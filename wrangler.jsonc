@@ -4,28 +4,64 @@
   "main": "src/index.js",
   "compatibility_date": "2026-09-01",
 
-  // Never let a deploy delete a secret or variable set in the dashboard.
-  // Without this, wrangler reconciles the Worker against this file and removes
-  // whatever it does not find here - which is how the old project lost its
-  // API key on a deploy that was only meant to add a domain.
+  // Never let a deploy delete a variable set in the dashboard.
+  //
+  // Note on what this does and does not do: a wrangler deploy replaces the
+  // Worker's plain VARIABLES with whatever this file says, and anything added
+  // only in the dashboard is wiped. SECRETS are not touched - that distinction
+  // was learned the hard way on the other product, where EMAIL_FROM and
+  // ALERT_TO vanished on a deploy while the API keys sat there working.
   "keep_vars": true,
+
+  // The address this lives at.
+  //
+  // Declared here rather than added in the dashboard, and deliberately. The
+  // dashboard dialog silently refuses when another Worker already holds the
+  // name - which guidance-scorecard-old did - and "custom_domain": true is
+  // what makes Cloudflare create the DNS record and provision the certificate
+  // itself rather than expecting one to exist.
+  //
+  // Remove the domain from the old Worker FIRST. Two Workers cannot hold one
+  // name, and the failure is silent at both ends.
+  "routes": [
+    { "pattern": "guidance.zahoorbhat.com", "custom_domain": true }
+  ],
 
   "assets": {
     "directory": "./public",
     "binding": "ASSETS"
   },
 
-  // Not sensitive, so it lives here where a deploy cannot remove it. SEC
-  // refuses any request without a real name and address.
+  // Not sensitive, so they live here where a deploy cannot remove them.
+  //
+  // SEC refuses any request without a real name and address in the user agent.
+  // EMAIL_FROM must match a domain verified in Resend - zahoorbhat.com already
+  // is, from the other product, so a new local part needs no new warm-up.
   "vars": {
-    "SEC_USER_AGENT": "Zahoor Bhat zahoorbhatdotcom@gmail.com"
+    "SEC_USER_AGENT": "Zahoor Bhat zahoorbhatdotcom@gmail.com",
+    "EMAIL_FROM": "guidance@zahoorbhat.com",
+    "SITE_URL": "https://guidance.zahoorbhat.com",
+    "POSTAL_ADDRESS": "Goosu Pulwama Kashmir 192301"
   },
 
-  // One shared store. A filing read once is replayed everywhere, so two
-  // devices always see the same figures.
+  // One shared store: the precomputed records, and the subscriber list.
+  //
+  // Subscribers live in KV rather than in the repo, which is the whole reason
+  // this repository can be public and its Actions minutes free. The other
+  // product keeps its list in a committed JSON file, which is why it must stay
+  // private - and why a rebase conflict in it once caused duplicate briefings.
   "kv_namespaces": [
     { "binding": "CACHE", "id": "ae1f3bc993714a41973b9fd4492ff641" }
   ],
 
   "observability": { "enabled": true }
+
+  // Secrets are NOT here. Add them in the dashboard under Settings ->
+  // Variables and Secrets, with Encrypt ticked, then Deploy:
+  //   DEEPSEEK_API_KEY   reading guidance out of a release
+  //   RESEND_API_KEY     sending
+  //   UNSUB_SECRET       signing the confirm and unsubscribe links
+  //   GITHUB_TOKEN       firing the Actions run when a filing lands
+  //
+  // A secret saved but not deployed is invisible to the running Worker.
 }
