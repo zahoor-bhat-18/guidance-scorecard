@@ -1,0 +1,50 @@
+name: send
+
+# Fired by the Worker when a watched company files an 8-K carrying item 2.02.
+# Also runnable by hand, which is how it gets tested before anyone is watching.
+#
+# NO pull_request trigger. This repository is public, and a workflow that runs
+# on pull_request runs for anyone who opens one, with the repository's secrets
+# available to it.
+
+on:
+  repository_dispatch:
+    types: [earnings-release]
+  workflow_dispatch:
+    inputs:
+      tickers:
+        description: "Comma-separated tickers to send for."
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    # Three model calls and a handful of EDGAR fetches per company. Generous,
+    # because a job that dies half way has spent the money and sent nothing.
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Score the release and send
+        env:
+          SEC_USER_AGENT: ${{ vars.SEC_USER_AGENT }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          UNSUB_SECRET: ${{ secrets.UNSUB_SECRET }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          KV_NAMESPACE_ID: ${{ vars.KV_NAMESPACE_ID }}
+          SITE_URL: ${{ vars.SITE_URL }}
+          EMAIL_FROM: ${{ vars.EMAIL_FROM }}
+          REPLY_TO: ${{ vars.REPLY_TO }}
+          POSTAL_ADDRESS: ${{ vars.POSTAL_ADDRESS }}
+        run: |
+          node scripts/send.mjs "${{ github.event.client_payload.tickers || inputs.tickers }}"
