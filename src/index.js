@@ -13,6 +13,10 @@
  * /api/records              every stored record, and when each was built
  * /api/record?ticker=M      one stored record, as a subscriber would see it
  * /api/preview?ticker=M     the email itself, rendered. Nothing is sent.
+ * /api/signup               POST an address and tickers; sends a confirmation link
+ * /confirm?t=               the click that actually subscribes someone
+ * /unsubscribe?e=&s=        a signed link, confirmed on a page before removing
+ * /__health?key=             what the Worker can see, for when it goes quiet
  * /api/check?tickers=M,WMT  the whole battery across several companies at once
  * /sec?url=...              host-locked EDGAR proxy, for the browser
  *
@@ -29,6 +33,10 @@ import { revisionsBetween } from "./revisions.js";
 import { releaseText } from "./text.js";
 import { readRecord, listRecords, forEmail, headline } from "./records.js";
 import { renderEmail } from "./email.js";
+import {
+  cleanEmail, cleanTickers, hold, confirm, remove, readList, watchedTickers,
+  confirmUrl, unsubscribeUrl, send, confirmationEmail, signatureValid, page,
+} from "./subscribers.js";
 
 /**
  * Period phrasings seen so far, kept as a fixture.
@@ -244,7 +252,78 @@ async function checkOne(env, ticker, full) {
   };
 }
 
+/**
+ * The poll.
+ *
+ * EDGAR's "current filings" feed, every minute, filtered to 8-Ks. Anything
+ * from a ticker somebody follows fires a repository_dispatch, and GitHub
+ * Actions does the reading and sending - the same split as the other product,
+ * because the Worker cannot do twenty model calls and Actions cannot poll
+ * every minute for free.
+ *
+ * A filing stays in the feed for hours, so each accession is remembered for an
+ * hour after dispatch. Without that guard the other product billed a full
+ * minute of Actions every minute to rediscover nothing.
+ */
+async function poll(env) {
+  if (!env.GITHUB_TOKEN || !env.GITHUB_REPO) return;
+
+  const watching = await watchedTickers(env);
+  if (!watching.length) return;
+
+  const feed = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K"
+    + "&company=&dateb=&owner=include&count=100&output=atom&t=" + Date.now();
+
+  const r = await fetch(feed, {
+    headers: { "User-Agent": env.SEC_USER_AGENT, Accept: "application/atom+xml" },
+    cf: { cacheTtl: 0 },
+  });
+  if (!r.ok) return;
+
+  const xml = await r.text();
+
+  // Map the tickers being watched to the CIKs the feed carries.
+  const tickers = await env.CACHE.get("tickers:cik", "json");
+  if (!tickers) return;
+
+  const wanted = new Map();
+  for (const t of watching) if (tickers[t]) wanted.set(String(Number(tickers[t])), t);
+
+  const hits = new Set();
+  for (const m of xml.matchAll(/CIK=(\d+)/g)) {
+    const t = wanted.get(String(Number(m[1])));
+    if (t) hits.add(t);
+  }
+  if (!hits.size) return;
+
+  const fresh = [];
+  for (const ticker of hits) {
+    const seen = await env.CACHE.get("dispatched:" + ticker);
+    if (seen) continue;
+    await env.CACHE.put("dispatched:" + ticker, "1", { expirationTtl: 3600 });
+    fresh.push(ticker);
+  }
+  if (!fresh.length) return;
+
+  await fetch("https://api.github.com/repos/" + env.GITHUB_REPO + "/dispatches", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + env.GITHUB_TOKEN,
+      Accept: "application/vnd.github+json",
+      "User-Agent": "guidance-scorecard",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ event_type: "earnings-release", client_payload: { tickers: fresh.join(",") } }),
+  });
+
+  await env.CACHE.put("poll:last", new Date().toISOString() + " dispatched " + fresh.join(","));
+}
+
 export default {
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(poll(env));
+  },
+
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
@@ -623,6 +702,167 @@ export default {
       } catch (e) {
         return json({ error: e.message }, 502);
       }
+    }
+
+    /**
+     * Signing up.
+     *
+     * Nothing is stored against the address here beyond a pending record that
+     * expires by itself in 48 hours. An address that has not clicked a link
+     * sent to it is a claim, not a subscriber - anyone can type anyone's
+     * address into a form.
+     *
+     * Tickers with no published record are NAMED BACK rather than quietly
+     * accepted. The other product does the same for foreign filers, and it was
+     * the right call: silently taking an address and never sending anything is
+     * worse than saying no.
+     */
+    if (url.pathname === "/api/signup") {
+      if (request.method !== "POST") return json({ error: "Use POST." }, 405);
+
+      try {
+        const body = await request.json().catch(() => ({}));
+        const email = cleanEmail(body.email);
+        if (!email) return json({ error: "That does not look like an email address." }, 400);
+
+        const asked = cleanTickers(body.tickers);
+        if (!asked.length) return json({ error: "Name at least one ticker." }, 400);
+
+        const stored = await listRecords(env);
+        const published = new Set(
+          (stored.records || []).filter((r) => r.publishable).map((r) => r.ticker)
+        );
+
+        const known = asked.filter((t) => published.has(t));
+        const unknown = asked.filter((t) => !published.has(t));
+
+        if (!known.length) {
+          return json({
+            error: "Nothing is published yet for " + unknown.join(", ")
+              + ". Covered today: " + Array.from(published).sort().join(", ") + ".",
+          }, 400);
+        }
+
+        const token = await hold(env, email, known);
+        const site = env.SITE_URL || url.origin;
+        const mail = confirmationEmail(known, confirmUrl(site, token), env.POSTAL_ADDRESS);
+
+        await send(env, { to: email, ...mail });
+
+        return json({
+          ok: true,
+          following: known,
+          notCovered: unknown,
+          message: unknown.length
+            ? "Check your inbox. Nothing is published yet for " + unknown.join(", ") + "."
+            : "Check your inbox and click the link to confirm.",
+        });
+      } catch (e) {
+        return json({ error: e.message }, 502);
+      }
+    }
+
+    /* The click that actually subscribes someone. */
+    if (url.pathname === "/confirm") {
+      const token = url.searchParams.get("t");
+      if (!token) return page("Confirm", "<h1>Something is missing</h1><p>That link is incomplete.</p>");
+
+      try {
+        const done = await confirm(env, token);
+        if (!done) {
+          return page("Confirm",
+            "<h1>That link has expired</h1><p>Confirmation links last 48 hours. "
+            + '<a href="' + (env.SITE_URL || "/") + '">Sign up again</a> and we will send a fresh one.</p>');
+        }
+
+        const newly = done.added.filter((t) => !done.alreadyHad.includes(t));
+        return page("Confirmed",
+          "<h1>Confirmed</h1><p>You are following <b>" + done.tickers.join(", ") + "</b>.</p>"
+          + (newly.length !== done.added.length
+              ? "<p>You were already following " + done.added.filter((t) => done.alreadyHad.includes(t)).join(", ") + ".</p>"
+              : "")
+          + "<p>An email arrives when one of them reports. Every one carries a link to leave.</p>");
+      } catch (e) {
+        return page("Confirm", "<h1>That did not work</h1><p>" + e.message + "</p>");
+      }
+    }
+
+    /**
+     * Leaving.
+     *
+     * The link is signed, so it works for one address and cannot be guessed.
+     * The GET shows a page naming the address and what it follows; the POST
+     * does the removing. A one-click GET that removes on sight gets triggered
+     * by link scanners and mail previewers, and the subscriber never knows.
+     */
+    if (url.pathname === "/unsubscribe") {
+      const email = String(url.searchParams.get("e") || "").toLowerCase();
+      const sig = url.searchParams.get("s");
+
+      try {
+        if (!email || !(await signatureValid(env.UNSUB_SECRET, email, sig))) {
+          return page("Unsubscribe", "<h1>That link is not valid</h1><p>Use the link in a recent email.</p>");
+        }
+
+        if (request.method === "POST") {
+          const gone = await remove(env, email);
+          return page("Unsubscribed",
+            gone
+              ? "<h1>Removed</h1><p>Nothing further will be sent to " + email + ".</p>"
+              : "<h1>Already gone</h1><p>" + email + " was not on the list.</p>");
+        }
+
+        const list = await readList(env);
+        const record = list[email];
+        if (!record) {
+          return page("Unsubscribe", "<h1>Already gone</h1><p>" + email + " is not on the list.</p>");
+        }
+
+        return page("Unsubscribe",
+          "<h1>Leave the Guidance Scorecard?</h1>"
+          + "<p>This removes <b>" + email + "</b>, which follows "
+          + record.tickers.join(", ") + ".</p>"
+          + '<form method="POST"><button type="submit">Unsubscribe</button></form>');
+      } catch (e) {
+        return page("Unsubscribe", "<h1>That did not work</h1><p>" + e.message + "</p>");
+      }
+    }
+
+    /**
+     * What the Worker can see.
+     *
+     * Behind the poll key. On the other product an endpoint reporting which
+     * variables were visible ended an hour of guesswork in five seconds, and
+     * it is the single cheapest thing in either codebase.
+     */
+    if (url.pathname === "/__health") {
+      if (!env.POLL_KEY || url.searchParams.get("key") !== env.POLL_KEY) {
+        return json({ error: "No." }, 403);
+      }
+      let subscribers = 0, watching = [];
+      try {
+        subscribers = Object.keys(await readList(env)).length;
+        watching = await watchedTickers(env);
+      } catch (e) {
+        return json({ error: e.message }, 502);
+      }
+      return json({
+        ok: true,
+        now: new Date().toISOString(),
+        sees: {
+          CACHE: Boolean(env.CACHE),
+          DEEPSEEK_API_KEY: Boolean(env.DEEPSEEK_API_KEY),
+          RESEND_API_KEY: Boolean(env.RESEND_API_KEY),
+          UNSUB_SECRET: Boolean(env.UNSUB_SECRET),
+          GITHUB_TOKEN: Boolean(env.GITHUB_TOKEN),
+          POLL_KEY: true,
+          GITHUB_REPO: env.GITHUB_REPO || null,
+          SITE_URL: env.SITE_URL || null,
+        },
+        subscribers,
+        watching,
+        lastDispatch: await env.CACHE.get("poll:last"),
+      });
     }
 
     return env.ASSETS.fetch(request);
