@@ -194,6 +194,9 @@ export function renderEmail(view, options) {
     t.push("");
   }
 
+  t.push("Questions, or something that looks wrong: reply to this, or write to");
+  t.push("hello@zahoorbhat.com.");
+  t.push("");
   t.push("Every figure is read from the company's own filings on EDGAR.");
   t.push("Guidance comes from the earnings release; results from the release that");
   t.push("reported the period. A guide is only scored against the same period, on the");
@@ -244,6 +247,8 @@ export function renderEmail(view, options) {
   }
 
   h.push('<p style="margin-top:26px;padding-top:14px;border-top:1px solid ' + RULE + ';font-size:13px;color:' + MUTED + ';line-height:1.6;">'
+    + 'Questions, or something that looks wrong: reply to this, or write to '
+    + '<a href="mailto:hello@zahoorbhat.com" style="color:' + MUTED + ';">hello@zahoorbhat.com</a>. '
     + 'Every figure is read from the company\'s own filings on EDGAR. Guidance comes from the'
     + ' earnings release; results from the release that reported the period. A guide is only'
     + ' scored against the same period, on the same basis. Nothing here is a forecast.</p>');
