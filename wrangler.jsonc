@@ -27,6 +27,12 @@
     { "pattern": "guidance.zahoorbhat.com", "custom_domain": true }
   ],
 
+  // Every minute. The scheduled run is one request to EDGAR's current-filings
+  // feed, so the cost does not grow with the number of companies followed.
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
+
   "assets": {
     "directory": "./public",
     "binding": "ASSETS"
@@ -39,6 +45,7 @@
   // is, from the other product, so a new local part needs no new warm-up.
   "vars": {
     "SEC_USER_AGENT": "Zahoor Bhat zahoorbhatdotcom@gmail.com",
+    "GITHUB_REPO": "zahoor-bhat-18/guidance-scorecard",
     "EMAIL_FROM": "guidance@zahoorbhat.com",
     // Replies land here, because hello@ already has a routing rule and a
     // verified destination. Sending from guidance@ and replying to hello@
