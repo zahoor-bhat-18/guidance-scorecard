@@ -29,6 +29,7 @@
 
 import { metricKey, displayLabel } from "./metrics.js";
 import { formatFigure, formatValue, periodLabel } from "./format.js";
+import { revisionSentence } from "./summary.js";
 
 const CREAM = "#faf7f0";
 const INK = "#1a2b23";
@@ -121,10 +122,6 @@ function countLine(g) {
  * rate and "guided 68, reported 69" for a margin - three different things
  * written identically, in an email whose only claim is that it reads figures
  * off the filing accurately.
- *
- * The unit sits on the pair. The formatter is shared with the revision lines,
- * which have always written figures correctly, so the two halves of the email
- * now agree with each other.
  */
 function outcomeLine(p) {
   const guide = formatFigure(p.guide, p.unit);
@@ -135,6 +132,21 @@ function outcomeLine(p) {
     : "no range guided";
   return periodLabel(p.period) + " - guided " + guide + ", reported " + actual
     + " (" + verdict + ")";
+}
+
+/**
+ * The revision line, built now rather than read off the record.
+ *
+ * The stored summary was written when the record was built, which meant a
+ * wording fix changed nothing until the backfill was re-run - and re-running
+ * it rewrites history a subscriber has already read. The parts of the sentence
+ * are all in the record, so it is assembled here from those.
+ *
+ * The stored summary is the fallback, for a record built before summary.js
+ * existed and missing something the sentence needs. Stale beats broken.
+ */
+function revisionLine(r) {
+  return revisionSentence(r) || r.summary || "";
 }
 
 /**
@@ -188,7 +200,7 @@ export function renderEmail(view, options) {
 
   if (moved.length) {
     t.push("WHAT MOVED IN THIS RELEASE");
-    for (const r of moved) t.push("- " + r.summary);
+    for (const r of moved) t.push("- " + revisionLine(r));
     t.push("");
   }
 
@@ -239,7 +251,7 @@ export function renderEmail(view, options) {
     h.push('<div style="margin-top:26px;padding-top:14px;border-top:1px solid ' + RULE + ';">');
     h.push('<div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:' + MUTED + ';">What moved in this release</div>');
     for (const r of moved) {
-      h.push('<p style="margin:10px 0 0;font-size:15px;">' + esc(r.summary) + '</p>');
+      h.push('<p style="margin:10px 0 0;font-size:15px;">' + esc(revisionLine(r)) + '</p>');
     }
     h.push('</div>');
   }

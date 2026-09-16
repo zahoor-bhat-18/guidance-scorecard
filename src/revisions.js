@@ -23,19 +23,18 @@
  * much. Whether a cut is bad news depends on why, and the reader knows his own
  * position.
  *
- * WHAT IT PRINTS WITH
+ * WHAT THIS FILE DECIDES, AND WHAT IT DOES NOT
  *
- * Nothing in this file decides how a figure, a period or a metric name is
- * written. It used to own a copy of all three, and all three drifted from the
- * copies the record block uses. One email carried "Q4 2025" in the table and
- * "2026Q4" in the paragraph underneath; another headed a line "Fourth quarter
- * revenue guidance for 2026Q4", naming the quarter twice. The formatters now
- * come from format.js and metrics.js, which is where the record block gets
- * them.
+ * It decides what moved: the matching, the direction, the scope-change test.
+ * It does not decide how any of it is written. It owned a copy of the figure
+ * formatter, the period formatter and the label cleaner, and all three drifted
+ * from the copies the record block uses - one email carried "Q4 2025" in the
+ * table and "2026Q4" in the paragraph underneath. The wording lives in
+ * summary.js now, and the stored summary here is only a fallback for records
+ * built before it existed.
  */
 
-import { formatFigure, periodLabel } from "./format.js";
-import { displayLabel } from "./metrics.js";
+import { revisionSentence } from "./summary.js";
 
 /* Metric labels drift between releases even at the same company. Walmart wrote
    "Adj. operating income (cc)" in one and "Operating income (cc)" in the next,
@@ -61,20 +60,6 @@ function numbersOf(g) {
 function tidy(n) {
   if (typeof n !== "number" || !Number.isFinite(n)) return null;
   return Number(n.toFixed(4));
-}
-
-/**
- * A figure, written the way the release wrote it.
- *
- * The first version printed "raised from 21.5 to 21.75 to 21.675 to 21.825
- * USD billions" - four numbers and three "to"s, which nobody can parse. A
- * range needs to look like a range before it reaches an email.
- *
- * The rule that fixed it lives in format.js now, because the record block
- * needed it too and had been printing bare numbers without it.
- */
-function figure(g, unit) {
-  return formatFigure(g, unit);
 }
 
 /**
@@ -136,20 +121,9 @@ function direction(before, after) {
   return a > b ? "raised" : "cut";
 }
 
-/* Two short sentences rather than one long one. A reader takes in "they
-   raised" and then the figures, which is the order the information matters
-   in. `when` arrives already written for a reader. */
-function describe(label, when, before, after, unit, dir) {
-  if (dir === "unchanged") {
-    return label + " for " + when + " held at " + figure(after, unit) + ".";
-  }
-  return label + " for " + when + " " + dir + ". Was " + figure(before, unit)
-    + ", now " + figure(after, unit) + ".";
-}
-
 /* 2027Q2 comes before 2027Q3; 2026FY before 2027FY. Enough ordering to tell a
-   closed period from an open one. Ordering works on the stored form, never on
-   the written one. */
+   closed period from an open one. Ordering works on the stored form of the
+   period, never on the written one. */
 function periodOrder(period) {
   const m = String(period || "").match(/^(\d{4})(FY|Q([1-4]))$/);
   if (!m) return null;
@@ -221,27 +195,21 @@ export function revisionsBetween(beforeGuides, afterGuides, opts) {
     // revision path, and saying nothing is better than saying null.
     if (!g.period) continue;
 
-    // The same label the record block prints, from the same function. The old
-    // local version stripped footnote markers and nothing else, so Broadcom's
-    // "Fourth quarter revenue guidance" reached the page with the quarter and
-    // the word "guidance" still in it, immediately above the quarter again.
-    const label = displayLabel(g.metric_as_written);
-    const when = periodLabel(g.period);
     const key = labelKey(g) + "|" + (g.period || "");
     const before = index.get(key);
 
     if (!before) {
-      out.push({
-        metric: label,
+      const row = {
+        metric: g.metric,
         metric_as_written: g.metric_as_written,
         period: g.period,
         unit: g.unit,
         direction: "new",
         after: n,
-        summary: label + " for " + when + " is guided for the first time at "
-          + figure(n, g.unit) + ".",
         quote: g.quote,
-      });
+      };
+      row.summary = revisionSentence(row);
+      out.push(row);
       continue;
     }
 
@@ -250,8 +218,8 @@ export function revisionsBetween(beforeGuides, afterGuides, opts) {
     const scope = looksLikeScopeChange(b, n, g.unit, g.metric_as_written);
     const dir = scope ? "scope change" : direction(b, n);
 
-    out.push({
-      metric: label,
+    const row = {
+      metric: g.metric,
       metric_as_written: g.metric_as_written,
       period: g.period,
       unit: g.unit,
@@ -268,14 +236,10 @@ export function revisionsBetween(beforeGuides, afterGuides, opts) {
         return typeof bb === "number" && typeof aa === "number" && bb !== 0
           ? Math.abs(aa - bb) / Math.abs(bb) : null;
       })(),
-      summary: scope
-        ? label + " for " + when + " changed scale. Was " + figure(b, g.unit)
-          + ", now " + figure(n, g.unit) + ". A move that large is not a revision - it"
-          + " usually means a spin-off, a disposal or a restatement has changed what is"
-          + " being counted. Not reported as a raise or a cut."
-        : describe(label, when, b, n, g.unit, dir),
       quote: g.quote,
-    });
+    };
+    row.summary = revisionSentence(row);
+    out.push(row);
   }
 
   // Guided before, absent now. Only worth saying when the period is still
@@ -285,19 +249,16 @@ export function revisionsBetween(beforeGuides, afterGuides, opts) {
     if (seen.has(key)) continue;
     if (isClosed(before.period, reportedPeriods, afterGuides)) continue;
 
-    const label = displayLabel(before.metric_as_written);
-    out.push({
-      metric: label,
+    const row = {
+      metric: before.metric,
       metric_as_written: before.metric_as_written,
       period: before.period,
       unit: before.unit,
       direction: "not repeated",
       before: numbersOf(before),
-      summary: label + " for " + periodLabel(before.period) + " was guided at "
-        + figure(numbersOf(before), before.unit)
-        + " in the previous release and does not appear in this one."
-        + " That is not necessarily a withdrawal.",
-    });
+    };
+    row.summary = revisionSentence(row);
+    out.push(row);
   }
 
   /**
@@ -312,6 +273,10 @@ export function revisionsBetween(beforeGuides, afterGuides, opts) {
    * move in that same release is noted as possibly part of it. Noted, not
    * relabelled: earnings really may have been cut as well, and the reader is
    * told what is uncertain rather than having it decided for him.
+   *
+   * The flag is set and the sentence rebuilt, rather than the note being
+   * pasted onto the end of a string. The renderer builds the same sentence
+   * from the same flag, so the two cannot diverge.
    */
   const scoped = out.some((r) => r.direction === "scope change");
   if (scoped) {
@@ -319,8 +284,7 @@ export function revisionsBetween(beforeGuides, afterGuides, opts) {
       if (r.direction === "scope change") continue;
       if (typeof r.relativeMove === "number" && r.relativeMove > 0.15) {
         r.possibleScopeChange = true;
-        r.summary += " Another metric in this release changed scale, so some of this move"
-          + " may be the same change in what is being counted rather than a revision.";
+        r.summary = revisionSentence(r) || r.summary;
       }
     }
   }
