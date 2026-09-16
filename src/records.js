@@ -13,6 +13,8 @@
  * something has gone wrong upstream.
  */
 
+import { revisionSentence } from "./summary.js";
+
 const PREFIX = "record:";
 
 /* A metric earns a block at three matched pairs; a company is published at two
@@ -57,7 +59,24 @@ export function forEmail(record) {
       metric: r.metric,
       period: r.period,
       direction: r.direction,
-      summary: r.summary,
+      // The sentence is BUILT HERE, from the untrimmed revision, and not read
+      // off the record.
+      //
+      // The stored summary was written when the record was built, so a change
+      // to the wording changed nothing until the backfill was re-run - and
+      // re-running a backfill rewrites history a subscriber has already read.
+      //
+      // It cannot be built any later than this line. The view below is
+      // deliberately narrow, and the fields the sentence needs - the label as
+      // written, the unit, the figures before and after - are exactly the ones
+      // this mapper drops. Building it in the renderer meant handing the
+      // sentence builder a row with its inputs already stripped, which is
+      // precisely what happened: it returned null on every row and the email
+      // fell back to the stale sentence, four deploys running.
+      //
+      // The stored summary stays as the fallback, for a record built before
+      // summary.js existed and missing a field. Stale beats broken.
+      summary: revisionSentence(r) || r.summary,
       // Carried through so the email can tell today's revisions from the
       // fourteen releases of history behind them.
       release: r.release,
