@@ -8,6 +8,8 @@
  * Three model calls, not the twenty-odd the backfill makes: the guidance from
  * the release before it is already stored, so only the new release has to be
  * read.
+ *
+ * --test does none of that. See testSend below.
  */
 
 import { resolveCik, companyCalendar } from "../src/xbrl.js";
@@ -125,6 +127,53 @@ async function sendMail(to, mail, unsub) {
 }
 
 /**
+ * The email as it stands, to one address, changing nothing.
+ *
+ * This deliberately does NOT score anything.
+ *
+ * The obvious --test - "run the real send but skip the already-sent guard" -
+ * produces a worse email than the preview route, not a better one. handle()
+ * scores record.currentGuidance, which holds the guides issued IN the latest
+ * release, against the actuals reported in that same release. Those are
+ * different periods, samePeriod rejects every one of them, and the result is
+ * an empty record built from three model calls.
+ *
+ * What needs judging in a mail client is the rendering, and the rendering is
+ * the same object either way: the stored record, through forEmail, headline
+ * and renderEmail - the identical three calls handle() makes. So this reads
+ * the record and renders it.
+ *
+ * Nothing here writes. kvPut is never reached, so there is no flag to thread
+ * through the write path and nothing for a later edit to quietly re-enable.
+ */
+async function testSend(ticker, to) {
+  const stored = await kvGet("record:" + ticker);
+  if (!stored) throw new Error("No stored record for " + ticker + ". Run the backfill first.");
+  const record = JSON.parse(stored);
+
+  const view = forEmail(record);
+  const unsub = SITE + "/unsubscribe?e=" + encodeURIComponent(to)
+    + "&s=" + (await hmac(process.env.UNSUB_SECRET, to));
+
+  const mail = renderEmail(
+    { ...view, headline: headline(view.landed) },
+    { unsubscribeUrl: unsub, postalAddress: process.env.POSTAL_ADDRESS }
+  );
+
+  await sendMail(to, mail, unsub);
+
+  return {
+    ticker,
+    test: true,
+    to,
+    builtAt: record.builtAt,
+    release: record.releasesRead?.[0]?.accession || null,
+    filed: record.releasesRead?.[0]?.filed || null,
+    sent: 1,
+  };
+}
+
+/**
  * One company, one new release.
  *
  * The stored record already holds the guidance from the previous release, so
@@ -216,16 +265,33 @@ async function handle(ticker) {
 }
 
 async function main() {
-  for (const [name, value] of Object.entries({
-    SEC_USER_AGENT: env.SEC_USER_AGENT, DEEPSEEK_API_KEY: env.DEEPSEEK_API_KEY,
-    CLOUDFLARE_ACCOUNT_ID: ACCOUNT, CLOUDFLARE_API_TOKEN: CF_TOKEN,
-    KV_NAMESPACE_ID: KV_ID, RESEND_API_KEY: process.env.RESEND_API_KEY,
-    UNSUB_SECRET: process.env.UNSUB_SECRET,
-  })) {
+  // Flags come off first. Without this, --test is parsed as a ticker called
+  // "--TEST" and the run fails looking for a record for it.
+  const args = process.argv.slice(2);
+  const isTest = args.includes("--test");
+  const positional = args.filter((a) => !a.startsWith("--"));
+
+  // A test run reads KV and posts an email. It does not touch EDGAR or the
+  // model, so it must not demand keys for either - a missing DEEPSEEK_API_KEY
+  // failing a render-only run would be a lie about what went wrong.
+  const required = isTest
+    ? {
+        CLOUDFLARE_ACCOUNT_ID: ACCOUNT, CLOUDFLARE_API_TOKEN: CF_TOKEN,
+        KV_NAMESPACE_ID: KV_ID, RESEND_API_KEY: process.env.RESEND_API_KEY,
+        UNSUB_SECRET: process.env.UNSUB_SECRET, TEST_EMAIL: process.env.TEST_EMAIL,
+      }
+    : {
+        SEC_USER_AGENT: env.SEC_USER_AGENT, DEEPSEEK_API_KEY: env.DEEPSEEK_API_KEY,
+        CLOUDFLARE_ACCOUNT_ID: ACCOUNT, CLOUDFLARE_API_TOKEN: CF_TOKEN,
+        KV_NAMESPACE_ID: KV_ID, RESEND_API_KEY: process.env.RESEND_API_KEY,
+        UNSUB_SECRET: process.env.UNSUB_SECRET,
+      };
+
+  for (const [name, value] of Object.entries(required)) {
     if (!value) throw new Error(name + " is not set.");
   }
 
-  const tickers = String(process.argv.slice(2).join(",") || "")
+  const tickers = String(positional.join(",") || "")
     .split(",").map((t) => t.trim().toUpperCase()).filter(Boolean);
   if (!tickers.length) throw new Error("Name at least one ticker.");
 
@@ -234,7 +300,9 @@ async function main() {
 
   for (const ticker of tickers) {
     try {
-      const r = await handle(ticker);
+      const r = isTest
+        ? await testSend(ticker, process.env.TEST_EMAIL)
+        : await handle(ticker);
       results.push(r);
       console.log(JSON.stringify(r));
     } catch (e) {
@@ -244,14 +312,28 @@ async function main() {
     }
   }
 
-  const lines = ["## Live send", "", "| ticker | release | pairs | revisions | sent |", "|---|---|---|---|---|"];
+  // The summary says plainly which kind of run this was. A test run that read
+  // like a live one is how someone concludes the product sent something it
+  // did not.
+  const lines = isTest
+    ? ["## Test send - rendered from the stored record, nothing written, nothing scored", "",
+       "| ticker | record built | to | sent |", "|---|---|---|---|"]
+    : ["## Live send", "", "| ticker | release | pairs | revisions | sent |", "|---|---|---|---|---|"];
+
   for (const r of results) {
-    lines.push(r.error
-      ? "| " + r.ticker + " | FAILED | | | " + r.error + " |"
-      : r.skipped
-        ? "| " + r.ticker + " | " + r.skipped + " | | | |"
-        : "| " + r.ticker + " | " + r.filed + " | " + r.newPairs + " | " + r.revisions + " | " + r.sent + " |");
+    if (r.error) {
+      lines.push(isTest
+        ? "| " + r.ticker + " | FAILED | | " + r.error + " |"
+        : "| " + r.ticker + " | FAILED | | | " + r.error + " |");
+    } else if (r.skipped) {
+      lines.push("| " + r.ticker + " | " + r.skipped + " | | | |");
+    } else if (isTest) {
+      lines.push("| " + r.ticker + " | " + r.builtAt + " | " + r.to + " | " + r.sent + " |");
+    } else {
+      lines.push("| " + r.ticker + " | " + r.filed + " | " + r.newPairs + " | " + r.revisions + " | " + r.sent + " |");
+    }
   }
+
   if (process.env.GITHUB_STEP_SUMMARY) {
     const { appendFile } = await import("node:fs/promises");
     await appendFile(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
