@@ -22,7 +22,20 @@
  * Nothing here interprets. It reports what moved, in which direction, by how
  * much. Whether a cut is bad news depends on why, and the reader knows his own
  * position.
+ *
+ * WHAT IT PRINTS WITH
+ *
+ * Nothing in this file decides how a figure, a period or a metric name is
+ * written. It used to own a copy of all three, and all three drifted from the
+ * copies the record block uses. One email carried "Q4 2025" in the table and
+ * "2026Q4" in the paragraph underneath; another headed a line "Fourth quarter
+ * revenue guidance for 2026Q4", naming the quarter twice. The formatters now
+ * come from format.js and metrics.js, which is where the record block gets
+ * them.
  */
+
+import { formatFigure, periodLabel } from "./format.js";
+import { displayLabel } from "./metrics.js";
 
 /* Metric labels drift between releases even at the same company. Walmart wrote
    "Adj. operating income (cc)" in one and "Operating income (cc)" in the next,
@@ -33,25 +46,6 @@ function labelKey(guide) {
     .replace(/\badj(\.|usted)?\b/g, "")
     .replace(/\(cc\)|constant[-\s]currency/g, "")
     .replace(/[^a-z ]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/**
- * The label, without the table's footnote markers.
- *
- * Outlook tables hang reference numbers off their row labels, and they come
- * through verbatim: "Adjusted EBITDA 3 as a percent of total revenue",
- * "Adjusted diluted EPS 3,4". Harmless in a JSON field, wrong in a sentence a
- * subscriber reads.
- *
- * Only a one or two digit number sitting on its own after a word is removed -
- * never a number attached to a unit or a decimal, which would eat the figures
- * the whole product exists to report.
- */
-function displayLabel(written) {
-  return String(written || "")
-    .replace(/([a-zA-Z)])\s+\d{1,2}(?:\s*,\s*\d{1,2})*(?=\s|$)/g, "$1")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -75,24 +69,12 @@ function tidy(n) {
  * The first version printed "raised from 21.5 to 21.75 to 21.675 to 21.825
  * USD billions" - four numbers and three "to"s, which nobody can parse. A
  * range needs to look like a range before it reaches an email.
+ *
+ * The rule that fixed it lives in format.js now, because the record block
+ * needed it too and had been printing bare numbers without it.
  */
-function money(n, unit) {
-  if (n === null) return "";
-  switch (unit) {
-    case "percent": return n + "%";
-    case "USD billions": return "$" + n + "bn";
-    case "USD millions": return "$" + n + "m";
-    case "USD per share": return "$" + n;
-    default: return String(n);
-  }
-}
-
 function figure(g, unit) {
-  if (g.low !== null && g.high !== null) {
-    return money(g.low, unit) + " to " + money(g.high, unit);
-  }
-  if (g.value !== null) return money(g.value, unit);
-  return "no figure";
+  return formatFigure(g, unit);
 }
 
 /**
@@ -156,17 +138,18 @@ function direction(before, after) {
 
 /* Two short sentences rather than one long one. A reader takes in "they
    raised" and then the figures, which is the order the information matters
-   in. */
-function describe(label, period, before, after, unit, dir) {
+   in. `when` arrives already written for a reader. */
+function describe(label, when, before, after, unit, dir) {
   if (dir === "unchanged") {
-    return label + " for " + period + " held at " + figure(after, unit) + ".";
+    return label + " for " + when + " held at " + figure(after, unit) + ".";
   }
-  return label + " for " + period + " " + dir + ". Was " + figure(before, unit)
+  return label + " for " + when + " " + dir + ". Was " + figure(before, unit)
     + ", now " + figure(after, unit) + ".";
 }
 
 /* 2027Q2 comes before 2027Q3; 2026FY before 2027FY. Enough ordering to tell a
-   closed period from an open one. */
+   closed period from an open one. Ordering works on the stored form, never on
+   the written one. */
 function periodOrder(period) {
   const m = String(period || "").match(/^(\d{4})(FY|Q([1-4]))$/);
   if (!m) return null;
@@ -238,7 +221,12 @@ export function revisionsBetween(beforeGuides, afterGuides, opts) {
     // revision path, and saying nothing is better than saying null.
     if (!g.period) continue;
 
+    // The same label the record block prints, from the same function. The old
+    // local version stripped footnote markers and nothing else, so Broadcom's
+    // "Fourth quarter revenue guidance" reached the page with the quarter and
+    // the word "guidance" still in it, immediately above the quarter again.
     const label = displayLabel(g.metric_as_written);
+    const when = periodLabel(g.period);
     const key = labelKey(g) + "|" + (g.period || "");
     const before = index.get(key);
 
@@ -250,7 +238,7 @@ export function revisionsBetween(beforeGuides, afterGuides, opts) {
         unit: g.unit,
         direction: "new",
         after: n,
-        summary: label + " for " + g.period + " is guided for the first time at "
+        summary: label + " for " + when + " is guided for the first time at "
           + figure(n, g.unit) + ".",
         quote: g.quote,
       });
@@ -281,11 +269,11 @@ export function revisionsBetween(beforeGuides, afterGuides, opts) {
           ? Math.abs(aa - bb) / Math.abs(bb) : null;
       })(),
       summary: scope
-        ? label + " for " + g.period + " changed scale. Was " + figure(b, g.unit)
+        ? label + " for " + when + " changed scale. Was " + figure(b, g.unit)
           + ", now " + figure(n, g.unit) + ". A move that large is not a revision - it"
           + " usually means a spin-off, a disposal or a restatement has changed what is"
           + " being counted. Not reported as a raise or a cut."
-        : describe(label, g.period, b, n, g.unit, dir),
+        : describe(label, when, b, n, g.unit, dir),
       quote: g.quote,
     });
   }
@@ -305,7 +293,7 @@ export function revisionsBetween(beforeGuides, afterGuides, opts) {
       unit: before.unit,
       direction: "not repeated",
       before: numbersOf(before),
-      summary: label + " for " + before.period + " was guided at "
+      summary: label + " for " + periodLabel(before.period) + " was guided at "
         + figure(numbersOf(before), before.unit)
         + " in the previous release and does not appear in this one."
         + " That is not necessarily a withdrawal.",
