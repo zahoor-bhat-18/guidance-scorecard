@@ -28,6 +28,7 @@
  */
 
 import { metricKey, displayLabel } from "./metrics.js";
+import { formatFigure, formatValue } from "./format.js";
 
 const CREAM = "#faf7f0";
 const INK = "#1a2b23";
@@ -119,15 +120,27 @@ function countLine(g) {
   return g.total + (g.total === 1 ? " period" : " periods") + ": " + parts.join(", ");
 }
 
+/**
+ * One period's outcome.
+ *
+ * The figures carry their unit. They did not before, and the block printed
+ * "guided 0.72 to 0.74" for dollars a share, "guided 4 to 5" for a growth
+ * rate and "guided 68, reported 69" for a margin - three different things
+ * written identically, in an email whose only claim is that it reads figures
+ * off the filing accurately.
+ *
+ * The unit sits on the pair. The formatter is shared with the revision lines,
+ * which have always written figures correctly, so the two halves of the email
+ * now agree with each other.
+ */
 function outcomeLine(p) {
-  const guide = p.guide.low !== null && p.guide.high !== null
-    ? p.guide.low + " to " + p.guide.high
-    : String(p.guide.value);
+  const guide = formatFigure(p.guide, p.unit);
+  const actual = formatValue(p.actual, p.unit) || String(p.actual);
   const verdict = p.position === "above" ? "above"
     : p.position === "below" ? "below"
     : p.position === "within" ? "within"
     : "no range guided";
-  return periodLabel(p.period) + " - guided " + guide + ", reported " + p.actual
+  return periodLabel(p.period) + " - guided " + guide + ", reported " + actual
     + " (" + verdict + ")";
 }
 
