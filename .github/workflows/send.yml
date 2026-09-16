@@ -15,6 +15,10 @@ on:
       tickers:
         description: "Comma-separated tickers to send for."
         required: true
+      test:
+        description: "Test render: email the stored record to TEST_EMAIL. Scores nothing, writes nothing, sends to no subscriber."
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -46,5 +50,11 @@ jobs:
           EMAIL_FROM: ${{ vars.EMAIL_FROM }}
           REPLY_TO: ${{ vars.REPLY_TO }}
           POSTAL_ADDRESS: ${{ vars.POSTAL_ADDRESS }}
+          # Only read on a test run. The address lives in a repository variable
+          # rather than in the script, because this repository is public.
+          TEST_EMAIL: ${{ vars.TEST_EMAIL }}
+        # inputs.test is empty on repository_dispatch, so the Worker's own
+        # trigger can never produce a test run, and a hand run defaults to a
+        # real one only if the box is left unticked.
         run: |
-          node scripts/send.mjs "${{ github.event.client_payload.tickers || inputs.tickers }}"
+          node scripts/send.mjs ${{ inputs.test && '--test' || '' }} "${{ github.event.client_payload.tickers || inputs.tickers }}"
