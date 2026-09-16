@@ -28,7 +28,7 @@
  */
 
 import { metricKey, displayLabel } from "./metrics.js";
-import { formatFigure, formatValue } from "./format.js";
+import { formatFigure, formatValue, periodLabel } from "./format.js";
 
 const CREAM = "#faf7f0";
 const INK = "#1a2b23";
@@ -40,13 +40,6 @@ function esc(s) {
   return String(s == null ? "" : s)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
-}
-
-/** 2026Q2 reads as "Q2 2026"; 2026FY as "FY2026". */
-function periodLabel(period) {
-  const m = String(period || "").match(/^(\d{4})(FY|Q([1-4]))$/);
-  if (!m) return String(period || "");
-  return m[2] === "FY" ? "FY" + m[1] : "Q" + m[3] + " " + m[1];
 }
 
 /**
