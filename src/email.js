@@ -28,18 +28,98 @@
  */
 
 import { metricKey, displayLabel } from "./metrics.js";
-import { formatFigure, formatValue, periodLabel } from "./format.js";
+import { formatFigure, formatValue, periodLabel, periodSortKey } from "./format.js";
 
 const CREAM = "#faf7f0";
 const INK = "#1a2b23";
 const GREEN = "#1f4435";
 const MUTED = "#5b6b62";
 const RULE = "#dcd6c8";
+const MONO = "ui-monospace,SFMono-Regular,Menlo,monospace";
 
 function esc(s) {
   return String(s == null ? "" : s)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function num(n) {
+  return typeof n === "number" && Number.isFinite(n) ? n : null;
+}
+
+/* Floating point subtraction produces 1.2000000000000002, and a table of
+   guidance is not the place for it. */
+function tidy(n) {
+  return Number(n.toFixed(4));
+}
+
+/**
+ * A gap, in the unit it was measured in.
+ *
+ * PERCENTAGE GUIDES GET POINTS, NOT PERCENT. Walmart guided sales growth of
+ * 3.5% to 4.5% and grew 5.7%. The gap is 1.2 percentage points; calling it
+ * 1.2% says the growth rate itself was 1.2% higher, which is a different and
+ * wrong number. Anyone who reads these for a living would notice, and noticing
+ * that would be the last thing they read.
+ */
+function formatDelta(d, unit) {
+  const sign = d > 0 ? "+" : d < 0 ? "-" : "";
+  const size = Math.abs(tidy(d));
+  switch (unit) {
+    case "percent": return sign + size + "pp";
+    case "USD billions": return sign + "$" + size + "bn";
+    case "USD millions": return sign + "$" + size + "m";
+    case "USD per share": return sign + "$" + size;
+    default: return sign + size;
+  }
+}
+
+/**
+ * How far outside the range, and nothing more.
+ *
+ * ONE DISTANCE, MEASURED FROM THE END IT PASSED. Above the range, the gap
+ * beyond the high end; below it, the gap below the low end. Within the range,
+ * no number at all.
+ *
+ * The alternative was a single "delta" column, which is what a table of
+ * guidance usually carries and which cannot be honest here. A delta implies
+ * one reference point, a reader assumes the midpoint, and the whole product
+ * rests on never using midpoints: a company that guides $22.3bn to $22.5bn and
+ * delivers $22.4bn has landed where it said it would, and "delta -0.0bn"
+ * invents a target it never set. For a row inside the range there is no
+ * truthful single number, so this prints none.
+ *
+ * A point guide gets a signed distance and no verdict - already the rule, now
+ * with the figure visible. "Above" would be meaningless against a single
+ * number the company never framed as a floor or a ceiling.
+ *
+ * NOTE: computed here from the guide and the actual. If score.js already
+ * carries these distances, this should use them rather than become a second
+ * opinion on the same arithmetic.
+ */
+function outcomeCell(p) {
+  const actual = num(p.actual);
+  const low = num(p.guide && p.guide.low);
+  const high = num(p.guide && p.guide.high);
+  const value = num(p.guide && p.guide.value);
+
+  if (actual === null) return "";
+
+  if (p.position === "within") return "within";
+
+  if (p.position === "above" && high !== null) {
+    return "above by " + formatDelta(Math.abs(actual - high), p.unit);
+  }
+  if (p.position === "below" && low !== null) {
+    return "below by " + formatDelta(Math.abs(actual - low), p.unit);
+  }
+
+  // No range was guided. The distance is a fact; the verdict is not available.
+  if (value !== null) {
+    return formatDelta(actual - value, p.unit) + " vs single figure";
+  }
+
+  return p.position || "";
 }
 
 /**
@@ -73,7 +153,10 @@ function byMetric(pairs, limit) {
   const out = Array.from(groups.values());
   for (const g of out) {
     g.metric = displayLabel(g.labels);
-    g.rows.sort((a, b) => (a.period < b.period ? 1 : -1));
+    // Newest first, in TIME order. This compared the stored strings, which is
+    // alphabetical: "2026FY" sorted before "2026Q1" because F precedes Q, and
+    // Walmart's full year appeared three rows below the quarters it followed.
+    g.rows.sort((a, b) => periodSortKey(b.period) - periodSortKey(a.period));
     g.total = g.rows.length;
   }
 
@@ -114,7 +197,7 @@ function countLine(g) {
 }
 
 /**
- * One period's outcome.
+ * One row of the table: what was guided, what came in, how far apart.
  *
  * The figures carry their unit. They did not before, and the block printed
  * "guided 0.72 to 0.74" for dollars a share, "guided 4 to 5" for a growth
@@ -122,15 +205,39 @@ function countLine(g) {
  * written identically, in an email whose only claim is that it reads figures
  * off the filing accurately.
  */
-function outcomeLine(p) {
-  const guide = formatFigure(p.guide, p.unit);
-  const actual = formatValue(p.actual, p.unit) || String(p.actual);
-  const verdict = p.position === "above" ? "above"
-    : p.position === "below" ? "below"
-    : p.position === "within" ? "within"
-    : "no range guided";
-  return periodLabel(p.period) + " - guided " + guide + ", reported " + actual
-    + " (" + verdict + ")";
+function rowCells(p) {
+  return [
+    periodLabel(p.period),
+    formatFigure(p.guide, p.unit),
+    formatValue(p.actual, p.unit) || String(p.actual),
+    outcomeCell(p),
+  ];
+}
+
+const HEADINGS = ["Period", "Guided", "Reported", ""];
+
+/**
+ * The same table in plain text, columns padded to line up.
+ *
+ * Plain text is not a fallback nobody reads. It is what a client that strips
+ * styling shows, and what a reader who has turned HTML off sees, and it is the
+ * version that has to survive being forwarded.
+ */
+function textTable(rows) {
+  const all = [HEADINGS, ...rows];
+  const widths = HEADINGS.map((_, i) =>
+    Math.max(...all.map((r) => String(r[i] || "").length)));
+
+  return all.map((r, ri) => {
+    const line = r
+      .map((cell, i) => String(cell || "").padEnd(widths[i]))
+      .join("  ")
+      .replace(/\s+$/, "");
+    // A rule under the headings, as wide as the table actually is.
+    return ri === 0
+      ? line + "\n   " + "-".repeat(Math.min(widths.reduce((a, b) => a + b, 0) + 6, 68))
+      : line;
+  });
 }
 
 /**
@@ -146,9 +253,9 @@ function outcomeLine(p) {
  * already answered in the record above.
  *
  * The sentence itself is written in records.js, where the untrimmed revision
- * is still in hand. It was tried here first and could not work: the view this
- * renderer receives has already dropped the label, the unit and the figures
- * the sentence is made of.
+ * is still in hand. It was tried in this file first and could not work: the
+ * view this renderer receives has already dropped the label, the unit and the
+ * figures the sentence is made of.
  */
 function movedInThisRelease(revisions, latest, limit) {
   const wanted = new Set(["raised", "cut", "unchanged", "new", "narrowed", "widened", "scope change"]);
@@ -164,13 +271,13 @@ function movedInThisRelease(revisions, latest, limit) {
 /**
  * Everything the company guided in this release.
  *
- * The three blocks above are the record: the measures with enough history to
- * show a pattern. This is the outlook - every measure the company put a number
- * or a sentence against this time, whether or not it has a record yet.
+ * The tables above are the record: the measures with enough history to show a
+ * pattern. This is the outlook - every measure the company put a number or a
+ * sentence against this time, whether or not it has a record yet.
  *
- * It answers the question the blocks cannot: what did they actually say today.
+ * It answers the question the tables cannot: what did they actually say today.
  * A reader who sees revenue and adjusted EBITDA scored, and knows the company
- * also guides free cash flow, has no way to tell from the blocks alone whether
+ * also guides free cash flow, has no way to tell from the tables alone whether
  * free cash flow was guided and left out, or never guided at all.
  *
  * QUALITATIVE GUIDES BELONG HERE AND NOWHERE ELSE.
@@ -200,8 +307,7 @@ function alsoGuided(currentGuidance, limit) {
     const key = metricKey(written) + "|" + (g.period || "");
     if (seen.has(key)) continue;
 
-    const hasNumber = typeof g.low === "number" || typeof g.high === "number"
-      || typeof g.value === "number";
+    const hasNumber = num(g.low) !== null || num(g.high) !== null || num(g.value) !== null;
     const quote = String(g.quote || "").trim();
 
     // Nothing to print. A guide with neither a figure nor the sentence it came
@@ -217,16 +323,19 @@ function alsoGuided(currentGuidance, limit) {
 
     rows.push({
       text: label + (when ? ", " + when : "") + ": " + said,
-      period: g.period || "",
+      sortKey: periodSortKey(g.period),
       qualitative: !hasNumber,
     });
   }
 
   // Figures first, then the qualitative lines. A reader scanning for a number
   // should not have to read past a paragraph to find one.
+  //
+  // Within each, nearest period first: these are all ahead, so the quarter
+  // being guided matters before the year it sits inside.
   rows.sort((a, b) => {
     if (a.qualitative !== b.qualitative) return a.qualitative ? 1 : -1;
-    return a.period < b.period ? -1 : a.period > b.period ? 1 : 0;
+    return a.sortKey - b.sortKey;
   });
 
   const cap = limit || 12;
@@ -256,7 +365,7 @@ export function renderEmail(view, options) {
     // Every period the block earned, up to the eight it was capped at in
     // byMetric. An earlier version printed four while the heading said seven,
     // which reads as a page that cannot count.
-    for (const p of g.rows) t.push("   " + outcomeLine(p));
+    for (const line of textTable(g.rows.map(rowCells))) t.push("   " + line);
     t.push("");
   }
 
@@ -312,11 +421,39 @@ export function renderEmail(view, options) {
     h.push('<div style="margin-top:22px;padding-top:14px;border-top:1px solid ' + RULE + ';">');
     h.push('<div style="font-size:16px;color:' + GREEN + ';">' + esc(g.metric) + '</div>');
     h.push('<div style="font-size:14px;color:' + MUTED + ';margin-top:2px;">' + esc(countLine(g)) + '</div>');
-    h.push('<div style="margin-top:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;line-height:1.7;">');
-    for (const p of g.rows) {
-      h.push('<div>' + esc(outcomeLine(p)) + '</div>');
+
+    // A real table, not spaced text. role=presentation keeps a screen reader
+    // from announcing it as data twice over; border-collapse and explicit
+    // cell padding because Outlook ignores the shorthand.
+    h.push('<table role="presentation" cellpadding="0" cellspacing="0" border="0"'
+      + ' style="width:100%;margin-top:10px;border-collapse:collapse;font-family:' + MONO
+      + ';font-size:13px;">');
+
+    h.push('<tr>');
+    for (const head of HEADINGS) {
+      h.push('<th align="left" style="padding:0 8px 5px 0;border-bottom:1px solid ' + RULE
+        + ';font-weight:normal;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:'
+        + MUTED + ';">' + esc(head) + '</th>');
     }
-    h.push('</div></div>');
+    h.push('</tr>');
+
+    for (const p of g.rows) {
+      const cells = rowCells(p);
+      h.push('<tr>');
+      cells.forEach((cell, i) => {
+        // The outcome column is the one the eye goes to, so it is the only one
+        // that is not muted. Still no colour: a tax rate above guidance is bad
+        // for the company and irrelevant to a short seller, and red would
+        // decide that for the reader.
+        const colour = i === 3 ? INK : i === 0 ? MUTED : INK;
+        h.push('<td align="left" style="padding:5px 8px 5px 0;border-bottom:1px solid '
+          + RULE + ';color:' + colour + ';white-space:nowrap;">' + esc(cell) + '</td>');
+      });
+      h.push('</tr>');
+    }
+
+    h.push('</table>');
+    h.push('</div>');
   }
 
   if (moved.length) {
