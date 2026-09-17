@@ -16,15 +16,12 @@
  * It does not editorialise about direction. "Above" and "below" are facts. A
  * higher tax rate needs no commentary from an email.
  *
- * It does not show a flagged pair. Those are held back upstream, and the count
- * of what was held back is printed, so the omission is visible.
- *
- * WHAT IT IS FOR
- *
- * The reader already has the release. He can see what was reported. What he
- * cannot see, and what no screen on his desk shows him, is whether this
- * management habitually lands where it said it would. That is the whole
- * product, and it fits in a short email.
+ * IT PRINTS NO FIGURE THE COMPANY DID NOT PUBLISH. Every number here is read
+ * off a filing. Where a figure would have to be computed to be comparable - a
+ * pre-split guide restated at today's share count - the comparison is dropped
+ * and said to be dropped, rather than the number being manufactured and
+ * footnoted. A single derived figure on a page of quoted ones is the thing a
+ * sceptical reader finds, and finding it discredits the rest.
  */
 
 import { metricKey, displayLabel } from "./metrics.js";
@@ -36,6 +33,23 @@ const GREEN = "#1f4435";
 const MUTED = "#5b6b62";
 const RULE = "#dcd6c8";
 const MONO = "ui-monospace,SFMono-Regular,Menlo,monospace";
+
+/* Ten rows, not eight.
+ *
+ * Eight was two years of quarters, which was the right number when every row
+ * was a scored period. Rows that say "not guided" and "not reported" now
+ * compete for the same slots, and Walmart's Q2 2026 - the quarter management
+ * explicitly declined to guide, which is one of the more interesting rows in
+ * the email - was being pushed off the end by a scored period below it.
+ *
+ * The gaps are not padding. Losing one to fit one more result is the wrong
+ * trade. */
+const ROWS_PER_METRIC = 10;
+
+/* Six measures, not four. Walmart guides sales, operating income, EPS, tax
+ * rate, interest and capex; four blocks could never show them all, and the
+ * ones that fell off the end were the ones a reader could not find elsewhere. */
+const METRICS_SHOWN = 6;
 
 function esc(s) {
   return String(s == null ? "" : s)
@@ -84,21 +98,14 @@ function formatDelta(d, unit, signed) {
  * beyond the high end; below it, the gap below the low end. Within the range,
  * no number at all.
  *
- * The alternative was a single "delta" column, which is what a table of
- * guidance usually carries and which cannot be honest here. A delta implies
- * one reference point, a reader assumes the midpoint, and the whole product
- * rests on never using midpoints: a company that guides $22.3bn to $22.5bn and
- * delivers $22.4bn has landed where it said it would, and "delta -0.0bn"
- * invents a target it never set. For a row inside the range there is no
- * truthful single number, so this prints none.
+ * A delta column implies one reference point, a reader assumes the midpoint,
+ * and the whole product rests on never using midpoints: a company that guides
+ * $22.3bn to $22.5bn and delivers $22.4bn has landed where it said it would,
+ * and "delta -0.0bn" invents a target it never set.
  *
- * A point guide gets a signed distance and no verdict - already the rule, now
- * with the figure visible. "Above" would be meaningless against a single
- * number the company never framed as a floor or a ceiling.
- *
- * NOTE: computed here from the guide and the actual. If score.js already
- * carries these distances, this should use them rather than become a second
- * opinion on the same arithmetic.
+ * A point guide gets a signed distance and no verdict. "Above" would be
+ * meaningless against a single number the company never framed as a floor or
+ * a ceiling.
  */
 function outcomeCell(p) {
   const actual = num(p.actual);
@@ -107,7 +114,6 @@ function outcomeCell(p) {
   const value = num(p.guide && p.guide.value);
 
   if (actual === null) return "";
-
   if (p.position === "within") return "within";
 
   if (p.position === "above" && high !== null) {
@@ -116,21 +122,93 @@ function outcomeCell(p) {
   if (p.position === "below" && low !== null) {
     return "below by " + formatDelta(actual - low, p.unit, false);
   }
-
-  // No range was guided. The distance is a fact; the verdict is not available.
   if (value !== null) {
     return formatDelta(actual - value, p.unit, true) + " vs single figure";
   }
-
   return p.position || "";
+}
+
+/* One figure standing for a guide, for comparing two guides in scale. */
+function levelOf(g) {
+  if (!g) return null;
+  return num(g.low) !== null ? num(g.low) : num(g.value) !== null ? num(g.value) : num(g.high);
+}
+
+/**
+ * Did the units of the thing being guided change under the guide?
+ *
+ * Walmart split its shares three for one in February 2024. Its fiscal 2025 EPS
+ * guide therefore reads $6.70 to $7.12 in the early releases and $2.42 to
+ * $2.47 in the later ones. Drawn as a path, that is management cutting its own
+ * earnings guidance by two thirds, which is the single most damaging sentence
+ * this product could put in front of a portfolio manager - and it never
+ * happened.
+ *
+ * Only LEVEL measures. A growth rate guided at 2% and revised to 6% has
+ * tripled and is an ordinary revision; percentages are exempt for the same
+ * reason they are exempt from the scope-change test in revisions.js.
+ *
+ * Halving or doubling is the threshold. No management team revises a level
+ * guide that far between releases; splits, spin-offs and restatements do it
+ * routinely. This is deliberately blunter than looksLikeScopeChange - it is
+ * deciding whether to draw an arrow, not what to call a revision, and the cost
+ * of suppressing a real revision is one missing arrow.
+ *
+ * EARNINGS ARE NOT EXEMPT HERE, unlike in revisions.js. That exemption exists
+ * because United really did cut EPS 42% on fuel - a real and brutal revision
+ * within one guide. A split is a different animal and lands well outside it.
+ */
+function scaleChanged(first, last, unit) {
+  if (unit === "percent" || !unit || unit === "other") return false;
+
+  const a = levelOf(first);
+  const b = levelOf(last);
+  if (a === null || b === null || a === 0) return false;
+
+  const ratio = b / a;
+  return ratio < 0.5 || ratio > 2;
+}
+
+/**
+ * What was guided - and where the guide STARTED, if it moved.
+ *
+ * "3% to 4% → 4.8% to 5.1%" rather than "4.8% to 5.1%".
+ *
+ * Walmart opened fiscal 2026 guiding net sales growth of 3% to 4% and closed
+ * it guiding 4.8% to 5.1%, then reported 5.1%. Against the final range that is
+ * "within", and a reader would take it as a year that went to plan. The range
+ * moved to meet the result. Both companies that land inside a final full-year
+ * guide - the one that held it and the one that raised twice to reach it -
+ * print the same word, and this is the difference between them.
+ *
+ * FIRST AND LAST ONLY, not every step. A guide revised four times would be
+ * four arrows in a table cell on a phone.
+ *
+ * The verdict still measures against the final guide. That is what management
+ * was standing behind when the period closed.
+ *
+ * Returns the note flag as well, so the row can be marked and the reason
+ * printed once under the table rather than in every cell.
+ */
+function guideCell(p) {
+  const now = formatFigure(p.guide, p.unit);
+  const path = p.guidePath;
+  if (!Array.isArray(path) || path.length < 2) return { text: now, noted: false };
+
+  const first = path[0];
+  const firstText = formatFigure(first, p.unit);
+  if (firstText === now) return { text: now, noted: false };
+
+  // The guide did move, but the measure moved under it. Show where it ended
+  // and say why there is no path, rather than drawing a cut that never
+  // happened or restating a figure the company never printed.
+  if (scaleChanged(first, p.guide, p.unit)) return { text: now, noted: true };
+
+  return { text: firstText + " → " + now, noted: false };
 }
 
 /**
  * The record, by metric.
- *
- * Thirty-seven scored pairs is a spreadsheet, not an email. What a reader can
- * hold is: which measures this company guides, and how it has landed on each.
- * The individual outcomes are there underneath, most recent first, and capped.
  *
  * THREE KINDS OF ROW, because there are three different things that can be
  * true of a period and they were being told as one:
@@ -138,18 +216,9 @@ function outcomeCell(p) {
  *   answered      - guided, and the release reported a comparable figure
  *   not reported  - guided, the period closed, no comparable figure exists
  *   not guided    - the company said nothing about this measure
- *
- * Collapsing the middle one into "not guided" was a false statement about
- * management: Walmart guided Q3 FY2025 operating income in a table, in a
- * range, and the email said it had not.
  */
 function byMetric(pairs, unanswered, limit) {
   const groups = new Map();
-
-  // Every period this company has a scored pair for, on any metric. A period
-  // one metric answered is a period that closed, which is what makes a blank
-  // meaningful rather than an assumption - and what keeps an open full-year
-  // guide out of the table entirely.
   const companyPeriods = new Map();
 
   for (const p of pairs) {
@@ -174,9 +243,6 @@ function byMetric(pairs, unanswered, limit) {
     }
   }
 
-  // Unanswered guides, indexed by measure and period. They do not create a
-  // group of their own: a metric with no scored pair at all has no record to
-  // show, and a block of nothing but "not reported" is not a record.
   const unansweredByKey = new Map();
   for (const u of unanswered || []) {
     if (!u.metric || !u.period) continue;
@@ -193,14 +259,18 @@ function byMetric(pairs, unanswered, limit) {
     g.total = g.rows.length;
   }
 
-  // Three matched pairs to earn a block. The rule the record already enforces,
-  // applied here too - the email was showing Delta's gross leverage on the
-  // strength of one period, which is not a record, it is an anecdote.
-  //
-  // Counted on answered pairs only. Neither a blank nor a "not reported" is
-  // evidence of a record.
+  // Three matched pairs to earn a block, counted on answered pairs only.
+  // Neither a blank nor a "not reported" is evidence of a record.
   const earned = out.filter((g) => g.total >= 3);
   earned.sort((a, b) => b.total - a.total);
+
+  // Guided, but not enough closed periods to show a record yet. Named rather
+  // than dropped: a reader who knows the company guides capital expenditures
+  // should not have to wonder whether this email missed it.
+  const belowBar = out
+    .filter((g) => g.total < 3)
+    .sort((a, b) => b.total - a.total)
+    .map((g) => ({ metric: g.metric, total: g.total }));
 
   for (const g of earned) {
     g.allPeriods = g.rows.length;
@@ -212,12 +282,12 @@ function byMetric(pairs, unanswered, limit) {
     const oldest = Math.min(...keys);
 
     /**
-     * The periods between this metric's oldest and newest answer that it has
-     * no answer for, each labelled with what is actually true of it.
+     * Periods inside this metric's own span that it has no answer for, each
+     * labelled with what is actually true of it.
      *
-     * Only inside the metric's own span. A metric first guided in 2025 gets no
-     * rows for 2023 - the company was not silent then, this measure simply was
-     * not being tracked, and a row saying otherwise would be invented.
+     * Only inside the span. A metric first guided in 2025 gets no rows for
+     * 2023 - the company was not silent then, this measure simply was not
+     * being tracked, and a row saying otherwise would be invented.
      */
     const extra = [];
     for (const [period, sortKey] of companyPeriods.entries()) {
@@ -226,7 +296,6 @@ function byMetric(pairs, unanswered, limit) {
 
       const u = unansweredByKey.get(key + "|" + period);
       if (u) {
-        // Guided. The release could not answer it comparably.
         extra.push({ period, unit: u.unit, guide: u.guide, guidePath: u.guidePath || null, unanswered: true });
       } else {
         // IT SAYS "NOT GUIDED", NEVER "NOT DISCLOSED". What the record knows is
@@ -237,13 +306,9 @@ function byMetric(pairs, unanswered, limit) {
       }
     }
 
-    // Extra rows count against the cap but never toward the record. A metric
-    // may show fewer periods of scored history than it used to; what it shows
-    // is now the truth about that stretch of time rather than a compressed
-    // version of it.
     g.rows = [...g.rows, ...extra]
       .sort((a, b) => periodSortKey(b.period) - periodSortKey(a.period))
-      .slice(0, 8);
+      .slice(0, ROWS_PER_METRIC);
 
     const real = g.rows.filter((p) => !p.notGuided && !p.unanswered);
     g.above = real.filter((p) => p.position === "above").length;
@@ -253,9 +318,10 @@ function byMetric(pairs, unanswered, limit) {
     g.total = real.length;
     g.notGuided = g.rows.filter((p) => p.notGuided).length;
     g.notReported = g.rows.filter((p) => p.unanswered).length;
+    g.hasNote = g.rows.some((p) => !p.notGuided && guideCell(p).noted);
   }
 
-  return earned.slice(0, limit || 4);
+  return { metrics: earned.slice(0, limit || METRICS_SHOWN), belowBar };
 }
 
 /* "9 above, 2 within, 1 below" - counted, not characterised. */
@@ -276,34 +342,9 @@ function countLine(g) {
   return line;
 }
 
-/**
- * What was guided - and where the guide STARTED, if it moved.
- *
- * "3% to 4% -> 4.8% to 5.1%" rather than "4.8% to 5.1%".
- *
- * Walmart opened fiscal 2026 guiding net sales growth of 3% to 4% and closed
- * it guiding 4.8% to 5.1%, then reported 5.1%. Against the final range that is
- * "within", and a reader would take it as a year that went to plan. The range
- * moved to meet the result. Both companies that land inside a final full-year
- * guide - the one that held it and the one that cut twice to reach it - print
- * the same word, and this is the difference between them.
- *
- * FIRST AND LAST ONLY, not every step. A full-year guide revised four times
- * would be four arrows in a table cell on a phone. The whole path is in the
- * record; the two ends are what fit in a row.
- *
- * The verdict still measures against the final guide. That is what management
- * was standing behind when the period closed, and the arrow says the rest
- * without this file having to characterise it.
- */
-function guideCell(p) {
-  const now = formatFigure(p.guide, p.unit);
-  const path = p.guidePath;
-  if (!Array.isArray(path) || path.length < 2) return now;
-
-  const first = formatFigure(path[0], p.unit);
-  return first === now ? now : first + " → " + now;
-}
+const SPLIT_NOTE = "* An earlier guide for this period was stated before a share split or"
+  + " another change to what is being counted, so it is not comparable and no path is"
+  + " shown. Nothing here is restated.";
 
 /**
  * One row of the table.
@@ -316,12 +357,16 @@ function rowCells(p) {
   if (p.notGuided) {
     return [periodLabel(p.period), "not guided", "", ""];
   }
+
+  const guide = guideCell(p);
+  const period = periodLabel(p.period) + (guide.noted ? "*" : "");
+
   if (p.unanswered) {
-    return [periodLabel(p.period), guideCell(p), "not reported", "n/a"];
+    return [period, guide.text, "not reported", "n/a"];
   }
   return [
-    periodLabel(p.period),
-    guideCell(p),
+    period,
+    guide.text,
     formatValue(p.actual, p.unit) || String(p.actual),
     outcomeCell(p),
   ];
@@ -332,9 +377,8 @@ const HEADINGS = ["Period", "Guided", "Reported", ""];
 /**
  * The same table in plain text, columns padded to line up.
  *
- * Plain text is not a fallback nobody reads. It is what a client that strips
- * styling shows, and what a reader who has turned HTML off sees, and it is the
- * version that has to survive being forwarded.
+ * Plain text is what a client that strips styling shows, what a reader who has
+ * turned HTML off sees, and the version that has to survive being forwarded.
  */
 function textTable(rows) {
   const all = [HEADINGS, ...rows];
@@ -355,33 +399,20 @@ function textTable(rows) {
 /**
  * What moved in this release. ALL OF IT.
  *
- * There were two sections under the tables, and they said the same thing
- * twice. This one carried "Net sales (cc) for FY2027 raised. Was 3.5% to 4.5%,
- * now 4% to 5%."; a second listed "Net sales (cc), FY2027: 4% to 5%". Six of
- * Walmart's nine lines were duplicates, and the three that were not - interest,
- * effective tax rate, capital expenditures - were the ones a reader could not
- * find anywhere else.
+ * There were two sections under the tables and they said the same thing twice.
+ * Six of Walmart's nine lines were duplicates, and the three that were not -
+ * interest, effective tax rate, capital expenditures - were the ones a reader
+ * could not find anywhere else. They were missing because the section stopped
+ * at six lines, not because it could not carry them.
  *
- * They were not missing because this section could not carry them. They were
- * missing because it stopped at six lines. So there is one section, and the
- * cap is high enough that a release has to be extraordinary to reach it.
+ * This is also where a measure with too few closed periods to earn a table
+ * still gets said. Interest has no record yet and appears here every quarter
+ * it is guided.
  *
  * WHAT THIS STILL CANNOT SHOW: a guide with no number. revisionsBetween
  * compares figures and skips anything qualitative, so "we expect gross margin
  * to decline sequentially" reaches the record as guidance and appears nowhere.
- * Putting it back means teaching the revision path to emit a row for a stated
- * guide, which is a change in revisions.js, not here.
- *
- * The first version took the first six revisions in the record and called them
- * "what moved in this release". The record holds fourteen releases of history,
- * newest first, so the section led with guides issued months earlier. A
- * section headed with today's date and filled with old news is the fastest way
- * to lose a reader who checks.
- *
- * The sentence itself is written in records.js, where the untrimmed revision
- * is still in hand. It was tried in this file first and could not work: the
- * view this renderer receives has already dropped the label, the unit and the
- * figures the sentence is made of.
+ * That needs a change in revisions.js, not here.
  */
 function movedInThisRelease(revisions, latest, limit) {
   const wanted = new Set(["raised", "cut", "unchanged", "new", "narrowed", "widened", "scope change"]);
@@ -394,11 +425,22 @@ function movedInThisRelease(revisions, latest, limit) {
   return { rows: fromLatest.slice(0, cap), more: Math.max(0, fromLatest.length - cap) };
 }
 
+function belowBarLine(belowBar) {
+  if (!belowBar || !belowBar.length) return "";
+  const named = belowBar
+    .slice(0, 6)
+    .map((m) => m.metric + " (" + m.total + ")")
+    .join(", ");
+  return "Also guided, too few closed periods to show a record yet: " + named + ".";
+}
+
 export function renderEmail(view, options) {
   const opts = options || {};
   const company = view.company || view.ticker;
-  const metrics = byMetric(view.pairs || [], view.unanswered || [], 4);
+  const { metrics, belowBar } = byMetric(view.pairs || [], view.unanswered || [], METRICS_SHOWN);
   const moved = movedInThisRelease(view.revisions, view.latestRelease, 20);
+  const alsoLine = belowBarLine(belowBar);
+  const anyNote = metrics.some((g) => g.hasNote);
 
   const subject = company + " reported - how their guidance has held up";
 
@@ -414,6 +456,16 @@ export function renderEmail(view, options) {
   for (const g of metrics) {
     t.push(g.metric + " - " + countLine(g));
     for (const line of textTable(g.rows.map(rowCells))) t.push("   " + line);
+    t.push("");
+  }
+
+  if (anyNote) {
+    t.push(SPLIT_NOTE);
+    t.push("");
+  }
+
+  if (alsoLine) {
+    t.push(alsoLine);
     t.push("");
   }
 
@@ -494,6 +546,15 @@ export function renderEmail(view, options) {
 
     h.push('</table>');
     h.push('</div>');
+  }
+
+  if (anyNote) {
+    h.push('<p style="margin-top:14px;font-size:12px;color:' + MUTED + ';line-height:1.5;">'
+      + esc(SPLIT_NOTE) + '</p>');
+  }
+
+  if (alsoLine) {
+    h.push('<p style="margin-top:14px;font-size:14px;color:' + MUTED + ';">' + esc(alsoLine) + '</p>');
   }
 
   if (moved.rows.length) {
