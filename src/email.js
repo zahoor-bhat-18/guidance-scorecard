@@ -252,12 +252,6 @@ function countLine(g) {
 
 /**
  * One row of the table: what was guided, what came in, how far apart.
- *
- * The figures carry their unit. They did not before, and the block printed
- * "guided 0.72 to 0.74" for dollars a share, "guided 4 to 5" for a growth
- * rate and "guided 68, reported 69" for a margin - three different things
- * written identically, in an email whose only claim is that it reads figures
- * off the filing accurately.
  */
 function rowCells(p) {
   if (p.notGuided) {
@@ -297,16 +291,30 @@ function textTable(rows) {
 }
 
 /**
- * What moved in THIS release, and nothing else.
+ * What moved in this release. ALL OF IT.
+ *
+ * There were two sections under the tables, and they said the same thing
+ * twice. This one carried "Net sales (cc) for FY2027 raised. Was 3.5% to 4.5%,
+ * now 4% to 5%."; a second listed "Net sales (cc), FY2027: 4% to 5%". Six of
+ * Walmart's nine lines were duplicates, and the three that were not - interest,
+ * effective tax rate, capital expenditures - were the ones a reader could not
+ * find anywhere else.
+ *
+ * They were not missing because this section could not carry them. They were
+ * missing because it stopped at six lines. So there is one section, and the
+ * cap is high enough that a release has to be extraordinary to reach it.
+ *
+ * WHAT THIS STILL CANNOT SHOW: a guide with no number. revisionsBetween
+ * compares figures and skips anything qualitative, so "we expect gross margin
+ * to decline sequentially" reaches the record as guidance and appears nowhere.
+ * Putting it back means teaching the revision path to emit a row for a stated
+ * guide, which is a change in revisions.js, not here.
  *
  * The first version took the first six revisions in the record and called them
  * "what moved in this release". The record holds fourteen releases of history,
  * newest first, so the section led with guides issued months earlier. A
  * section headed with today's date and filled with old news is the fastest way
  * to lose a reader who checks.
- *
- * A revision to a period that has since been reported is history too - it is
- * already answered in the record above.
  *
  * The sentence itself is written in records.js, where the untrimmed revision
  * is still in hand. It was tried in this file first and could not work: the
@@ -316,87 +324,19 @@ function textTable(rows) {
 function movedInThisRelease(revisions, latest, limit) {
   const wanted = new Set(["raised", "cut", "unchanged", "new", "narrowed", "widened", "scope change"]);
   const accession = latest && latest.accession;
+  const cap = limit || 20;
 
   const rows = (revisions || []).filter((r) => wanted.has(r.direction));
-  if (!accession) return rows.slice(0, limit || 6);
+  const fromLatest = accession ? rows.filter((r) => r.release === accession) : rows;
 
-  const fromLatest = rows.filter((r) => r.release === accession);
-  return fromLatest.slice(0, limit || 6);
-}
-
-/**
- * Everything the company guided in this release.
- *
- * The tables above are the record: the measures with enough history to show a
- * pattern. This is the outlook - every measure the company put a number or a
- * sentence against this time, whether or not it has a record yet.
- *
- * It answers the question the tables cannot: what did they actually say today.
- * Effective tax rate and capital expenditures live here because Walmart guides
- * them once a year, so it takes years to reach three matched pairs. They are
- * not excluded from the email; they are not yet a record.
- *
- * QUALITATIVE GUIDES BELONG HERE AND NOWHERE ELSE.
- *
- * A guide with no number cannot be scored and cannot be revised - it is
- * skipped everywhere upstream for exactly that reason. But "we expect gross
- * margin to decline sequentially" is guidance, and a portfolio manager wants
- * it. It is printed as the company wrote it, in quotation marks, and nothing
- * is said about it. Summarising a qualitative guide would be interpreting one,
- * which is the line this product does not cross.
- */
-function alsoGuided(currentGuidance, limit) {
-  const seen = new Set();
-  const rows = [];
-
-  for (const g of currentGuidance || []) {
-    if (!g) continue;
-
-    const written = g.metric_as_written || g.metric;
-    if (!written) continue;
-
-    const label = displayLabel(written);
-    const key = metricKey(written) + "|" + (g.period || "");
-    if (seen.has(key)) continue;
-
-    const hasNumber = num(g.low) !== null || num(g.high) !== null || num(g.value) !== null;
-    const quote = String(g.quote || "").trim();
-
-    // Nothing to print. A guide with neither a figure nor the sentence it came
-    // from is a row in a JSON file, not a line in an email.
-    if (!hasNumber && !quote) continue;
-
-    seen.add(key);
-
-    const when = g.period ? periodLabel(g.period) : null;
-    const said = hasNumber
-      ? formatFigure({ low: g.low, high: g.high, value: g.value }, g.unit)
-      : '"' + quote + '"';
-
-    rows.push({
-      text: label + (when ? ", " + when : "") + ": " + said,
-      sortKey: periodSortKey(g.period),
-      qualitative: !hasNumber,
-    });
-  }
-
-  // Figures first, then the qualitative lines. A reader scanning for a number
-  // should not have to read past a paragraph to find one.
-  rows.sort((a, b) => {
-    if (a.qualitative !== b.qualitative) return a.qualitative ? 1 : -1;
-    return a.sortKey - b.sortKey;
-  });
-
-  const cap = limit || 12;
-  return { rows: rows.slice(0, cap), more: Math.max(0, rows.length - cap) };
+  return { rows: fromLatest.slice(0, cap), more: Math.max(0, fromLatest.length - cap) };
 }
 
 export function renderEmail(view, options) {
   const opts = options || {};
   const company = view.company || view.ticker;
   const metrics = byMetric(view.pairs || [], 4);
-  const moved = movedInThisRelease(view.revisions, view.latestRelease, 6);
-  const guided = alsoGuided(view.currentGuidance, 12);
+  const moved = movedInThisRelease(view.revisions, view.latestRelease, 20);
 
   const subject = company + " reported - how their guidance has held up";
 
@@ -415,18 +355,12 @@ export function renderEmail(view, options) {
     t.push("");
   }
 
-  if (moved.length) {
+  if (moved.rows.length) {
     t.push("WHAT MOVED IN THIS RELEASE");
-    for (const r of moved) t.push("- " + r.summary);
-    t.push("");
-  }
-
-  if (guided.rows.length) {
-    t.push("WHAT THEY GUIDED IN THIS RELEASE");
-    for (const r of guided.rows) t.push("- " + r.text);
-    if (guided.more) {
-      t.push("- and " + guided.more + " further "
-        + (guided.more === 1 ? "guide" : "guides") + ", on the site.");
+    for (const r of moved.rows) t.push("- " + r.summary);
+    if (moved.more) {
+      t.push("- and " + moved.more + " further "
+        + (moved.more === 1 ? "guide" : "guides") + ", on the site.");
     }
     t.push("");
   }
@@ -499,25 +433,15 @@ export function renderEmail(view, options) {
     h.push('</div>');
   }
 
-  if (moved.length) {
+  if (moved.rows.length) {
     h.push('<div style="margin-top:26px;padding-top:14px;border-top:1px solid ' + RULE + ';">');
     h.push('<div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:' + MUTED + ';">What moved in this release</div>');
-    for (const r of moved) {
+    for (const r of moved.rows) {
       h.push('<p style="margin:10px 0 0;font-size:15px;">' + esc(r.summary) + '</p>');
     }
-    h.push('</div>');
-  }
-
-  if (guided.rows.length) {
-    h.push('<div style="margin-top:26px;padding-top:14px;border-top:1px solid ' + RULE + ';">');
-    h.push('<div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:' + MUTED + ';">What they guided in this release</div>');
-    for (const r of guided.rows) {
-      h.push('<p style="margin:8px 0 0;font-size:15px;' + (r.qualitative ? 'color:' + MUTED + ';' : '') + '">'
-        + esc(r.text) + '</p>');
-    }
-    if (guided.more) {
+    if (moved.more) {
       h.push('<p style="margin:10px 0 0;font-size:14px;color:' + MUTED + ';">and '
-        + guided.more + ' further ' + (guided.more === 1 ? 'guide' : 'guides')
+        + moved.more + ' further ' + (moved.more === 1 ? 'guide' : 'guides')
         + ', on the site.</p>');
     }
     h.push('</div>');
