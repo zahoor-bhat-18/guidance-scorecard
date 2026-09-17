@@ -23,6 +23,72 @@ const PREFIX = "record:";
    stored coverage. */
 
 /**
+ * Guides whose period closed and which the release could not answer.
+ *
+ * A third kind of row, and the one that was being told as a lie.
+ *
+ * Walmart guided Q3 FY2025 operating income to grow 3.0% to 4.5% in constant
+ * currency. The Q3 release reports constant-currency growth of 9.8% - but as
+ * reported, not adjusted - and reports ADJUSTED growth of 9.5% for the nine
+ * months, not the quarter. Neither is adjusted, constant currency AND the
+ * quarter, and no fourth figure is. That quarter carried business
+ * reorganisation charges and an opioid settlement expense, so the two are
+ * genuinely different numbers, and taking 9.8% would credit management with a
+ * beat it never printed.
+ *
+ * The pair was refused, correctly. But the email had only comparable pairs to
+ * work from, saw a gap where a period should be, and printed "not guided" -
+ * which is false. The guide existed, in a table, in a range. What was missing
+ * was a comparable answer, and those are different facts about a company.
+ *
+ * WHICH REFUSALS EARN A ROW. Only the ones that are facts about the RELEASE:
+ * the figure was absent, or it was there on a basis that cannot be compared.
+ * Not the ones that are facts about our own uncertainty:
+ *
+ *   A period mismatch is usually a guide for a year still open. Walmart's
+ *   FY2027 guide collects one every quarter until the year ends, and a row
+ *   reading "not reported" against an unfinished year would be four pieces of
+ *   noise a year, forever.
+ *
+ *   An unreadable period is an extraction that failed. The company may well
+ *   have reported the figure; saying otherwise blames it for our miss.
+ *
+ * Judged on the fields rather than on the refusal sentence, so rewording a
+ * message cannot silently change which rows appear.
+ */
+function unansweredOf(record) {
+  const out = [];
+  const seen = new Set();
+
+  for (const p of record.pairs || []) {
+    if (p.comparable) continue;
+    if (!p.guide_period) continue;
+
+    // Nothing came back at all: the release does not report it.
+    const notReported = p.actual == null && !p.actual_found_as;
+    // A figure came back for the right period and was refused on basis or
+    // unit. The release reported something; it is not comparable.
+    const refusedOnBasis = p.actual != null && p.actual_period === p.guide_period;
+
+    if (!notReported && !refusedOnBasis) continue;
+
+    const key = String(p.metric_as_written) + "|" + p.guide_period;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    out.push({
+      metric: p.metric_as_written,
+      period: p.guide_period,
+      unit: p.unit,
+      guide: p.guide,
+      unanswered: true,
+    });
+  }
+
+  return out;
+}
+
+/**
  * What a subscriber is shown.
  *
  * FLAGGED PAIRS ARE LEFT OUT OF THE EMAIL, and this is the one place the page
@@ -55,6 +121,7 @@ export function forEmail(record) {
     landed: tallyOf(clean),
     withheldForReview: withheld,
     pairs: clean.map(trim),
+    unanswered: unansweredOf(record),
     revisions: (record.revisions || []).map((r) => ({
       metric: r.metric,
       period: r.period,
