@@ -246,6 +246,32 @@ function coverageOf(scoredPairs) {
 }
 
 /** One company, end to end. */
+const SITE = process.env.SITE_URL || "https://guidance.zahoorbhat.com";
+
+/* --rebuild discards the stored record and scores everything again. The
+   default merges, so an ordinary run can only ADD. */
+const REBUILD = process.argv.slice(2).includes("--rebuild");
+
+/**
+ * The record as it stands, over the public API.
+ *
+ * Actions has no KV binding and the upload happens in a later step, so the
+ * live record is read the same way a reader reads it. A miss is not an error:
+ * a company being built for the first time has nothing to merge with.
+ */
+async function storedRecord(ticker) {
+  try {
+    const r = await fetch(SITE + "/api/record?ticker=" + encodeURIComponent(ticker) + "&full=1", {
+      headers: { "User-Agent": env.SEC_USER_AGENT || "guidance-scorecard" },
+    });
+    if (!r.ok) return null;
+    const json = await r.json();
+    return json && Array.isArray(json.pairs) ? json : null;
+  } catch {
+    return null;
+  }
+}
+
 async function buildOne(ticker) {
   const { cik, name } = await resolveCik(env, ticker);
   const startingCalendar = await companyCalendar(env, cik);
@@ -398,9 +424,6 @@ async function buildOne(ticker) {
    * figure for it. An earlier release claiming the same period has misread
    * something.
    *
-   * The guide path survives on the kept pair, so nothing about the history is
-   * lost by collapsing - the row still knows where the guide started.
-   *
    * A comparable pair always beats a refused one. Otherwise a late mislabel
    * that got refused would bury a good pair from the release before it.
    */
@@ -420,8 +443,45 @@ async function buildOne(ticker) {
   }
   const collapsed = Array.from(bestByPeriod.values());
 
-  const coverage = coverageOf(collapsed);
-  const comparable = collapsed.filter((p) => p.comparable);
+  /**
+   * A BACKFILL MAY ONLY ADD.
+   *
+   * The model does not return the same thing twice on the same filings. One
+   * Walmart run scored 35 pairs, the next 33 - the three Q1 2027 pairs simply
+   * did not come back, from releases that had produced them an hour earlier.
+   * Every re-run was a gamble on the model having a good day, and a bad day
+   * silently deleted months of record a subscriber had already read.
+   *
+   * So a stored pair for a measure and period is kept, and a new run only
+   * fills periods the record does not have. Records converge instead of
+   * oscillating, and re-running becomes safe - which it has to be, because
+   * filling the gaps a bad run left is the only way to get them back.
+   *
+   * --rebuild opts out, for when a stored pair is genuinely wrong. Deliberate,
+   * named, and not the default.
+   */
+  let merged = collapsed;
+  let kept = 0;
+
+  if (!REBUILD) {
+    const previous = await storedRecord(ticker);
+    if (previous) {
+      const byKey = new Map();
+      for (const p of collapsed) {
+        byKey.set(metricKey(p) + "|" + (p.guide_period || ""), p);
+      }
+      for (const p of previous.pairs || []) {
+        const key = metricKey(p) + "|" + (p.guide_period || "");
+        if (byKey.has(key)) continue;
+        byKey.set(key, p);
+        kept += 1;
+      }
+      merged = Array.from(byKey.values());
+    }
+  }
+
+  const coverage = coverageOf(merged);
+  const comparable = merged.filter((p) => p.comparable);
 
   return {
     ticker,
@@ -438,7 +498,8 @@ async function buildOne(ticker) {
       noVerdict: comparable.filter((p) => p.score && p.score.position === null).length,
       flagged: comparable.filter((p) => p.score && p.score.flags && p.score.flags.length).length,
     },
-    pairs: collapsed,
+    pairs: merged,
+    carriedOver: kept,
     revisions,
     currentGuidance: guidanceByRelease[0].guides,
   };
@@ -564,7 +625,9 @@ async function main() {
   if (!env.SEC_USER_AGENT) throw new Error("SEC_USER_AGENT is not set.");
   if (!env.DEEPSEEK_API_KEY) throw new Error("DEEPSEEK_API_KEY is not set.");
 
-  const fromArg = process.argv.slice(2).join(",").trim();
+  const fromArg = process.argv.slice(2)
+    .filter((a) => !a.startsWith("--"))
+    .join(",").trim();
   const universe = JSON.parse(await readFile("config/universe.json", "utf8"));
   const tickers = fromArg
     ? fromArg.split(",").map((t) => t.trim().toUpperCase()).filter(Boolean)
@@ -598,6 +661,7 @@ async function main() {
         fiscal: "Year end " + record.calendar.fiscalYearEnd + ". "
           + record.calendar.labelConvention + ", from " + record.calendar.conventionFrom + ".",
         comparablePairs: comparable.length,
+        carriedOver: record.carriedOver || 0,
         qualifyingMetrics: record.coverage.qualifyingMetrics,
         publishable: record.coverage.publishable,
         reason: record.coverage.reason,
