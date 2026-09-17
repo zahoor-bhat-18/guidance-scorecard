@@ -472,7 +472,23 @@ async function buildOne(ticker) {
       }
       for (const p of previous.pairs || []) {
         const key = metricKey(p) + "|" + (p.guide_period || "");
-        if (byKey.has(key)) continue;
+        const fresh = byKey.get(key);
+
+        // A COMPARABLE STORED PAIR BEATS A REFUSED NEW ONE.
+        //
+        // Keeping a stored pair only where this run produced nothing was not
+        // enough. A run that comes back empty-handed does not produce nothing
+        // for that key - it produces a refusal, which took the slot and left
+        // the good stored pair out. Walmart's Q1 2027 came back three
+        // different ways in one email: scored on EPS, "not reported" on
+        // operating income, "not guided" on net sales. All three had been
+        // scored an hour earlier, and the company had guided and reported all
+        // three.
+        //
+        // "Not guided" is a statement about management. A run having a bad
+        // minute is not grounds for making it.
+        if (fresh && (fresh.comparable || !p.comparable)) continue;
+
         byKey.set(key, p);
         kept += 1;
       }
