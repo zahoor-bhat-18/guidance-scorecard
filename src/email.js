@@ -131,13 +131,25 @@ function outcomeCell(p) {
  * Thirty-seven scored pairs is a spreadsheet, not an email. What a reader can
  * hold is: which measures this company guides, and how it has landed on each.
  * The individual outcomes are there underneath, most recent first, and capped.
+ *
+ * THREE KINDS OF ROW, because there are three different things that can be
+ * true of a period and they were being told as one:
+ *
+ *   answered      - guided, and the release reported a comparable figure
+ *   not reported  - guided, the period closed, no comparable figure exists
+ *   not guided    - the company said nothing about this measure
+ *
+ * Collapsing the middle one into "not guided" was a false statement about
+ * management: Walmart guided Q3 FY2025 operating income in a table, in a
+ * range, and the email said it had not.
  */
-function byMetric(pairs, limit) {
+function byMetric(pairs, unanswered, limit) {
   const groups = new Map();
 
   // Every period this company has a scored pair for, on any metric. A period
-  // one metric answered is a period the others could have been guided for,
-  // and that is what makes a blank meaningful rather than an assumption.
+  // one metric answered is a period that closed, which is what makes a blank
+  // meaningful rather than an assumption - and what keeps an open full-year
+  // guide out of the table entirely.
   const companyPeriods = new Map();
 
   for (const p of pairs) {
@@ -162,6 +174,15 @@ function byMetric(pairs, limit) {
     }
   }
 
+  // Unanswered guides, indexed by measure and period. They do not create a
+  // group of their own: a metric with no scored pair at all has no record to
+  // show, and a block of nothing but "not reported" is not a record.
+  const unansweredByKey = new Map();
+  for (const u of unanswered || []) {
+    if (!u.metric || !u.period) continue;
+    unansweredByKey.set(metricKey(u.metric) + "|" + u.period, u);
+  }
+
   const out = Array.from(groups.values());
   for (const g of out) {
     g.metric = displayLabel(g.labels);
@@ -176,62 +197,62 @@ function byMetric(pairs, limit) {
   // applied here too - the email was showing Delta's gross leverage on the
   // strength of one period, which is not a record, it is an anecdote.
   //
-  // Counted on real pairs only. A blank is not evidence of a record; a metric
-  // with two pairs and four blanks is still two pairs.
+  // Counted on answered pairs only. Neither a blank nor a "not reported" is
+  // evidence of a record.
   const earned = out.filter((g) => g.total >= 3);
   earned.sort((a, b) => b.total - a.total);
 
   for (const g of earned) {
     g.allPeriods = g.rows.length;
 
-    /**
-     * Periods this company reported on, where this metric was not guided.
-     *
-     * Walmart's Q1 FY26 release guided one line for Q2 - net sales - and said
-     * why: given the backdrop, they held off giving a range for operating
-     * income growth and EPS. So the record has no Q2 2026 pair for either, and
-     * the table simply jumped from Q3 2026 to Q1 2026.
-     *
-     * A skipped row reads as a bug. It is the opposite: a quarter management
-     * declined to guide is a fact about management, and one a portfolio
-     * manager would want. Printed, it is visible; skipped, it is invisible and
-     * looks like the product cannot count.
-     *
-     * IT SAYS "NOT GUIDED", NEVER "NOT DISCLOSED". What the record knows is
-     * that no guide is stored. Whether the company withheld it or the
-     * extraction missed it is not knowable from here, and the second is not a
-     * claim to make about management on the strength of a gap.
-     *
-     * Only inside the metric's own span. A metric first guided in 2025 gets no
-     * blanks for 2023 - the company was not silent then, this measure simply
-     * was not being tracked, and a row saying otherwise would be invented.
-     */
+    const key = metricKey(g.labels[0]);
     const have = new Set(g.rows.map((p) => p.period));
     const keys = g.rows.map((p) => periodSortKey(p.period));
     const newest = Math.max(...keys);
     const oldest = Math.min(...keys);
 
-    const blanks = [];
-    for (const [period, key] of companyPeriods.entries()) {
+    /**
+     * The periods between this metric's oldest and newest answer that it has
+     * no answer for, each labelled with what is actually true of it.
+     *
+     * Only inside the metric's own span. A metric first guided in 2025 gets no
+     * rows for 2023 - the company was not silent then, this measure simply was
+     * not being tracked, and a row saying otherwise would be invented.
+     */
+    const extra = [];
+    for (const [period, sortKey] of companyPeriods.entries()) {
       if (have.has(period)) continue;
-      if (key > newest || key < oldest) continue;
-      blanks.push({ period, notGuided: true });
+      if (sortKey > newest || sortKey < oldest) continue;
+
+      const u = unansweredByKey.get(key + "|" + period);
+      if (u) {
+        // Guided. The release could not answer it comparably.
+        extra.push({ period, unit: u.unit, guide: u.guide, unanswered: true });
+      } else {
+        // IT SAYS "NOT GUIDED", NEVER "NOT DISCLOSED". What the record knows is
+        // that no guide is stored. Whether the company withheld it or the
+        // extraction missed it is not knowable from here, and the second is not
+        // a claim to make about management on the strength of a gap.
+        extra.push({ period, notGuided: true });
+      }
     }
 
-    // Blanks count against the cap but never toward the record. A metric may
-    // show fewer periods of history than it used to; what it shows is now the
-    // truth about that stretch of time rather than a compressed version of it.
-    g.rows = [...g.rows, ...blanks]
+    // Extra rows count against the cap but never toward the record. A metric
+    // may show fewer periods of scored history than it used to; what it shows
+    // is now the truth about that stretch of time rather than a compressed
+    // version of it.
+    g.rows = [...g.rows, ...extra]
       .sort((a, b) => periodSortKey(b.period) - periodSortKey(a.period))
       .slice(0, 8);
 
-    const real = g.rows.filter((p) => !p.notGuided);
+    const real = g.rows.filter((p) => !p.notGuided && !p.unanswered);
     g.above = real.filter((p) => p.position === "above").length;
     g.within = real.filter((p) => p.position === "within").length;
     g.below = real.filter((p) => p.position === "below").length;
     g.noVerdict = real.filter((p) => !p.position).length;
     g.total = real.length;
-    g.notGuided = g.rows.length - real.length;
+    g.notGuided = g.rows.filter((p) => p.notGuided).length;
+    g.notReported = g.rows.filter((p) => p.unanswered).length;
   }
 
   return earned.slice(0, limit || 4);
@@ -246,16 +267,28 @@ function countLine(g) {
   if (g.noVerdict) parts.push(g.noVerdict + " against a single figure");
 
   let line = g.total + (g.total === 1 ? " period" : " periods") + ": " + parts.join(", ");
-  if (g.notGuided) line += "; " + g.notGuided + " not guided";
+
+  const tail = [];
+  if (g.notReported) tail.push(g.notReported + " not reported");
+  if (g.notGuided) tail.push(g.notGuided + " not guided");
+  if (tail.length) line += "; " + tail.join(", ");
+
   return line;
 }
 
 /**
- * One row of the table: what was guided, what came in, how far apart.
+ * One row of the table.
+ *
+ * "n/a" rather than a blank in the outcome column for an unanswered guide,
+ * because a blank reads as a value that failed to render. n/a says a verdict
+ * was not available, which is the fact.
  */
 function rowCells(p) {
   if (p.notGuided) {
     return [periodLabel(p.period), "not guided", "", ""];
+  }
+  if (p.unanswered) {
+    return [periodLabel(p.period), formatFigure(p.guide, p.unit), "not reported", "n/a"];
   }
   return [
     periodLabel(p.period),
@@ -335,7 +368,7 @@ function movedInThisRelease(revisions, latest, limit) {
 export function renderEmail(view, options) {
   const opts = options || {};
   const company = view.company || view.ticker;
-  const metrics = byMetric(view.pairs || [], 4);
+  const metrics = byMetric(view.pairs || [], view.unanswered || [], 4);
   const moved = movedInThisRelease(view.revisions, view.latestRelease, 20);
 
   const subject = company + " reported - how their guidance has held up";
@@ -416,13 +449,14 @@ export function renderEmail(view, options) {
 
     for (const p of g.rows) {
       const cells = rowCells(p);
+      const quiet = p.notGuided || p.unanswered;
       h.push('<tr>');
       cells.forEach((cell, i) => {
-        // A not-guided row is muted throughout: it is context for the rows
-        // around it, not a result. Still no colour anywhere - a tax rate above
-        // guidance is bad for the company and irrelevant to a short seller,
-        // and red would decide that for the reader.
-        const colour = p.notGuided ? MUTED : i === 0 ? MUTED : INK;
+        // A row with no outcome is muted throughout: it is context for the
+        // rows around it, not a result. Still no colour anywhere - a tax rate
+        // above guidance is bad for the company and irrelevant to a short
+        // seller, and red would decide that for the reader.
+        const colour = quiet ? MUTED : i === 0 ? MUTED : INK;
         h.push('<td align="left" style="padding:5px 8px 5px 0;border-bottom:1px solid '
           + RULE + ';color:' + colour + ';white-space:nowrap;">' + esc(cell) + '</td>');
       });
