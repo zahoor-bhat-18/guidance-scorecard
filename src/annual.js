@@ -180,6 +180,45 @@ export function annualRecord(guidanceByRelease, facts, scoreAll) {
   const pairs = [];
 
   for (const g of guides) {
+    /**
+     * A year the company has not finished cannot be answered.
+     *
+     * Walmart's fiscal 2027 guide collected a row reading "not tagged", which
+     * is trivially true of a year still running and tells a reader nothing -
+     * the same noise the main record was making when it asked the model for
+     * full-year figures every quarter.
+     *
+     * The test is whether the company has tagged its revenue for that year. A
+     * closed year has a revenue fact; an open one does not. That is the
+     * company's own statement about its own calendar, which beats anything
+     * derived from a filing date.
+     */
+    if (!facts["revenue|" + g.period]) continue;
+
+    /**
+     * A guide with no unit cannot be compared to anything.
+     *
+     * Walmart's fiscal 2025 capital expenditure guide arrived as "3 to 3.5"
+     * with no unit, where every other capex guide carries "percent". It then
+     * printed as bare numbers in a column of percentages. The comparison is
+     * refused and the reason names the extraction rather than the company -
+     * Walmart stated "approximately 3.0% to 3.5% of net sales"; the unit was
+     * lost on the way in.
+     */
+    if (!g.unit) {
+      pairs.push({
+        metric: g.metric,
+        metric_as_written: g.metric_as_written,
+        guide_period: g.period,
+        unit: g.unit,
+        guide: g.guide,
+        first: g.first,
+        comparable: false,
+        why: "The guide was stored without a unit, so there is nothing to compare it to.",
+      });
+      continue;
+    }
+
     const actual = actualFor(g.metric, g.period, g.unit, facts);
     if (!actual) {
       pairs.push({
