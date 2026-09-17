@@ -57,10 +57,16 @@ export function revisionSentence(r) {
   const unit = r.unit;
   const dir = r.direction;
 
+  // A guide for a period that had none before.
+  //
+  // It said "is guided for the first time at", which was both longer than it
+  // needed to be and a slightly bigger claim than the record supports: the
+  // first time IN THE FOURTEEN RELEASES READ is not the first time ever, and
+  // an extraction that missed the earlier one would make the sentence false.
+  // "Guided at" says what is known.
   if (dir === "new") {
     if (!hasFigure(r.after)) return null;
-    return label + " for " + when + " is guided for the first time at "
-      + formatFigure(r.after, unit) + ".";
+    return label + " for " + when + " guided at " + formatFigure(r.after, unit) + ".";
   }
 
   // A guide that stopped appearing. Reported as an absence, never as a
