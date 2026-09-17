@@ -81,6 +81,7 @@ function unansweredOf(record) {
       period: p.guide_period,
       unit: p.unit,
       guide: p.guide,
+      guidePath: p.guidePath || null,
       unanswered: true,
     });
   }
@@ -171,6 +172,14 @@ function trim(p) {
     basis: p.basis,
     unit: p.unit,
     guide: p.guide,
+    // Where the guide for this period STARTED, and every distinct figure on
+    // the way to where it ended.
+    //
+    // A company inside its final full-year range may have held that range all
+    // year or cut twice to reach it, and those are not the same company. The
+    // final range alone says "within" either way.
+    guidePath: p.guidePath || null,
+    againstOriginalGuide: p.score.againstOriginalGuide || null,
     // The figure that was JUDGED, not the raw one.
     //
     // Delta guided $1.60 to $1.90 and reported $1.55, which is $1.6 at the

@@ -227,7 +227,7 @@ function byMetric(pairs, unanswered, limit) {
       const u = unansweredByKey.get(key + "|" + period);
       if (u) {
         // Guided. The release could not answer it comparably.
-        extra.push({ period, unit: u.unit, guide: u.guide, unanswered: true });
+        extra.push({ period, unit: u.unit, guide: u.guide, guidePath: u.guidePath || null, unanswered: true });
       } else {
         // IT SAYS "NOT GUIDED", NEVER "NOT DISCLOSED". What the record knows is
         // that no guide is stored. Whether the company withheld it or the
@@ -277,6 +277,35 @@ function countLine(g) {
 }
 
 /**
+ * What was guided - and where the guide STARTED, if it moved.
+ *
+ * "3% to 4% -> 4.8% to 5.1%" rather than "4.8% to 5.1%".
+ *
+ * Walmart opened fiscal 2026 guiding net sales growth of 3% to 4% and closed
+ * it guiding 4.8% to 5.1%, then reported 5.1%. Against the final range that is
+ * "within", and a reader would take it as a year that went to plan. The range
+ * moved to meet the result. Both companies that land inside a final full-year
+ * guide - the one that held it and the one that cut twice to reach it - print
+ * the same word, and this is the difference between them.
+ *
+ * FIRST AND LAST ONLY, not every step. A full-year guide revised four times
+ * would be four arrows in a table cell on a phone. The whole path is in the
+ * record; the two ends are what fit in a row.
+ *
+ * The verdict still measures against the final guide. That is what management
+ * was standing behind when the period closed, and the arrow says the rest
+ * without this file having to characterise it.
+ */
+function guideCell(p) {
+  const now = formatFigure(p.guide, p.unit);
+  const path = p.guidePath;
+  if (!Array.isArray(path) || path.length < 2) return now;
+
+  const first = formatFigure(path[0], p.unit);
+  return first === now ? now : first + " → " + now;
+}
+
+/**
  * One row of the table.
  *
  * "n/a" rather than a blank in the outcome column for an unanswered guide,
@@ -288,11 +317,11 @@ function rowCells(p) {
     return [periodLabel(p.period), "not guided", "", ""];
   }
   if (p.unanswered) {
-    return [periodLabel(p.period), formatFigure(p.guide, p.unit), "not reported", "n/a"];
+    return [periodLabel(p.period), guideCell(p), "not reported", "n/a"];
   }
   return [
     periodLabel(p.period),
-    formatFigure(p.guide, p.unit),
+    guideCell(p),
     formatValue(p.actual, p.unit) || String(p.actual),
     outcomeCell(p),
   ];
