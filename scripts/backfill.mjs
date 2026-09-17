@@ -33,7 +33,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { resolveCik, companyCalendar } from "../src/xbrl.js";
 import { earningsReleases, guidanceFrom } from "../src/guidance.js";
 import { requestsFrom, actualsFrom } from "../src/actuals.js";
-import { pairUp } from "../src/pairing.js";
+import { samePeriod } from "../src/period.js";
 import { scoreAll } from "../src/score.js";
 import { revisionsBetween } from "../src/revisions.js";
 
@@ -113,6 +113,55 @@ function metricKey(guide) {
     .replace(/[^a-z ]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/**
+ * Pair a guide to its actual. The same rule as the Worker: identical periods
+ * or nothing.
+ */
+function pairUp(guides, actuals) {
+  const byName = new Map();
+  for (const a of actuals) byName.set(String(a.metric_as_written || "").toLowerCase(), a);
+
+  const pairs = [];
+  for (const g of guides) {
+    const hasNumber =
+      typeof g.low === "number" || typeof g.high === "number" || typeof g.value === "number";
+    if (!hasNumber) continue;
+
+    const a = byName.get(String(g.metric_as_written || "").toLowerCase());
+    const base = {
+      metric: g.metric,
+      metric_as_written: g.metric_as_written,
+      basis: g.basis,
+      unit: g.unit,
+      shape: g.shape,
+      guide: { low: g.low ?? null, high: g.high ?? null, value: g.value ?? null },
+      guide_period: g.period,
+      guide_period_text: g.period_text,
+    };
+
+    if (!a) { pairs.push({ ...base, comparable: false, why: "No actual was looked for under this metric." }); continue; }
+
+    base.actual = a.value;
+    base.actual_unit = a.unit;
+    base.actual_period = a.period;
+    base.actual_found_as = a.found_as;
+    base.quote = a.quote;
+
+    if (a.value === null) { pairs.push({ ...base, comparable: false, why: "The release does not report this figure." }); continue; }
+    if (!g.period) { pairs.push({ ...base, comparable: false, why: "The guide's period could not be read." }); continue; }
+    if (!a.period) { pairs.push({ ...base, comparable: false, why: "The actual's period could not be read." }); continue; }
+    if (!samePeriod(g.period, a.period)) {
+      pairs.push({ ...base, comparable: false, why: "Different periods: the guide is for " + g.period + " and the figure reported is for " + a.period + "." });
+      continue;
+    }
+    if (a.unit_mismatch) { pairs.push({ ...base, comparable: false, why: "The figure reported is not the kind of number that was guided." }); continue; }
+    if (a.basis_mismatch) { pairs.push({ ...base, comparable: false, why: a.basis_mismatch }); continue; }
+
+    pairs.push({ ...base, comparable: true });
+  }
+  return pairs;
 }
 
 /**
@@ -219,6 +268,51 @@ async function buildOne(ticker) {
     await sleep(300);
   }
 
+  /**
+   * The FIRST guide for each period, and the whole path of guides to it.
+   *
+   * A company can land inside its final full-year guide two very different
+   * ways: by holding that guide all year, or by cutting twice to reach it.
+   * Walmart opened fiscal 2026 guiding net sales growth of 3% to 4% and closed
+   * it guiding 4.8% to 5.1%. Reporting only the final range against the result
+   * says "within" and hides the fact that the range moved to meet the result.
+   *
+   * score.js has computed this since it was written - originalDelta, keyed on
+   * metric and period - and nothing ever passed it the map. Wired up here.
+   *
+   * Oldest release first, so the first guide seen for a period is the earliest
+   * one on record. Releases arrive newest first, hence the reverse loop.
+   */
+  const originals = {};
+  const guidePaths = {};
+
+  for (let i = guidanceByRelease.length - 1; i >= 0; i--) {
+    const g = guidanceByRelease[i];
+    for (const guide of g.guides || []) {
+      if (!guide.period) continue;
+      const hasNumber = typeof guide.low === "number"
+        || typeof guide.high === "number" || typeof guide.value === "number";
+      if (!hasNumber) continue;
+
+      const key = (guide.metric_as_written || "") + "|" + guide.period;
+      const figure = {
+        low: guide.low ?? null,
+        high: guide.high ?? null,
+        value: guide.value ?? null,
+      };
+
+      if (!(key in originals)) originals[key] = figure;
+
+      // One entry per DISTINCT figure. A guide reaffirmed unchanged across
+      // four releases is one point on the path, not four.
+      const path = guidePaths[key] || (guidePaths[key] = []);
+      const last = path[path.length - 1];
+      const same = last && last.low === figure.low
+        && last.high === figure.high && last.value === figure.value;
+      if (!same) path.push({ ...figure, filed: g.release.filed });
+    }
+  }
+
   // Newest first, so releases[i + 1] is the one before releases[i].
   const allPairs = [];
   const allRevisions = [];
@@ -236,9 +330,15 @@ async function buildOne(ticker) {
       actuals = result.actuals;
     }
 
-    const scored = scoreAll(pairUp(priorGuidance.guides, actuals));
+    const scored = scoreAll(pairUp(priorGuidance.guides, actuals), originals);
     for (const p of scored.pairs) {
-      allPairs.push({ ...p, fromRelease: priorGuidance.release.accession, answeredBy: current.accession });
+      allPairs.push({
+        ...p,
+        fromRelease: priorGuidance.release.accession,
+        answeredBy: current.accession,
+        answeredByFiled: current.filed,
+        guidePath: guidePaths[(p.metric_as_written || "") + "|" + (p.guide_period || "")] || null,
+      });
     }
 
     const moved = revisionsBetween(priorGuidance.guides, currentGuidance.guides, {
@@ -283,8 +383,45 @@ async function buildOne(ticker) {
     return true;
   });
 
-  const coverage = coverageOf(allPairs);
-  const comparable = allPairs.filter((p) => p.comparable);
+  /**
+   * ONE PAIR PER MEASURE PER PERIOD.
+   *
+   * The loop above pairs each release's guides against the next release's
+   * actuals, so a period guided in four releases produced four pairs for the
+   * same measure and the same period. Walmart's fiscal 2026 net sales appeared
+   * twice in one email - "guided 4.8% to 5.1%, reported 5.1%" directly above
+   * "guided 3% to 4%, reported 4.25%" - two contradictory answers to the same
+   * question, because one release had mislabelled a figure as the full year.
+   *
+   * Kept: the pair answered by the LATEST release. The period is reported once,
+   * by the release that closes it, and that release is the last one to carry a
+   * figure for it. An earlier release claiming the same period has misread
+   * something.
+   *
+   * The guide path survives on the kept pair, so nothing about the history is
+   * lost by collapsing - the row still knows where the guide started.
+   *
+   * A comparable pair always beats a refused one. Otherwise a late mislabel
+   * that got refused would bury a good pair from the release before it.
+   */
+  const bestByPeriod = new Map();
+  for (const p of allPairs) {
+    const key = metricKey(p) + "|" + (p.guide_period || "");
+    const held = bestByPeriod.get(key);
+
+    if (!held) { bestByPeriod.set(key, p); continue; }
+    if (Boolean(p.comparable) !== Boolean(held.comparable)) {
+      if (p.comparable) bestByPeriod.set(key, p);
+      continue;
+    }
+    if (String(p.answeredByFiled || "") > String(held.answeredByFiled || "")) {
+      bestByPeriod.set(key, p);
+    }
+  }
+  const collapsed = Array.from(bestByPeriod.values());
+
+  const coverage = coverageOf(collapsed);
+  const comparable = collapsed.filter((p) => p.comparable);
 
   return {
     ticker,
@@ -301,7 +438,7 @@ async function buildOne(ticker) {
       noVerdict: comparable.filter((p) => p.score && p.score.position === null).length,
       flagged: comparable.filter((p) => p.score && p.score.flags && p.score.flags.length).length,
     },
-    pairs: allPairs,
+    pairs: collapsed,
     revisions,
     currentGuidance: guidanceByRelease[0].guides,
   };
