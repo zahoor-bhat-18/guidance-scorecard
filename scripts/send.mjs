@@ -10,12 +10,17 @@
  * read.
  *
  * --test does none of that. See testSend below.
+ *
+ * The pairing rule lives in src/pairing.js and is shared with the backfill.
+ * There were two copies and they were the last place still matching a guide to
+ * its actual on the raw label, which cost Walmart a quarter of operating
+ * income every time it renamed the row.
  */
 
 import { resolveCik, companyCalendar } from "../src/xbrl.js";
 import { earningsReleases, guidanceFrom } from "../src/guidance.js";
 import { requestsFrom, actualsFrom } from "../src/actuals.js";
-import { samePeriod } from "../src/period.js";
+import { pairUp } from "../src/pairing.js";
 import { scoreAll } from "../src/score.js";
 import { revisionsBetween } from "../src/revisions.js";
 import { forEmail, headline } from "../src/records.js";
@@ -54,48 +59,6 @@ async function kvPut(key, value) {
     body,
   });
   if (!r.ok) throw new Error("KV write failed for " + key + ": " + r.status + " " + (await r.text()).slice(0, 200));
-}
-
-/* The same pairing rule as everywhere else: identical periods or nothing. */
-function pairUp(guides, actuals) {
-  const byName = new Map();
-  for (const a of actuals) byName.set(String(a.metric_as_written || "").toLowerCase(), a);
-
-  const pairs = [];
-  for (const g of guides) {
-    const hasNumber = typeof g.low === "number" || typeof g.high === "number" || typeof g.value === "number";
-    if (!hasNumber) continue;
-
-    const a = byName.get(String(g.metric_as_written || "").toLowerCase());
-    const base = {
-      metric: g.metric, metric_as_written: g.metric_as_written, basis: g.basis,
-      unit: g.unit, shape: g.shape,
-      guide: { low: g.low ?? null, high: g.high ?? null, value: g.value ?? null },
-      guide_period: g.period, guide_period_text: g.period_text,
-    };
-
-    if (!a) { pairs.push({ ...base, comparable: false, why: "No actual was looked for under this metric." }); continue; }
-
-    base.actual = a.value;
-    base.actual_unit = a.unit;
-    base.actual_period = a.period;
-    base.actual_period_text = a.period_text;
-    base.period_assumed = Boolean(a.period_assumed);
-    base.actual_found_as = a.found_as;
-    base.quote = a.quote;
-
-    if (a.value === null) { pairs.push({ ...base, comparable: false, why: "The release does not report this figure." }); continue; }
-    if (!g.period || !a.period) { pairs.push({ ...base, comparable: false, why: "A period could not be read." }); continue; }
-    if (!samePeriod(g.period, a.period)) {
-      pairs.push({ ...base, comparable: false, why: "Different periods: the guide is for " + g.period + " and the figure reported is for " + a.period + "." });
-      continue;
-    }
-    if (a.unit_mismatch) { pairs.push({ ...base, comparable: false, why: "The figure reported is not the kind of number that was guided." }); continue; }
-    if (a.basis_mismatch) { pairs.push({ ...base, comparable: false, why: a.basis_mismatch }); continue; }
-
-    pairs.push({ ...base, comparable: true });
-  }
-  return pairs;
 }
 
 async function hmac(secret, value) {
