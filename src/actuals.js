@@ -14,7 +14,7 @@
  */
 
 import { readFiling } from "./guidance.js";
-import { resolvePeriod, periodReportedBy, periodIsClosedBy } from "./period.js";
+import { resolvePeriod, periodReportedBy } from "./period.js";
 
 const MODEL = "deepseek-chat";
 const ENDPOINT = "https://api.deepseek.com/chat/completions";
@@ -367,30 +367,7 @@ async function callModel(env, requests, text) {
  */
 export async function actualsFrom(env, cik, release, requests, cal) {
   const filing = await readFiling(env, cik, release.accession);
-
-  /* A release cannot report a period that has not finished.
-   *
-   * Walmart reaffirms its full-year guide every quarter, so every quarter the
-   * model was asked to find the fiscal 2027 result in a release reporting the
-   * second quarter OF fiscal 2027. Four of nine requests in the last run were
-   * this, and all four came back empty - as they had to.
-   *
-   * Two of them did not come back empty, which is worse: the FY net sales and
-   * EPS guides were answered with the quarter's figure and refused downstream
-   * for a period mismatch. An impossible question does not reliably produce
-   * silence.
-   *
-   * So they are not asked. The guide still gets a row, still gets a pair, and
-   * still appears as unanswered - nothing disappears from the record. What
-   * goes away is the model call and the chance of a plausible wrong answer.
-   */
-  const askable = [];
-  for (const req of requests) {
-    if (periodIsClosedBy(req.guidePeriod, release.filed, cal)) askable.push(req);
-  }
-  const positionOf = new Map(askable.map((req, i) => [req, i]));
-
-  const rows = askable.length ? await callModel(env, askable, filing.text) : [];
+  const rows = await callModel(env, requests, filing.text);
 
   const byName = new Map();
   for (const row of rows) {
@@ -398,11 +375,8 @@ export async function actualsFrom(env, cik, release, requests, cal) {
     if (k && !byName.has(k)) byName.set(k, row);
   }
 
-  const actuals = requests.map((req) => {
-    const asked = positionOf.has(req);
-    const row = asked
-      ? (byName.get(req.query.toLowerCase()) || rows[positionOf.get(req)] || {})
-      : {};
+  const actuals = requests.map((req, i) => {
+    const row = byName.get(req.query.toLowerCase()) || rows[i] || {};
     const value = typeof row.value === "number" ? row.value : null;
     const unit = row.unit || null;
 
@@ -495,10 +469,7 @@ export async function actualsFrom(env, cik, release, requests, cal) {
       period: resolved.period,
       period_assumed: periodAssumed,
       period_how: resolved.how || null,
-      period_why: asked
-        ? (resolved.why || null)
-        : "That period had not finished when this release was filed, so the release cannot report it. Not looked for.",
-      asked: asked,
+      period_why: resolved.why || null,
       value,
       unit,
       unit_mismatch: unitMismatch,
@@ -517,8 +488,6 @@ export async function actualsFrom(env, cik, release, requests, cal) {
       textChars: filing.chars,
     },
     requested: requests.length,
-    asked: askable.length,
-    notYetClosed: requests.length - askable.length,
     found: actuals.filter((a) => a.value !== null).length,
     unitMismatches: actuals.filter((a) => a.unit_mismatch).length,
     basisMismatches: actuals.filter((a) => a.basis_mismatch).length,
