@@ -61,9 +61,12 @@ function tidy(n) {
  * 1.2% says the growth rate itself was 1.2% higher, which is a different and
  * wrong number. Anyone who reads these for a living would notice, and noticing
  * that would be the last thing they read.
+ *
+ * `signed` is off where the direction is already in the words. "above by
+ * +1.2pp" said it twice.
  */
-function formatDelta(d, unit) {
-  const sign = d > 0 ? "+" : d < 0 ? "-" : "";
+function formatDelta(d, unit, signed) {
+  const sign = signed ? (d > 0 ? "+" : d < 0 ? "-" : "") : "";
   const size = Math.abs(tidy(d));
   switch (unit) {
     case "percent": return sign + size + "pp";
@@ -108,15 +111,15 @@ function outcomeCell(p) {
   if (p.position === "within") return "within";
 
   if (p.position === "above" && high !== null) {
-    return "above by " + formatDelta(Math.abs(actual - high), p.unit);
+    return "above by " + formatDelta(actual - high, p.unit, false);
   }
   if (p.position === "below" && low !== null) {
-    return "below by " + formatDelta(Math.abs(actual - low), p.unit);
+    return "below by " + formatDelta(actual - low, p.unit, false);
   }
 
   // No range was guided. The distance is a fact; the verdict is not available.
   if (value !== null) {
-    return formatDelta(actual - value, p.unit) + " vs single figure";
+    return formatDelta(actual - value, p.unit, true) + " vs single figure";
   }
 
   return p.position || "";
@@ -131,6 +134,11 @@ function outcomeCell(p) {
  */
 function byMetric(pairs, limit) {
   const groups = new Map();
+
+  // Every period this company has a scored pair for, on any metric. A period
+  // one metric answered is a period the others could have been guided for,
+  // and that is what makes a blank meaningful rather than an assumption.
+  const companyPeriods = new Map();
 
   for (const p of pairs) {
     // Grouped on the shared metric identity, NOT on the label as the company
@@ -148,6 +156,10 @@ function byMetric(pairs, limit) {
     else if (p.position === "within") g.within += 1;
     else if (p.position === "below") g.below += 1;
     else g.noVerdict += 1;
+
+    if (p.period && !companyPeriods.has(p.period)) {
+      companyPeriods.set(p.period, periodSortKey(p.period));
+    }
   }
 
   const out = Array.from(groups.values());
@@ -163,24 +175,63 @@ function byMetric(pairs, limit) {
   // Three matched pairs to earn a block. The rule the record already enforces,
   // applied here too - the email was showing Delta's gross leverage on the
   // strength of one period, which is not a record, it is an anecdote.
+  //
+  // Counted on real pairs only. A blank is not evidence of a record; a metric
+  // with two pairs and four blanks is still two pairs.
   const earned = out.filter((g) => g.total >= 3);
   earned.sort((a, b) => b.total - a.total);
 
-  // Eight periods, not the whole history.
-  //
-  // The record reaches back to 2023 for some companies, and a run that long
-  // takes in a different macro environment and sometimes a different business.
-  // Two years is long enough to be a pattern and recent enough to be about the
-  // management team running the company now. The full history stays in the
-  // record for the page.
   for (const g of earned) {
     g.allPeriods = g.rows.length;
-    g.rows = g.rows.slice(0, 8);
-    g.above = g.rows.filter((p) => p.position === "above").length;
-    g.within = g.rows.filter((p) => p.position === "within").length;
-    g.below = g.rows.filter((p) => p.position === "below").length;
-    g.noVerdict = g.rows.filter((p) => !p.position).length;
-    g.total = g.rows.length;
+
+    /**
+     * Periods this company reported on, where this metric was not guided.
+     *
+     * Walmart's Q1 FY26 release guided one line for Q2 - net sales - and said
+     * why: given the backdrop, they held off giving a range for operating
+     * income growth and EPS. So the record has no Q2 2026 pair for either, and
+     * the table simply jumped from Q3 2026 to Q1 2026.
+     *
+     * A skipped row reads as a bug. It is the opposite: a quarter management
+     * declined to guide is a fact about management, and one a portfolio
+     * manager would want. Printed, it is visible; skipped, it is invisible and
+     * looks like the product cannot count.
+     *
+     * IT SAYS "NOT GUIDED", NEVER "NOT DISCLOSED". What the record knows is
+     * that no guide is stored. Whether the company withheld it or the
+     * extraction missed it is not knowable from here, and the second is not a
+     * claim to make about management on the strength of a gap.
+     *
+     * Only inside the metric's own span. A metric first guided in 2025 gets no
+     * blanks for 2023 - the company was not silent then, this measure simply
+     * was not being tracked, and a row saying otherwise would be invented.
+     */
+    const have = new Set(g.rows.map((p) => p.period));
+    const keys = g.rows.map((p) => periodSortKey(p.period));
+    const newest = Math.max(...keys);
+    const oldest = Math.min(...keys);
+
+    const blanks = [];
+    for (const [period, key] of companyPeriods.entries()) {
+      if (have.has(period)) continue;
+      if (key > newest || key < oldest) continue;
+      blanks.push({ period, notGuided: true });
+    }
+
+    // Blanks count against the cap but never toward the record. A metric may
+    // show fewer periods of history than it used to; what it shows is now the
+    // truth about that stretch of time rather than a compressed version of it.
+    g.rows = [...g.rows, ...blanks]
+      .sort((a, b) => periodSortKey(b.period) - periodSortKey(a.period))
+      .slice(0, 8);
+
+    const real = g.rows.filter((p) => !p.notGuided);
+    g.above = real.filter((p) => p.position === "above").length;
+    g.within = real.filter((p) => p.position === "within").length;
+    g.below = real.filter((p) => p.position === "below").length;
+    g.noVerdict = real.filter((p) => !p.position).length;
+    g.total = real.length;
+    g.notGuided = g.rows.length - real.length;
   }
 
   return earned.slice(0, limit || 4);
@@ -193,7 +244,10 @@ function countLine(g) {
   if (g.within) parts.push(g.within + " within");
   if (g.below) parts.push(g.below + " below");
   if (g.noVerdict) parts.push(g.noVerdict + " against a single figure");
-  return g.total + (g.total === 1 ? " period" : " periods") + ": " + parts.join(", ");
+
+  let line = g.total + (g.total === 1 ? " period" : " periods") + ": " + parts.join(", ");
+  if (g.notGuided) line += "; " + g.notGuided + " not guided";
+  return line;
 }
 
 /**
@@ -206,6 +260,9 @@ function countLine(g) {
  * off the filing accurately.
  */
 function rowCells(p) {
+  if (p.notGuided) {
+    return [periodLabel(p.period), "not guided", "", ""];
+  }
   return [
     periodLabel(p.period),
     formatFigure(p.guide, p.unit),
@@ -233,7 +290,6 @@ function textTable(rows) {
       .map((cell, i) => String(cell || "").padEnd(widths[i]))
       .join("  ")
       .replace(/\s+$/, "");
-    // A rule under the headings, as wide as the table actually is.
     return ri === 0
       ? line + "\n   " + "-".repeat(Math.min(widths.reduce((a, b) => a + b, 0) + 6, 68))
       : line;
@@ -276,9 +332,9 @@ function movedInThisRelease(revisions, latest, limit) {
  * sentence against this time, whether or not it has a record yet.
  *
  * It answers the question the tables cannot: what did they actually say today.
- * A reader who sees revenue and adjusted EBITDA scored, and knows the company
- * also guides free cash flow, has no way to tell from the tables alone whether
- * free cash flow was guided and left out, or never guided at all.
+ * Effective tax rate and capital expenditures live here because Walmart guides
+ * them once a year, so it takes years to reach three matched pairs. They are
+ * not excluded from the email; they are not yet a record.
  *
  * QUALITATIVE GUIDES BELONG HERE AND NOWHERE ELSE.
  *
@@ -288,10 +344,6 @@ function movedInThisRelease(revisions, latest, limit) {
  * it. It is printed as the company wrote it, in quotation marks, and nothing
  * is said about it. Summarising a qualitative guide would be interpreting one,
  * which is the line this product does not cross.
- *
- * Capped, with the remainder counted. A busy quarter at a company that guides
- * ten measures would otherwise put forty lines under an email whose value is
- * that it is short.
  */
 function alsoGuided(currentGuidance, limit) {
   const seen = new Set();
@@ -330,9 +382,6 @@ function alsoGuided(currentGuidance, limit) {
 
   // Figures first, then the qualitative lines. A reader scanning for a number
   // should not have to read past a paragraph to find one.
-  //
-  // Within each, nearest period first: these are all ahead, so the quarter
-  // being guided matters before the year it sits inside.
   rows.sort((a, b) => {
     if (a.qualitative !== b.qualitative) return a.qualitative ? 1 : -1;
     return a.sortKey - b.sortKey;
@@ -362,9 +411,6 @@ export function renderEmail(view, options) {
 
   for (const g of metrics) {
     t.push(g.metric + " - " + countLine(g));
-    // Every period the block earned, up to the eight it was capped at in
-    // byMetric. An earlier version printed four while the heading said seven,
-    // which reads as a page that cannot count.
     for (const line of textTable(g.rows.map(rowCells))) t.push("   " + line);
     t.push("");
   }
@@ -422,9 +468,6 @@ export function renderEmail(view, options) {
     h.push('<div style="font-size:16px;color:' + GREEN + ';">' + esc(g.metric) + '</div>');
     h.push('<div style="font-size:14px;color:' + MUTED + ';margin-top:2px;">' + esc(countLine(g)) + '</div>');
 
-    // A real table, not spaced text. role=presentation keeps a screen reader
-    // from announcing it as data twice over; border-collapse and explicit
-    // cell padding because Outlook ignores the shorthand.
     h.push('<table role="presentation" cellpadding="0" cellspacing="0" border="0"'
       + ' style="width:100%;margin-top:10px;border-collapse:collapse;font-family:' + MONO
       + ';font-size:13px;">');
@@ -441,11 +484,11 @@ export function renderEmail(view, options) {
       const cells = rowCells(p);
       h.push('<tr>');
       cells.forEach((cell, i) => {
-        // The outcome column is the one the eye goes to, so it is the only one
-        // that is not muted. Still no colour: a tax rate above guidance is bad
-        // for the company and irrelevant to a short seller, and red would
-        // decide that for the reader.
-        const colour = i === 3 ? INK : i === 0 ? MUTED : INK;
+        // A not-guided row is muted throughout: it is context for the rows
+        // around it, not a result. Still no colour anywhere - a tax rate above
+        // guidance is bad for the company and irrelevant to a short seller,
+        // and red would decide that for the reader.
+        const colour = p.notGuided ? MUTED : i === 0 ? MUTED : INK;
         h.push('<td align="left" style="padding:5px 8px 5px 0;border-bottom:1px solid '
           + RULE + ';color:' + colour + ';white-space:nowrap;">' + esc(cell) + '</td>');
       });
