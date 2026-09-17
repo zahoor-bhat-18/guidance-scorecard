@@ -1,5 +1,5 @@
 /**
- * How a figure is written, and how a period is written.
+ * How a figure is written, how a period is written, and what order periods go in.
  *
  * There was one of these already, private to revisions.js, and it was right:
  * the revision lines have always read "$0.62 to $0.64" and "3% to 3.75%".
@@ -76,4 +76,35 @@ export function periodLabel(period) {
   const m = String(period || "").match(/^(\d{4})(FY|Q([1-4]))$/);
   if (!m) return String(period || "");
   return m[2] === "FY" ? "FY" + m[1] : "Q" + m[3] + " " + m[1];
+}
+
+/**
+ * Where a period sits in time, for putting rows in order.
+ *
+ * The blocks were sorted on the stored string, which is alphabetical, so
+ * "2026FY" landed before "2026Q1" - F comes before Q. Walmart's record read
+ * Q2 2027, Q1 2027, Q3 2026, Q2 2026, Q1 2026, FY2026, and the full year sat
+ * three rows below the quarters it followed.
+ *
+ * THE FULL YEAR SORTS WHERE Q4 WOULD BE, because for these companies that is
+ * what it is. Walmart guides a fourth quarter and then reports a year instead
+ * of one, so the year-end row IS the answer to Q4 and belongs in Q4's place.
+ * A record that skips from Q1 2027 to Q3 2026 looks like a missing quarter;
+ * with FY2026 between them it reads as the sequence it actually is.
+ *
+ * Deliberately NOT the same as periodOrder in revisions.js, which puts the
+ * full year after its own quarters. That one answers "has this period been
+ * overtaken", where a year is not closed until its quarters are. This one
+ * answers "what goes above what". Same input, two honest answers, so they stay
+ * apart.
+ *
+ * An unparseable period sorts last rather than throwing. It will be visible in
+ * the row itself.
+ */
+export function periodSortKey(period) {
+  const m = String(period || "").match(/^(\d{4})(FY|Q([1-4]))$/);
+  if (!m) return -1;
+  const year = parseInt(m[1], 10);
+  const slot = m[2] === "FY" ? 4 : parseInt(m[3], 10);
+  return year * 10 + slot;
 }
