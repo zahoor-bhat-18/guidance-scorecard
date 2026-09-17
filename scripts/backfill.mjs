@@ -30,7 +30,8 @@
  */
 
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { resolveCik, companyCalendar } from "../src/xbrl.js";
+import { resolveCik, companyCalendar, factsFor } from "../src/xbrl.js";
+import { annualRecord } from "../src/annual.js";
 import { earningsReleases, guidanceFrom } from "../src/guidance.js";
 import { requestsFrom, actualsFrom } from "../src/actuals.js";
 import { samePeriod } from "../src/period.js";
@@ -496,6 +497,24 @@ async function buildOne(ticker) {
     }
   }
 
+  /**
+   * The annual measures, from tagged facts rather than from a release.
+   *
+   * One extra HTTP fetch per company and no model calls. Kept entirely apart
+   * from the pairs above - different source, different rules, its own table -
+   * so nothing that works today can be disturbed by it.
+   *
+   * A failure here is not a failure of the record. Companyfacts is occasionally
+   * unavailable and these measures are an addition, not the product.
+   */
+  let annual = [];
+  try {
+    const tagged = await factsFor(env, cik, calendar);
+    annual = annualRecord(guidanceByRelease, tagged.facts, scoreAll);
+  } catch (e) {
+    console.error("  " + ticker + ": annual measures unavailable - " + e.message);
+  }
+
   const coverage = coverageOf(merged);
   const comparable = merged.filter((p) => p.comparable);
 
@@ -516,6 +535,7 @@ async function buildOne(ticker) {
     },
     pairs: merged,
     carriedOver: kept,
+    annual,
     revisions,
     currentGuidance: guidanceByRelease[0].guides,
   };
