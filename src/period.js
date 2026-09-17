@@ -487,6 +487,49 @@ export function periodReportedBy(filedDate, cal) {
 }
 
 /**
+ * Had this period finished by the time that release was filed?
+ *
+ * The question nothing was asking, and it cost roughly half of every model
+ * call this product makes.
+ *
+ * Walmart reaffirms its full-year guidance every quarter. Each quarter, the
+ * actuals extractor was then asked to find "the FULL FISCAL YEAR that the
+ * company labels 2027" in a release reporting the second quarter of that same
+ * year. The year had not happened. The model could not answer and correctly
+ * returned nothing - four requests a release, every release, for every open
+ * annual guide in the universe.
+ *
+ * Worse than wasted. Asked an impossible question, the model sometimes answers
+ * anyway: the FY2027 net sales and EPS guides came back carrying the Q2
+ * figure, which the pairing then refused for a period mismatch. An impossible
+ * question does not reliably produce silence; it produces plausible wrong
+ * answers that something downstream has to catch.
+ *
+ * Three days of slack, because a release reporting a quarter is filed within
+ * days of that quarter ending and the exact boundary is not worth being clever
+ * about.
+ */
+export function periodIsClosedBy(period, filedDate, cal) {
+  const m = String(period || "").match(/^(\d{4})(FY|Q([1-4]))$/);
+  if (!m || !filedDate || !cal || !cal.fye || typeof cal.labelOffset !== "number") {
+    // Unknown rather than closed. A guide whose period cannot be placed is
+    // still worth looking for - dropping it would silently lose a pair, which
+    // is the more expensive mistake of the two.
+    return true;
+  }
+
+  const filed = Date.parse(String(filedDate) + "T00:00:00Z");
+  if (!Number.isFinite(filed)) return true;
+
+  const label = parseInt(m[1], 10);
+  const end = m[2] === "FY"
+    ? yearEndMs(label, cal)
+    : quarterEndMs(label, parseInt(m[3], 10), cal);
+
+  return end <= filed + 3 * 86400000;
+}
+
+/**
  * Two periods, compared.
  *
  * The only comparison the matcher is allowed to make. Identical or nothing -
