@@ -10,18 +10,15 @@
  * It does not predict. "They have beaten eight quarters running, so expect a
  * ninth" is the line that writes itself and the line this product never
  * writes. The reader is a portfolio manager; drawing that inference is his
- * job, and a tool that makes probabilistic claims gets judged on them - one
- * bad call and the whole thing is discredited.
+ * job, and a tool that makes probabilistic claims gets judged on them.
  *
  * It does not editorialise about direction. "Above" and "below" are facts. A
  * higher tax rate needs no commentary from an email.
  *
  * IT PRINTS NO FIGURE THE COMPANY DID NOT PUBLISH. Every number here is read
- * off a filing. Where a figure would have to be computed to be comparable - a
- * pre-split guide restated at today's share count - the comparison is dropped
- * and said to be dropped, rather than the number being manufactured and
- * footnoted. A single derived figure on a page of quoted ones is the thing a
- * sceptical reader finds, and finding it discredits the rest.
+ * off a filing, or is arithmetic on two figures from one filing. Where a
+ * figure would have to be restated to be comparable - a pre-split guide at
+ * today's share count - the comparison is dropped and said to be dropped.
  */
 
 import { metricKey, displayLabel } from "./metrics.js";
@@ -34,21 +31,13 @@ const MUTED = "#5b6b62";
 const RULE = "#dcd6c8";
 const MONO = "ui-monospace,SFMono-Regular,Menlo,monospace";
 
-/* Ten rows, not eight.
- *
- * Eight was two years of quarters, which was the right number when every row
- * was a scored period. Rows that say "not guided" and "not reported" now
- * compete for the same slots, and Walmart's Q2 2026 - the quarter management
- * explicitly declined to guide, which is one of the more interesting rows in
- * the email - was being pushed off the end by a scored period below it.
- *
- * The gaps are not padding. Losing one to fit one more result is the wrong
- * trade. */
+/* Ten rows, not eight. Rows that say "not guided" and "not reported" compete
+ * for the same slots, and Walmart's Q2 2026 - the quarter management
+ * explicitly declined to guide - was being pushed off the end by a scored
+ * period below it. The gaps are not padding. */
 const ROWS_PER_METRIC = 10;
 
-/* Six measures, not four. Walmart guides sales, operating income, EPS, tax
- * rate, interest and capex; four blocks could never show them all, and the
- * ones that fell off the end were the ones a reader could not find elsewhere. */
+/* Six measures, not four. */
 const METRICS_SHOWN = 6;
 
 function esc(s) {
@@ -73,11 +62,7 @@ function tidy(n) {
  * PERCENTAGE GUIDES GET POINTS, NOT PERCENT. Walmart guided sales growth of
  * 3.5% to 4.5% and grew 5.7%. The gap is 1.2 percentage points; calling it
  * 1.2% says the growth rate itself was 1.2% higher, which is a different and
- * wrong number. Anyone who reads these for a living would notice, and noticing
- * that would be the last thing they read.
- *
- * `signed` is off where the direction is already in the words. "above by
- * +1.2pp" said it twice.
+ * wrong number.
  */
 function formatDelta(d, unit, signed) {
   const sign = signed ? (d > 0 ? "+" : d < 0 ? "-" : "") : "";
@@ -94,18 +79,9 @@ function formatDelta(d, unit, signed) {
 /**
  * How far outside the range, and nothing more.
  *
- * ONE DISTANCE, MEASURED FROM THE END IT PASSED. Above the range, the gap
- * beyond the high end; below it, the gap below the low end. Within the range,
- * no number at all.
- *
+ * ONE DISTANCE, MEASURED FROM THE END IT PASSED. Within the range, no number.
  * A delta column implies one reference point, a reader assumes the midpoint,
- * and the whole product rests on never using midpoints: a company that guides
- * $22.3bn to $22.5bn and delivers $22.4bn has landed where it said it would,
- * and "delta -0.0bn" invents a target it never set.
- *
- * A point guide gets a signed distance and no verdict. "Above" would be
- * meaningless against a single number the company never framed as a floor or
- * a ceiling.
+ * and the whole product rests on never using midpoints.
  */
 function outcomeCell(p) {
   const actual = num(p.actual);
@@ -140,23 +116,14 @@ function levelOf(g) {
  * Walmart split its shares three for one in February 2024. Its fiscal 2025 EPS
  * guide therefore reads $6.70 to $7.12 in the early releases and $2.42 to
  * $2.47 in the later ones. Drawn as a path, that is management cutting its own
- * earnings guidance by two thirds, which is the single most damaging sentence
- * this product could put in front of a portfolio manager - and it never
- * happened.
+ * earnings guidance by two thirds - and it never happened.
  *
- * Only LEVEL measures. A growth rate guided at 2% and revised to 6% has
- * tripled and is an ordinary revision; percentages are exempt for the same
- * reason they are exempt from the scope-change test in revisions.js.
+ * Only LEVEL measures; percentages are exempt for the same reason they are
+ * exempt from the scope-change test in revisions.js.
  *
- * Halving or doubling is the threshold. No management team revises a level
- * guide that far between releases; splits, spin-offs and restatements do it
- * routinely. This is deliberately blunter than looksLikeScopeChange - it is
- * deciding whether to draw an arrow, not what to call a revision, and the cost
- * of suppressing a real revision is one missing arrow.
- *
- * EARNINGS ARE NOT EXEMPT HERE, unlike in revisions.js. That exemption exists
- * because United really did cut EPS 42% on fuel - a real and brutal revision
- * within one guide. A split is a different animal and lands well outside it.
+ * KNOWN HOLE: a 50% spin-off sits at almost exactly the same ratio as United's
+ * real 42% EPS cut on fuel, so no single threshold separates them. Splits are
+ * caught; separations of about half are not.
  */
 function scaleChanged(first, last, unit) {
   if (unit === "percent" || !unit || unit === "other") return false;
@@ -172,36 +139,25 @@ function scaleChanged(first, last, unit) {
 /**
  * What was guided - and where the guide STARTED, if it moved.
  *
- * "3% to 4% → 4.8% to 5.1%" rather than "4.8% to 5.1%".
+ * "3% to 4% → 4.8% to 5.1%" rather than "4.8% to 5.1%". Walmart opened fiscal
+ * 2026 guiding 3% to 4% and closed it guiding 4.8% to 5.1%, then reported
+ * 5.1%. Against the final range that is "within", and the range had moved to
+ * meet the result. The company that held its guide all year and the company
+ * that raised twice print the same word; this is the difference between them.
  *
- * Walmart opened fiscal 2026 guiding net sales growth of 3% to 4% and closed
- * it guiding 4.8% to 5.1%, then reported 5.1%. Against the final range that is
- * "within", and a reader would take it as a year that went to plan. The range
- * moved to meet the result. Both companies that land inside a final full-year
- * guide - the one that held it and the one that raised twice to reach it -
- * print the same word, and this is the difference between them.
- *
- * FIRST AND LAST ONLY, not every step. A guide revised four times would be
- * four arrows in a table cell on a phone.
- *
- * The verdict still measures against the final guide. That is what management
- * was standing behind when the period closed.
- *
- * Returns the note flag as well, so the row can be marked and the reason
- * printed once under the table rather than in every cell.
+ * FIRST AND LAST ONLY. The verdict still measures against the final guide -
+ * what management was standing behind when the period closed.
  */
 function guideCell(p) {
   const now = formatFigure(p.guide, p.unit);
-  const path = p.guidePath;
+  const path = Array.isArray(p.guidePath) ? p.guidePath
+    : (p.first ? [p.first, p.guide] : null);
   if (!Array.isArray(path) || path.length < 2) return { text: now, noted: false };
 
   const first = path[0];
   const firstText = formatFigure(first, p.unit);
   if (firstText === now) return { text: now, noted: false };
 
-  // The guide did move, but the measure moved under it. Show where it ended
-  // and say why there is no path, rather than drawing a cut that never
-  // happened or restating a figure the company never printed.
   if (scaleChanged(first, p.guide, p.unit)) return { text: now, noted: true };
 
   return { text: firstText + " → " + now, noted: false };
@@ -224,8 +180,7 @@ function byMetric(pairs, unanswered, limit) {
   for (const p of pairs) {
     // Grouped on the shared metric identity, NOT on the label as the company
     // wrote it. Broadcom names the quarter inside its labels, so grouping by
-    // label split one measure into four and dropped three of them for having
-    // too few periods. The record said seven pairs; the email showed three.
+    // label split one measure into four and dropped three of them.
     const key = metricKey(p.metric);
     if (!groups.has(key)) {
       groups.set(key, { labels: [], unit: p.unit, rows: [], above: 0, within: 0, below: 0, noVerdict: 0 });
@@ -253,20 +208,16 @@ function byMetric(pairs, unanswered, limit) {
   for (const g of out) {
     g.metric = displayLabel(g.labels);
     // Newest first, in TIME order. This compared the stored strings, which is
-    // alphabetical: "2026FY" sorted before "2026Q1" because F precedes Q, and
-    // Walmart's full year appeared three rows below the quarters it followed.
+    // alphabetical: "2026FY" sorted before "2026Q1" because F precedes Q.
     g.rows.sort((a, b) => periodSortKey(b.period) - periodSortKey(a.period));
     g.total = g.rows.length;
   }
 
-  // Three matched pairs to earn a block, counted on answered pairs only.
-  // Neither a blank nor a "not reported" is evidence of a record.
   const earned = out.filter((g) => g.total >= 3);
   earned.sort((a, b) => b.total - a.total);
 
   // Guided, but not enough closed periods to show a record yet. Named rather
-  // than dropped: a reader who knows the company guides capital expenditures
-  // should not have to wonder whether this email missed it.
+  // than dropped.
   const belowBar = out
     .filter((g) => g.total < 3)
     .sort((a, b) => b.total - a.total)
@@ -281,14 +232,6 @@ function byMetric(pairs, unanswered, limit) {
     const newest = Math.max(...keys);
     const oldest = Math.min(...keys);
 
-    /**
-     * Periods inside this metric's own span that it has no answer for, each
-     * labelled with what is actually true of it.
-     *
-     * Only inside the span. A metric first guided in 2025 gets no rows for
-     * 2023 - the company was not silent then, this measure simply was not
-     * being tracked, and a row saying otherwise would be invented.
-     */
     const extra = [];
     for (const [period, sortKey] of companyPeriods.entries()) {
       if (have.has(period)) continue;
@@ -298,10 +241,9 @@ function byMetric(pairs, unanswered, limit) {
       if (u) {
         extra.push({ period, unit: u.unit, guide: u.guide, guidePath: u.guidePath || null, unanswered: true });
       } else {
-        // IT SAYS "NOT GUIDED", NEVER "NOT DISCLOSED". What the record knows is
-        // that no guide is stored. Whether the company withheld it or the
-        // extraction missed it is not knowable from here, and the second is not
-        // a claim to make about management on the strength of a gap.
+        // IT SAYS "NOT GUIDED", NEVER "NOT DISCLOSED". Whether the company
+        // withheld it or the extraction missed it is not knowable from here,
+        // and the second is not a claim to make about management.
         extra.push({ period, notGuided: true });
       }
     }
@@ -346,13 +288,6 @@ const SPLIT_NOTE = "* An earlier guide for this period was stated before a share
   + " another change to what is being counted, so it is not comparable and no path is"
   + " shown. Nothing here is restated.";
 
-/**
- * One row of the table.
- *
- * "n/a" rather than a blank in the outcome column for an unanswered guide,
- * because a blank reads as a value that failed to render. n/a says a verdict
- * was not available, which is the fact.
- */
 function rowCells(p) {
   if (p.notGuided) {
     return [periodLabel(p.period), "not guided", "", ""];
@@ -373,16 +308,17 @@ function rowCells(p) {
 }
 
 const HEADINGS = ["Period", "Guided", "Reported", ""];
+const ANNUAL_HEADINGS = ["Measure", "Year", "Guided", "Reported", ""];
 
 /**
  * The same table in plain text, columns padded to line up.
  *
- * Plain text is what a client that strips styling shows, what a reader who has
- * turned HTML off sees, and the version that has to survive being forwarded.
+ * Plain text is what a client that strips styling shows, and the version that
+ * has to survive being forwarded.
  */
-function textTable(rows) {
-  const all = [HEADINGS, ...rows];
-  const widths = HEADINGS.map((_, i) =>
+function textTable(headings, rows) {
+  const all = [headings, ...rows];
+  const widths = headings.map((_, i) =>
     Math.max(...all.map((r) => String(r[i] || "").length)));
 
   return all.map((r, ri) => {
@@ -391,9 +327,71 @@ function textTable(rows) {
       .join("  ")
       .replace(/\s+$/, "");
     return ri === 0
-      ? line + "\n   " + "-".repeat(Math.min(widths.reduce((a, b) => a + b, 0) + 6, 68))
+      ? line + "\n   " + "-".repeat(Math.min(widths.reduce((a, b) => a + b, 0) + 8, 72))
       : line;
   });
+}
+
+/**
+ * The annual measures.
+ *
+ * A measure guided once a year needs three closed years to earn a table above,
+ * and the backfill reads about three and a half years of releases. So Walmart's
+ * effective tax rate and capital expenditure sit at two pairs and one, and
+ * would wait another year or two for a record that already exists - in the
+ * company's own tagged XBRL, which carries every year at once.
+ *
+ * Its own table because it is its own thing. Different source, different
+ * rules, and a reader should be able to see which figures came from a release
+ * and which from a filing's tags without being told twice.
+ *
+ * TWO MARKS, both about honesty rather than decoration:
+ *   †  the figure is arithmetic on two tagged numbers rather than one tagged
+ *      number - capital expenditure over revenue, for a guide stated as a
+ *      percentage of sales.
+ *   ‡  the company guided an adjusted figure and the tag is GAAP. They are not
+ *      the same number, and the row says so rather than quietly comparing them.
+ */
+function annualRows(annual) {
+  const rows = [];
+  let computed = false;
+  let caveat = false;
+
+  for (const a of annual || []) {
+    const label = displayLabel(a.metric);
+
+    if (!a.comparable) {
+      rows.push([label, periodLabel(a.period), formatFigure(a.guide, a.unit), "not tagged", "n/a"]);
+      continue;
+    }
+
+    if (a.computed) computed = true;
+    if (a.basisCaveat) caveat = true;
+
+    const marks = (a.computed ? "†" : "") + (a.basisCaveat ? "‡" : "");
+    const guide = guideCell({ guide: a.guide, first: a.first, unit: a.unit });
+
+    rows.push([
+      label,
+      periodLabel(a.period),
+      guide.text,
+      (formatValue(a.actual, a.unit) || String(a.actual)) + marks,
+      outcomeCell(a),
+    ]);
+  }
+
+  const notes = [];
+  if (computed) {
+    notes.push("† Capital expenditure over revenue, both as the company tagged them for"
+      + " that year. The guide is stated as a percentage of sales, so the comparison has"
+      + " to be one too.");
+  }
+  if (caveat) {
+    notes.push("‡ The company guided this on an adjusted basis; the tagged figure is GAAP."
+      + " They are not the same number.");
+  }
+
+  return { rows, notes };
 }
 
 /**
@@ -405,14 +403,8 @@ function textTable(rows) {
  * could not find anywhere else. They were missing because the section stopped
  * at six lines, not because it could not carry them.
  *
- * This is also where a measure with too few closed periods to earn a table
- * still gets said. Interest has no record yet and appears here every quarter
- * it is guided.
- *
  * WHAT THIS STILL CANNOT SHOW: a guide with no number. revisionsBetween
- * compares figures and skips anything qualitative, so "we expect gross margin
- * to decline sequentially" reaches the record as guidance and appears nowhere.
- * That needs a change in revisions.js, not here.
+ * compares figures and skips anything qualitative.
  */
 function movedInThisRelease(revisions, latest, limit) {
   const wanted = new Set(["raised", "cut", "unchanged", "new", "narrowed", "widened", "scope change"]);
@@ -439,6 +431,7 @@ export function renderEmail(view, options) {
   const company = view.company || view.ticker;
   const { metrics, belowBar } = byMetric(view.pairs || [], view.unanswered || [], METRICS_SHOWN);
   const moved = movedInThisRelease(view.revisions, view.latestRelease, 20);
+  const annual = annualRows(view.annual);
   const alsoLine = belowBarLine(belowBar);
   const anyNote = metrics.some((g) => g.hasNote);
 
@@ -455,12 +448,20 @@ export function renderEmail(view, options) {
 
   for (const g of metrics) {
     t.push(g.metric + " - " + countLine(g));
-    for (const line of textTable(g.rows.map(rowCells))) t.push("   " + line);
+    for (const line of textTable(HEADINGS, g.rows.map(rowCells))) t.push("   " + line);
     t.push("");
   }
 
   if (anyNote) {
     t.push(SPLIT_NOTE);
+    t.push("");
+  }
+
+  if (annual.rows.length) {
+    t.push("GUIDED ONCE A YEAR");
+    t.push("Results from the company's own tagged filings, not from the release.");
+    for (const line of textTable(ANNUAL_HEADINGS, annual.rows)) t.push("   " + line);
+    for (const n of annual.notes) t.push(n);
     t.push("");
   }
 
@@ -511,6 +512,13 @@ export function renderEmail(view, options) {
 
   h.push('<p style="margin:20px 0 0;font-size:17px;">' + esc(view.headline || "") + '</p>');
 
+  const th = (head) => '<th align="left" style="padding:0 8px 5px 0;border-bottom:1px solid '
+    + RULE + ';font-weight:normal;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:'
+    + MUTED + ';">' + esc(head) + '</th>';
+
+  const td = (cell, colour) => '<td align="left" style="padding:5px 8px 5px 0;border-bottom:1px solid '
+    + RULE + ';color:' + colour + ';white-space:nowrap;">' + esc(cell) + '</td>';
+
   for (const g of metrics) {
     h.push('<div style="margin-top:22px;padding-top:14px;border-top:1px solid ' + RULE + ';">');
     h.push('<div style="font-size:16px;color:' + GREEN + ';">' + esc(g.metric) + '</div>');
@@ -519,38 +527,47 @@ export function renderEmail(view, options) {
     h.push('<table role="presentation" cellpadding="0" cellspacing="0" border="0"'
       + ' style="width:100%;margin-top:10px;border-collapse:collapse;font-family:' + MONO
       + ';font-size:13px;">');
-
-    h.push('<tr>');
-    for (const head of HEADINGS) {
-      h.push('<th align="left" style="padding:0 8px 5px 0;border-bottom:1px solid ' + RULE
-        + ';font-weight:normal;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:'
-        + MUTED + ';">' + esc(head) + '</th>');
-    }
-    h.push('</tr>');
+    h.push('<tr>' + HEADINGS.map(th).join("") + '</tr>');
 
     for (const p of g.rows) {
-      const cells = rowCells(p);
       const quiet = p.notGuided || p.unanswered;
-      h.push('<tr>');
-      cells.forEach((cell, i) => {
-        // A row with no outcome is muted throughout: it is context for the
-        // rows around it, not a result. Still no colour anywhere - a tax rate
-        // above guidance is bad for the company and irrelevant to a short
-        // seller, and red would decide that for the reader.
-        const colour = quiet ? MUTED : i === 0 ? MUTED : INK;
-        h.push('<td align="left" style="padding:5px 8px 5px 0;border-bottom:1px solid '
-          + RULE + ';color:' + colour + ';white-space:nowrap;">' + esc(cell) + '</td>');
-      });
-      h.push('</tr>');
+      const cells = rowCells(p);
+      h.push('<tr>' + cells.map((cell, i) =>
+        // A row with no outcome is muted throughout: context, not a result.
+        // Still no colour anywhere - a tax rate above guidance is bad for the
+        // company and irrelevant to a short seller, and red would decide that
+        // for the reader.
+        td(cell, quiet ? MUTED : i === 0 ? MUTED : INK)).join("") + '</tr>');
     }
 
-    h.push('</table>');
-    h.push('</div>');
+    h.push('</table></div>');
   }
 
   if (anyNote) {
     h.push('<p style="margin-top:14px;font-size:12px;color:' + MUTED + ';line-height:1.5;">'
       + esc(SPLIT_NOTE) + '</p>');
+  }
+
+  if (annual.rows.length) {
+    h.push('<div style="margin-top:26px;padding-top:14px;border-top:1px solid ' + RULE + ';">');
+    h.push('<div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:' + MUTED + ';">Guided once a year</div>');
+    h.push('<div style="font-size:14px;color:' + MUTED + ';margin-top:2px;">'
+      + 'Results from the company\'s own tagged filings, not from the release.</div>');
+
+    h.push('<table role="presentation" cellpadding="0" cellspacing="0" border="0"'
+      + ' style="width:100%;margin-top:10px;border-collapse:collapse;font-family:' + MONO
+      + ';font-size:13px;">');
+    h.push('<tr>' + ANNUAL_HEADINGS.map(th).join("") + '</tr>');
+    for (const r of annual.rows) {
+      h.push('<tr>' + r.map((cell, i) => td(cell, i === 0 || i === 1 ? MUTED : INK)).join("") + '</tr>');
+    }
+    h.push('</table>');
+
+    for (const n of annual.notes) {
+      h.push('<p style="margin-top:10px;font-size:12px;color:' + MUTED + ';line-height:1.5;">'
+        + esc(n) + '</p>');
+    }
+    h.push('</div>');
   }
 
   if (alsoLine) {
@@ -583,8 +600,9 @@ export function renderEmail(view, options) {
     + 'Questions, or something that looks wrong: reply to this, or write to '
     + '<a href="mailto:hello@zahoorbhat.com" style="color:' + MUTED + ';">hello@zahoorbhat.com</a>. '
     + 'Every figure is read from the company\'s own filings on EDGAR. Guidance comes from the'
-    + ' earnings release; results from the release that reported the period. A guide is only'
-    + ' scored against the same period, on the same basis. Nothing here is a forecast.</p>');
+    + ' earnings release; results from the release that reported the period, or from the'
+    + ' company\'s tagged annual filings where a measure is guided once a year. A guide is'
+    + ' only scored against the same period, on the same basis. Nothing here is a forecast.</p>');
 
   if (opts.unsubscribeUrl) {
     h.push('<p style="margin-top:14px;font-size:12px;color:' + MUTED + ';">'

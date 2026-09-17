@@ -17,11 +17,6 @@ import { revisionSentence } from "./summary.js";
 
 const PREFIX = "record:";
 
-/* A metric earns a block at three matched pairs; a company is published at two
-   qualifying metrics. Applied when the record is built, not here - this file
-   reads what was decided, so the page and the email cannot disagree with the
-   stored coverage. */
-
 /**
  * Guides whose period closed and which the release could not answer.
  *
@@ -102,10 +97,6 @@ function unansweredOf(record) {
  * in an email a portfolio manager reads in the first ten minutes after a
  * release, because he cannot check them and will not try.
  *
- * The alternative was to print the caution alongside. Two sentences of
- * hedging next to a number reads as a disclaimer, and a disclaimer in an email
- * is a number nobody trusts and everybody remembers.
- *
  * The count of what was withheld is reported, so the omission is visible
  * rather than silent.
  */
@@ -123,6 +114,27 @@ export function forEmail(record) {
     withheldForReview: withheld,
     pairs: clean.map(trim),
     unanswered: unansweredOf(record),
+
+    /* The annual measures, built from tagged facts rather than from a release.
+       Passed through nearly whole: the table is small, and every field on it
+       is either printed or decides how a row is printed. */
+    annual: (record.annual || []).map((p) => ({
+      metric: p.metric_as_written || p.metric,
+      period: p.guide_period,
+      unit: p.unit,
+      guide: p.guide,
+      first: p.first || null,
+      actual: p.score && typeof p.score.actualAsGuided === "number"
+        ? p.score.actualAsGuided
+        : (typeof p.actual === "number" ? p.actual : null),
+      position: p.score ? p.score.position : null,
+      comparable: Boolean(p.comparable),
+      why: p.why || null,
+      computed: Boolean(p.computed),
+      basisCaveat: Boolean(p.basisCaveat),
+      source: p.source || null,
+    })),
+
     revisions: (record.revisions || []).map((r) => ({
       metric: r.metric,
       period: r.period,
@@ -137,13 +149,7 @@ export function forEmail(record) {
       // It cannot be built any later than this line. The view below is
       // deliberately narrow, and the fields the sentence needs - the label as
       // written, the unit, the figures before and after - are exactly the ones
-      // this mapper drops. Building it in the renderer meant handing the
-      // sentence builder a row with its inputs already stripped, which is
-      // precisely what happened: it returned null on every row and the email
-      // fell back to the stale sentence, four deploys running.
-      //
-      // The stored summary stays as the fallback, for a record built before
-      // summary.js existed and missing a field. Stale beats broken.
+      // this mapper drops.
       summary: revisionSentence(r) || r.summary,
       // Carried through so the email can tell today's revisions from the
       // fourteen releases of history behind them.
@@ -173,13 +179,11 @@ function trim(p) {
     unit: p.unit,
     guide: p.guide,
     // Where the guide for this period STARTED, and every distinct figure on
-    // the way to where it ended.
-    //
-    // A company inside its final full-year range may have held that range all
-    // year or cut twice to reach it, and those are not the same company. The
+    // the way to where it ended. A company inside its final full-year range
+    // may have held that range all year or raised twice to reach it, and the
     // final range alone says "within" either way.
     guidePath: p.guidePath || null,
-    againstOriginalGuide: p.score.againstOriginalGuide || null,
+    againstOriginalGuide: (p.score && p.score.againstOriginalGuide) || null,
     // The figure that was JUDGED, not the raw one.
     //
     // Delta guided $1.60 to $1.90 and reported $1.55, which is $1.6 at the
@@ -212,8 +216,6 @@ function tallyOf(pairs) {
  * that writes itself, and it is the line this product does not write: it is an
  * inference, and the reader is a portfolio manager who is paid to draw his
  * own. What he is given is the count.
- *
- * The same discipline as the other product, which quotes a filing and stops.
  */
 export function headline(tally) {
   if (!tally || !tally.total) return "No matched pairs on record.";
@@ -282,6 +284,7 @@ export async function listRecords(env) {
       matchedPairs: comparable.length,
       shownInEmail: clean.length,
       withheldForReview: comparable.length - clean.length,
+      annual: (record.annual || []).filter((p) => p.comparable).length,
       revisions: (record.revisions || []).length,
       headline: headline(tallyOf(clean)),
     });
