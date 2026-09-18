@@ -349,7 +349,7 @@ async function buildOne(ticker) {
     const priorGuidance = guidanceByRelease[i + 1];
     const currentGuidance = guidanceByRelease[i];
 
-    const requests = requestsFrom(priorGuidance.guides);
+    const requests = requestsFrom(priorGuidance.guides, calendar);
 
     let actuals = [];
     if (requests.length) {
