@@ -11,16 +11,18 @@
  *
  * --test does none of that. See testSend below.
  *
- * The pairing rule lives in src/pairing.js and is shared with the backfill.
- * There were two copies and they were the last place still matching a guide to
- * its actual on the raw label, which cost Walmart a quarter of operating
- * income every time it renamed the row.
+ * THIS PATH HAD DRIFTED FROM THE BACKFILL. Three rules built and tested there
+ * stopped at the boundary and were never applied here: the calendar that tells
+ * the model what the company calls its quarters, the collapse that keeps one
+ * pair per measure and period, and the check that a company has anything worth
+ * sending. All three are below.
  */
 
 import { resolveCik, companyCalendar } from "../src/xbrl.js";
 import { earningsReleases, guidanceFrom } from "../src/guidance.js";
 import { requestsFrom, actualsFrom } from "../src/actuals.js";
 import { pairUp } from "../src/pairing.js";
+import { metricKey } from "../src/metrics.js";
 import { scoreAll } from "../src/score.js";
 import { revisionsBetween } from "../src/revisions.js";
 import { forEmail, headline } from "../src/records.js";
@@ -101,11 +103,6 @@ async function sendMail(to, mail, unsub) {
  * different periods, samePeriod rejects every one of them, and the result is
  * an empty record built from three model calls.
  *
- * What needs judging in a mail client is the rendering, and the rendering is
- * the same object either way: the stored record, through forEmail, headline
- * and renderEmail - the identical three calls handle() makes. So this reads
- * the record and renders it.
- *
  * Nothing here writes. kvPut is never reached, so there is no flag to thread
  * through the write path and nothing for a later edit to quietly re-enable.
  */
@@ -137,6 +134,39 @@ async function testSend(ticker, to) {
 }
 
 /**
+ * The new pairs and the stored ones, as ONE pair per measure and period.
+ *
+ * This existed only in the backfill, and the live send simply prepended. So
+ * every safeguard built there stopped at the boundary, and the first live send
+ * would have begun rebuilding the duplicate rows the backfill had just been
+ * taught to collapse. Walmart showed fiscal 2026 net sales twice in one email,
+ * "guided 4.8% to 5.1%, reported 5.1%" directly above "guided 3% to 4%,
+ * reported 4.25%", because two releases had each produced a pair for that year.
+ *
+ * A SCORED PERIOD IS FINAL, exactly as in the backfill. A live send answers a
+ * period for the first time; it has no business rewriting one already
+ * answered. If a stored pair is wrong, that is decided deliberately with
+ * --rebuild, not as a side effect of a company reporting again.
+ */
+function mergePairs(fresh, stored) {
+  const byKey = new Map();
+  const keyOf = (p) => metricKey(p) + "|" + (p.guide_period || "");
+
+  for (const p of fresh) byKey.set(keyOf(p), p);
+
+  for (const p of stored) {
+    const key = keyOf(p);
+    const now = byKey.get(key);
+
+    if (p.comparable) { byKey.set(key, p); continue; }
+    if (now && (now.comparable || !p.comparable)) continue;
+    byKey.set(key, p);
+  }
+
+  return Array.from(byKey.values());
+}
+
+/**
  * One company, one new release.
  *
  * The stored record already holds the guidance from the previous release, so
@@ -163,7 +193,13 @@ async function handle(ticker) {
   // The guides this release answers were extracted when the previous release
   // was read. Re-reading it would double the bill for a known answer.
   const priorGuides = record.currentGuidance || [];
-  const requests = requestsFrom(priorGuides);
+
+  // THE CALENDAR GOES WITH THEM. Without it the model is asked for "the second
+  // quarter of the fiscal year the company labels 2026" against a Delta
+  // release that says "June quarter" and nothing else, and returns nothing -
+  // which is how Delta lost five of six figures in a single release. The
+  // backfill has passed this since the fix; this path did not.
+  const requests = requestsFrom(priorGuides, calendar);
 
   let actuals = [];
   if (requests.length) {
@@ -184,10 +220,15 @@ async function handle(ticker) {
     company: name,
     builtAt: new Date().toISOString(),
     releasesRead: [{ accession: current.accession, filed: current.filed }, ...(record.releasesRead || [])],
-    pairs: [
-      ...scored.pairs.map((p) => ({ ...p, fromRelease: record.releasesRead?.[0]?.accession, answeredBy: current.accession })),
-      ...(record.pairs || []),
-    ],
+    pairs: mergePairs(
+      scored.pairs.map((p) => ({
+        ...p,
+        fromRelease: record.releasesRead?.[0]?.accession,
+        answeredBy: current.accession,
+        answeredByFiled: current.filed,
+      })),
+      record.pairs || []
+    ),
     revisions: [
       ...moved.revisions.map((r) => ({ ...r, release: current.accession, filed: current.filed })),
       ...(record.revisions || []),
@@ -196,6 +237,34 @@ async function handle(ticker) {
   };
 
   await kvPut("record:" + ticker, JSON.stringify(updated));
+
+  /**
+   * A company with no qualifying measure does not get an email.
+   *
+   * The record already decides this - Honeywell and JPMorgan are both marked
+   * not publishable, for different reasons - and the send path never asked. A
+   * subscriber would have received a page reading "No matched pairs on
+   * record", which is worse than no email: it is a product saying it has
+   * nothing to say, having chosen to say it.
+   *
+   * The record is still written first. The work is not wasted, and the day the
+   * company earns a third matched period it starts sending on its own.
+   *
+   * NOTE: coverage is computed by the backfill and carried forward here, so
+   * this reads the last backfill's verdict rather than a fresh one. That is
+   * the conservative direction - a company that has just earned its third
+   * period waits for the next backfill rather than sending early.
+   */
+  if (updated.coverage && updated.coverage.publishable === false) {
+    return {
+      ticker,
+      release: current.accession,
+      filed: current.filed,
+      newPairs: scored.pairs.filter((p) => p.comparable).length,
+      skipped: "Record updated, not published: "
+        + (updated.coverage.reason || "no measure has enough matched periods yet"),
+    };
+  }
 
   const view = forEmail(updated);
   const subscribers = JSON.parse((await kvGet("subscribers")) || "{}");
