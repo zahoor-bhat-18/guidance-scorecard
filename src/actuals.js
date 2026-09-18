@@ -117,7 +117,23 @@ function expectedBasis(guide) {
  * described the way the company writes it, and the model is told to return
  * nothing rather than substitute a different period.
  */
-function describePeriod(period) {
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December"];
+
+/**
+ * The month a fiscal quarter ends in, from the company's own year end.
+ *
+ * Delta's year ends in December, so its second quarter ends in June. Walmart's
+ * ends in January, so its second quarter ends in July. Broadcom's ends in
+ * early November, so its second quarter ends in May.
+ */
+function quarterEndMonth(quarter, cal) {
+  if (!cal || !cal.fye || typeof cal.fye.month !== "number") return null;
+  const back = (4 - quarter) * 3;
+  return MONTH_NAMES[((cal.fye.month - back - 1) % 12 + 12) % 12];
+}
+
+function describePeriod(period, cal) {
   const m = String(period || "").match(/^(\d{4})(FY|Q([1-4]))$/);
   if (!m) return null;
 
@@ -127,9 +143,35 @@ function describePeriod(period) {
       + " - the twelve-month or 52-week figure, NOT the fourth quarter";
   }
 
-  const ordinal = { 1: "first", 2: "second", 3: "third", 4: "fourth" }[m[3]];
+  const quarter = parseInt(m[3], 10);
+  const ordinal = { 1: "first", 2: "second", 3: "third", 4: "fourth" }[quarter];
+
+  /**
+   * NAMED THE WAY THE COMPANY NAMES IT, not only by its ordinal.
+   *
+   * Delta's July 2024 release reports revenue up 5.4% and adjusted earnings per
+   * share of $2.36, in plain bullets, on the first page. The model was asked
+   * for "the second quarter of the fiscal year the company labels 2024" and
+   * returned nothing at all - five of six requests came back empty against a
+   * document that had the answers.
+   *
+   * The release never says "second quarter". It says "June quarter 2024",
+   * eleven times, including in its own headline. Told to find a period that
+   * does not appear in the text, the model reported no period rather than
+   * substituting one - which is the behaviour it was asked for.
+   *
+   * So the quarter is described both ways. The ordinal stays first, because it
+   * is what most filers print; the month-ended form follows, computed from the
+   * company's own year end rather than guessed.
+   */
+  const month = quarterEndMonth(quarter, cal);
+  const alias = month
+    ? ", which this company may call the " + month + " quarter or the quarter ended in "
+      + month + ","
+    : "";
+
   return "the " + ordinal + " quarter of the fiscal year the company labels " + year
-    + " - that quarter alone, not the year to date and not the full year";
+    + alias + " - that quarter alone, not the year to date and not the full year";
 }
 
 /**
@@ -208,7 +250,7 @@ export function cleanMetricName(written) {
  * test is the numbers themselves rather than the shape, which covers
  * reaffirmed, withdrawn, qualitative and anything empty in one rule.
  */
-export function requestsFrom(guides) {
+export function requestsFrom(guides, cal) {
   const seen = new Set();
   const out = [];
 
@@ -235,7 +277,7 @@ export function requestsFrom(guides) {
       unit: g.unit || "other",
       shape: g.shape || "point",
       guidePeriod: g.period || null,
-      periodWanted: describePeriod(g.period),
+      periodWanted: describePeriod(g.period, cal),
       expect: expectedAnswer(g.shape, g.unit),
       expectBasis: expectedBasis(g),
     });
