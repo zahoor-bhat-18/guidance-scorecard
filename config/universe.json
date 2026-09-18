@@ -1,4 +1,20 @@
 {
-  "note": "The companies the backfill builds a record for. Deliberately short to begin with - these six are the ones the extraction has actually been tested against, and they cover the awkward cases: a full-year-only guider, two different fiscal-year conventions at the same year end, an airline that names quarters by month, and a filer whose guidance lives in a second exhibit. Add names once coverage has been measured, not before.",
-  "tickers": ["M", "WMT", "AVGO", "UAL", "DAL", "HON"]
+  "note": "The companies the backfill builds a record for. The first six are the ones the extraction was built against: a full-year-only guider, two different fiscal-year conventions at the same year end, an airline that names quarters by month, and a filer whose guidance lives in a second exhibit. The five after them were added deliberately to break things that six could not - see tests below. Add in batches of five, read the output, then add the next five. Twenty-five bad records built in one run is a day of untangling; five is an hour.",
+
+  "tickers": [
+    "M", "WMT", "AVGO", "UAL", "DAL", "HON",
+    "JPM", "KO", "NKE", "GE", "CSX"
+  ],
+
+  "tests": {
+    "JPM": "A bank. Guides net interest income and adjusted expense - measures the metric list has no concept for and CONCEPTS has no tag for. Revenue means something different here and there is no operating income line in the ordinary sense. Expect this one to produce few pairs or none; the question is whether it fails visibly or quietly, and whether the publishable rule holds it back rather than printing something wrong.",
+
+    "KO": "Guides ORGANIC revenue growth and COMPARABLE EPS - both non-GAAP constructions with no XBRL tag at all, against a calendar fiscal year. Tests whether the basis check refuses the GAAP figures rather than pairing them, which is the same shape as the United capex mismatch.",
+
+    "NKE": "Fiscal year ends in May, so neither the January cluster nor the calendar year. Guides gross margin expansion in BASIS POINTS - 'up 50 to 75 bps' - which is a percent guide at a hundredth of the scale the formatter assumes. If a 75bp guide prints as 75%, this is where it shows.",
+
+    "GE": "Separated into three companies across 2023 and 2024. Every level guide crosses the break, which is exactly what looksLikeScopeChange and the guide-path suppression were written for - and the known hole is that a separation of about half is indistinguishable from a real cut. Expect the arrow to be wrong somewhere and to learn where.",
+
+    "CSX": "A railroad, guiding volume growth and operating ratio. Operating ratio is a percentage where LOWER is better, which is the clearest test of the no-inversion rule: the email must say 'above' and 'below' and let the reader know what that means, without ever calling one of them a miss."
+  }
 }
