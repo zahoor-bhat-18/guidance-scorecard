@@ -135,6 +135,7 @@ function formatDelta(d, unit, signed) {
     // Two decimals, matching formatValue. "above by $0.1" beside a guide of
     // "$1.00 to $2.00" is the same number written two ways in one row.
     case "USD per share": return sign + "$" + size.toFixed(2);
+    case "multiple": return sign + size + "x";
     default: return sign + size;
   }
 }

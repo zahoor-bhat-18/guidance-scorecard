@@ -330,7 +330,7 @@ const SYSTEM = [
   '  "found_as": "what this release calls it, verbatim, or null",',
   '  "period_text": "the period the figure covers, in the release\'s words, or null",',
   '  "value": number or null,',
-  '  "unit": "USD millions|USD billions|USD per share|percent|other",',
+  '  "unit": "USD millions|USD billions|USD per share|percent|multiple|other",',
   '  "quote": "the sentence or table row it came from, verbatim, 40 words or fewer, or null"',
   "}]}",
   "",

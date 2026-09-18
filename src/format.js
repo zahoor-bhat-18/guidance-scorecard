@@ -36,6 +36,11 @@ export function formatValue(n, unit) {
     case "USD billions": return "$" + n + "bn";
     case "USD millions": return "$" + n + "m";
     case "USD per share": return "$" + n.toFixed(2);
+    // A ratio in turns. Delta guides "adjusted debt to EBITDAR 2x - 3x", and
+    // leverage, coverage and turns guides across several sectors are written
+    // the same way. Printed bare, "2 to 3" beside a column of percentages and
+    // dollar figures reads as a number missing its unit.
+    case "multiple": return n + "x";
     default: return String(n);
   }
 }
