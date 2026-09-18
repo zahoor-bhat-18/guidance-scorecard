@@ -76,6 +76,28 @@ function figureOf(g) {
   };
 }
 
+/**
+ * A guide with one bound is a point guide.
+ *
+ * United's fiscal 2024 capital expenditure guide arrived as {low: 6.5, high:
+ * null} - "approximately $6.5 billion", read as the bottom of a range that was
+ * never stated. score.js scores a range or a point and that is neither, so it
+ * produced no position; the table then printed the guide and the result and
+ * left the outcome column empty, which reads as a figure that failed to
+ * render.
+ *
+ * Nothing is invented by this: the number the company printed is the number
+ * compared. What changes is that it is treated as the single figure it is, so
+ * it gets a distance and no verdict - the rule for point guides everywhere
+ * else in the product.
+ */
+function asPoint(f) {
+  if (f.value !== null) return f;
+  const ends = [f.low, f.high].filter((n) => n !== null);
+  if (ends.length !== 1) return f;
+  return { low: null, high: null, value: ends[0] };
+}
+
 function hasFigure(f) {
   return f.low !== null || f.high !== null || f.value !== null;
 }
@@ -161,7 +183,7 @@ function annualGuides(guidanceByRelease) {
       if (!g.period || !/FY$/.test(String(g.period))) continue;
       if (!ANNUAL_METRICS.includes(g.metric)) continue;
 
-      const figure = figureOf(g);
+      const figure = asPoint(figureOf(g));
       if (!hasFigure(figure)) continue;
 
       const key = g.metric + "|" + g.period;
