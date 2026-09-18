@@ -40,6 +40,27 @@ const ROWS_PER_METRIC = 10;
 /* Six measures, not four. */
 const METRICS_SHOWN = 6;
 
+/**
+ * How far back a measure can have gone quiet and still be shown.
+ *
+ * United guided total operating revenue growth through 2023 and stopped. The
+ * email carried a three-row table of it - Q2, Q3 and Q4 2023, nothing since -
+ * under a heading about how their guidance has held up. Every figure in it was
+ * true and the table as a whole was misleading: it reads as a measure this
+ * management guides, and they have not guided it for two and a half years.
+ *
+ * Four quarters, measured against the newest period anywhere in the record, so
+ * an annual guider is not caught by it - a measure guided once a year is two
+ * quarters behind the latest quarter at worst.
+ */
+const STALE_AFTER_QUARTERS = 4;
+
+/* periodSortKey packs a year and a slot: 2026Q2 is 20262, 2026FY is 20264. */
+function quartersApart(newer, older) {
+  const y = Math.floor(newer / 10) - Math.floor(older / 10);
+  return y * 4 + ((newer % 10) - (older % 10));
+}
+
 function esc(s) {
   return String(s == null ? "" : s)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -213,15 +234,28 @@ function byMetric(pairs, unanswered, limit) {
     g.total = g.rows.length;
   }
 
-  const earned = out.filter((g) => g.total >= 3);
+  /* The newest period the company has answered anything for, on any measure.
+     The yardstick for whether a measure has gone quiet. */
+  const newestOverall = Math.max(0, ...Array.from(companyPeriods.values()));
+
+  function stale(g) {
+    if (!newestOverall) return false;
+    const newest = Math.max(...g.rows.map((p) => periodSortKey(p.period)));
+    return quartersApart(newestOverall, newest) > STALE_AFTER_QUARTERS;
+  }
+
+  const live = out.filter((g) => !stale(g));
+
+  const earned = live.filter((g) => g.total >= 3);
   earned.sort((a, b) => b.total - a.total);
 
   // Guided, but not enough closed periods to show a record yet. Named rather
-  // than dropped.
-  const belowBar = out
+  // than dropped - and only while the company is still guiding it. A measure
+  // abandoned in 2023 does not belong in a line about what they guide.
+  const belowBar = live
     .filter((g) => g.total < 3)
     .sort((a, b) => b.total - a.total)
-    .map((g) => ({ metric: g.metric, total: g.total }));
+    .map((g) => ({ metric: g.metric, total: g.total, unit: g.unit, rows: g.rows.slice(0, 2) }));
 
   for (const g of earned) {
     g.allPeriods = g.rows.length;
@@ -418,24 +452,45 @@ function movedInThisRelease(revisions, latest, limit) {
 }
 
 /**
- * Measures guided but not yet a record - excluding any that now have one.
+ * Measures guided, but with too little history to be a record.
  *
- * The line was naming effective tax rate and capital expenditures directly
- * underneath a table showing three years of both. True of the main record and
- * useless to a reader, who has just read the answer.
+ * This was a sentence - "Also guided, too few closed periods to show a record
+ * yet: Adjusted CASM-ex YOY (1)" - which named the measure and withheld
+ * everything a reader wanted. United guides CASM-ex every quarter and the one
+ * figure on record was sitting in the email as a parenthesis.
+ *
+ * So it is a table: what was guided, what came in. No block of its own,
+ * because one period is not a pattern and a full block would claim it is - but
+ * the figures are the point and there is no reason to keep them back.
+ *
+ * Measures that now have a table above are left out. The line was naming
+ * effective tax rate and capital expenditures directly underneath three years
+ * of both.
  */
-function belowBarLine(belowBar, annual) {
-  if (!belowBar || !belowBar.length) return "";
+function belowBarRows(belowBar, annual) {
+  if (!belowBar || !belowBar.length) return [];
 
   const shown = new Set((annual || []).map((a) => metricKey(a.metric)));
-  const named = belowBar
-    .filter((m) => !shown.has(metricKey(m.metric)))
-    .slice(0, 6)
-    .map((m) => m.metric + " (" + m.total + ")")
-    .join(", ");
+  const out = [];
 
-  if (!named) return "";
-  return "Also guided, too few closed periods to show a record yet: " + named + ".";
+  for (const m of belowBar) {
+    if (shown.has(metricKey(m.metric))) continue;
+    for (const p of m.rows) {
+      if (p.notGuided) continue;
+      out.push([
+        m.metric,
+        periodLabel(p.period),
+        guideCell(p).text,
+        p.unanswered
+          ? "not reported"
+          : (formatValue(p.actual, p.unit) || String(p.actual)),
+        p.unanswered ? "n/a" : outcomeCell(p),
+      ]);
+      if (out.length >= 6) return out;
+    }
+  }
+
+  return out;
 }
 
 export function renderEmail(view, options) {
@@ -444,7 +499,7 @@ export function renderEmail(view, options) {
   const { metrics, belowBar } = byMetric(view.pairs || [], view.unanswered || [], METRICS_SHOWN);
   const moved = movedInThisRelease(view.revisions, view.latestRelease, 20);
   const annual = annualRows(view.annual);
-  const alsoLine = belowBarLine(belowBar, view.annual);
+  const alsoRows = belowBarRows(belowBar, view.annual);
   const anyNote = metrics.some((g) => g.hasNote);
 
   const subject = company + " reported - how their guidance has held up";
@@ -477,8 +532,9 @@ export function renderEmail(view, options) {
     t.push("");
   }
 
-  if (alsoLine) {
-    t.push(alsoLine);
+  if (alsoRows.length) {
+    t.push("ALSO GUIDED, TOO FEW PERIODS TO SHOW A RECORD YET");
+    for (const line of textTable(ANNUAL_HEADINGS, alsoRows)) t.push("   " + line);
     t.push("");
   }
 
@@ -574,8 +630,18 @@ export function renderEmail(view, options) {
     h.push('</div>');
   }
 
-  if (alsoLine) {
-    h.push('<p style="margin-top:14px;font-size:14px;color:' + MUTED + ';">' + esc(alsoLine) + '</p>');
+  if (alsoRows.length) {
+    h.push('<div style="margin-top:26px;padding-top:14px;border-top:1px solid ' + RULE + ';">');
+    h.push('<div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:' + MUTED + ';">Also guided</div>');
+    h.push('<div style="font-size:14px;color:' + MUTED + ';margin-top:2px;">Too few closed periods to show a record yet.</div>');
+    h.push('<table role="presentation" cellpadding="0" cellspacing="0" border="0"'
+      + ' style="width:100%;margin-top:10px;border-collapse:collapse;font-family:' + MONO
+      + ';font-size:13px;">');
+    h.push('<tr>' + ANNUAL_HEADINGS.map(th).join("") + '</tr>');
+    for (const r of alsoRows) {
+      h.push('<tr>' + r.map((cell, i) => td(cell, i === 0 || i === 1 ? MUTED : INK)).join("") + '</tr>');
+    }
+    h.push('</table></div>');
   }
 
   if (moved.rows.length) {
