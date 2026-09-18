@@ -355,7 +355,6 @@ function textTable(headings, rows) {
 function annualRows(annual) {
   const rows = [];
   let computed = false;
-  let caveat = false;
 
   for (const a of annual || []) {
     const label = displayLabel(a.metric);
@@ -372,9 +371,8 @@ function annualRows(annual) {
     }
 
     if (a.computed) computed = true;
-    if (a.basisCaveat) caveat = true;
 
-    const marks = (a.computed ? "†" : "") + (a.basisCaveat ? "‡" : "");
+    const marks = a.computed ? "†" : "";
     const guide = guideCell({ guide: a.guide, first: a.first, unit: a.unit });
 
     rows.push([
@@ -391,10 +389,6 @@ function annualRows(annual) {
     notes.push("† Capital expenditure over revenue, both as the company tagged them for"
       + " that year. The guide is stated as a percentage of sales, so the comparison has"
       + " to be one too.");
-  }
-  if (caveat) {
-    notes.push("‡ The company guided this on an adjusted basis; the tagged figure is GAAP."
-      + " They are not the same number.");
   }
 
   return { rows, notes };
@@ -498,14 +492,6 @@ export function renderEmail(view, options) {
     t.push("");
   }
 
-  if (view.withheldForReview) {
-    t.push(view.withheldForReview + " further "
-      + (view.withheldForReview === 1 ? "comparison is" : "comparisons are")
-      + " held back: the gap was too large to take at face value without checking"
-      + " for a change in scope or a restatement.");
-    t.push("");
-  }
-
   t.push("Questions, or something that looks wrong: reply to this, or write to");
   t.push("hello@zahoorbhat.com.");
   t.push("");
@@ -604,14 +590,6 @@ export function renderEmail(view, options) {
         + ', on the site.</p>');
     }
     h.push('</div>');
-  }
-
-  if (view.withheldForReview) {
-    h.push('<p style="margin-top:22px;font-size:14px;color:' + MUTED + ';">'
-      + view.withheldForReview + ' further '
-      + (view.withheldForReview === 1 ? 'comparison is' : 'comparisons are')
-      + ' held back: the gap was too large to take at face value without checking for a'
-      + ' change in scope or a restatement.</p>');
   }
 
   h.push('<p style="margin-top:26px;padding-top:14px;border-top:1px solid ' + RULE + ';font-size:13px;color:' + MUTED + ';line-height:1.6;">'
