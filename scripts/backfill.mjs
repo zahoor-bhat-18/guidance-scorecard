@@ -475,6 +475,32 @@ async function buildOne(ticker) {
         const key = metricKey(p) + "|" + (p.guide_period || "");
         const fresh = byKey.get(key);
 
+        /**
+         * A SCORED PERIOD IS FINAL. Only --rebuild changes one.
+         *
+         * The first version of this rule protected a stored scored pair from a
+         * refusal, and left two scored pairs to fight it out last-wins. So the
+         * churn continued in a quieter form: Delta's Q4 2023 revenue read
+         * "11%, within" after one run and "6%, below by 3pp" after the next -
+         * the same guide, the same filing, a different answer, and the second
+         * one silently replacing a figure a subscriber had already read.
+         *
+         * A subscriber cannot tell a corrected figure from a re-rolled one.
+         * Neither can we, from inside a run: the model is not more right the
+         * second time, only different. So the first scored answer stands, and
+         * changing it is a decision someone takes with --rebuild rather than a
+         * side effect of running the backfill again.
+         *
+         * What a re-run is still for: filling periods that have no scored pair
+         * yet. That is how Delta went from four scored revenue periods to
+         * eight. Gaps fill; answers do not move.
+         */
+        if (p.comparable) {
+          if (fresh && fresh.comparable) kept += 1;
+          byKey.set(key, p);
+          continue;
+        }
+
         // A COMPARABLE STORED PAIR BEATS A REFUSED NEW ONE.
         //
         // Keeping a stored pair only where this run produced nothing was not
