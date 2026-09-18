@@ -123,7 +123,15 @@ function asPoint(f) {
  * true, checkable, and costs nothing.
  */
 function labelSaysAdjusted(written) {
-  return /\badj(\.|usted)?\b/i.test(String(written || ""));
+  // The words companies actually use. Coca-Cola writes "Underlying effective
+  // tax rate (non-GAAP)" and never the word adjusted, so the caveat did not
+  // fire and the email showed KO missing its tax guidance by 280 basis points
+  // three years running - comparing an underlying rate that excludes items
+  // against the GAAP rate that includes them. United writes "Adjusted", Macy's
+  // writes "Core", others write "Comparable" or "Organic". All mean the same
+  // thing here: this is not the number XBRL tags.
+  return /\b(adj(\.|usted)?|underlying|comparable|core|organic|normali[sz]ed|non[- ]?gaap)\b/i
+    .test(String(written || ""));
 }
 
 function hasFigure(f) {
