@@ -50,6 +50,15 @@ import { periodSortKey } from "./format.js";
    blind. */
 const ANNUAL_METRICS = ["tax_rate", "capex"];
 
+/* The units these measures can actually be compared in. Anything else - and
+   "other" in particular - is the extraction having failed to read a unit, not
+   the company having stated an exotic one. */
+const USABLE_UNITS = ["percent", "USD millions", "USD billions"];
+
+function usableUnit(u) {
+  return USABLE_UNITS.includes(u);
+}
+
 /* Three closed years. Enough to be a pattern, recent enough to be about the
    business as it is now - the same reasoning as the eight-period cap on the
    main tables. */
@@ -69,6 +78,25 @@ function figureOf(g) {
 
 function hasFigure(f) {
   return f.low !== null || f.high !== null || f.value !== null;
+}
+
+/* Dollars, in whichever scale the guide was stated in.
+ *
+ * United guides "adjusted capital expenditures of approximately $6.5 billion".
+ * xbrl.js normalises every USD fact to millions, so the tagged answer arrives
+ * as 6500 USD millions and the two were refused as a unit mismatch - the same
+ * number, written at two scales, called incomparable.
+ *
+ * Only between USD scales, and only by a factor of a thousand. This is not a
+ * unit conversion table; it is the one conversion that is arithmetic rather
+ * than judgement. */
+const USD_SCALE = { "USD millions": 1, "USD billions": 1000 };
+
+function toScale(value, from, to) {
+  const a = USD_SCALE[from];
+  const b = USD_SCALE[to];
+  if (!a || !b) return null;
+  return Number(((value * a) / b).toFixed(6));
 }
 
 /**
@@ -154,9 +182,26 @@ function annualGuides(guidanceByRelease) {
         continue;
       }
 
+      /**
+       * The figure is last-wins. THE UNIT IS NOT.
+       *
+       * Walmart's fiscal 2025 capital expenditure guide - "Approximately 3.0%
+       * to 3.5% of net sales", the same sentence in every release - came back
+       * as "percent" from February 2024 and as "other" from a later one. The
+       * later guide won, so the comparison went looking for dollars, found the
+       * tagged figure in millions, and refused its own guide as a unit
+       * mismatch. The model had simply read the same sentence two ways, which
+       * it does.
+       *
+       * So a usable unit is never given up for an unusable one. A company
+       * revising a guide changes the number, not the unit it states it in -
+       * and if one genuinely switched from a percentage of sales to a dollar
+       * figure, the two would be orders of magnitude apart and the row would
+       * be visibly absurd rather than quietly wrong.
+       */
       held.guide = figure;
       held.metric_as_written = g.metric_as_written;
-      held.unit = g.unit;
+      if (usableUnit(g.unit) || !usableUnit(held.unit)) held.unit = g.unit;
       held.basis = g.basis;
       held.quote = g.quote;
       held.releases += 1;
@@ -205,7 +250,7 @@ export function annualRecord(guidanceByRelease, facts, scoreAll) {
      * Walmart stated "approximately 3.0% to 3.5% of net sales"; the unit was
      * lost on the way in.
      */
-    if (!g.unit) {
+    if (!usableUnit(g.unit)) {
       pairs.push({
         metric: g.metric,
         metric_as_written: g.metric_as_written,
@@ -215,7 +260,7 @@ export function annualRecord(guidanceByRelease, facts, scoreAll) {
         first: g.first,
         comparable: false,
         refusal: "no unit",
-        why: "The guide was stored without a unit, so there is nothing to compare it to.",
+        why: "The guide was stored without a usable unit, so there is nothing to compare it to.",
       });
       continue;
     }
@@ -238,6 +283,17 @@ export function annualRecord(guidanceByRelease, facts, scoreAll) {
 
     // The unit the company guided in has to be the unit that came back, or the
     // comparison is between two different things wearing the same name.
+    //
+    // Dollars at two scales are the same thing, so those are converted rather
+    // than refused.
+    if (actual.unit !== g.unit && USD_SCALE[actual.unit] && USD_SCALE[g.unit]) {
+      const rescaled = toScale(actual.value, actual.unit, g.unit);
+      if (rescaled !== null) {
+        actual.value = rescaled;
+        actual.unit = g.unit;
+      }
+    }
+
     if (actual.unit !== g.unit) {
       pairs.push({
         metric: g.metric,
@@ -265,12 +321,14 @@ export function annualRecord(guidanceByRelease, facts, scoreAll) {
       actual_period: g.period,
       source: actual.from,
       computed: Boolean(actual.computed),
-      // The company guided an ADJUSTED figure and XBRL tags the GAAP one.
-      // Walmart guides "effective tax rate" in some releases and the adjusted
-      // rate in others, and the two are not the same number. Said on the row
-      // rather than silently compared - this is the exact mismatch that cost
-      // the main record a quarter of operating income.
-      basisCaveat: g.basis === "non_gaap",
+      // No adjusted-basis caveat on these measures.
+      //
+      // It was set from the guide's basis field, and the extraction marks a
+      // whole outlook table non-GAAP when its heading says so - Walmart's does,
+      // because of EPS and operating income. That put "the company guided this
+      // on an adjusted basis" against capital expenditure, which has no
+      // adjusted version. There is no non-GAAP capex and no non-GAAP cash
+      // spend; the caveat was false wherever it appeared here.
       quote: g.quote,
       comparable: true,
     });
@@ -278,14 +336,19 @@ export function annualRecord(guidanceByRelease, facts, scoreAll) {
 
   const scored = scoreAll(pairs).pairs;
 
-  scored.sort((a, b) => periodSortKey(b.guide_period) - periodSortKey(a.guide_period));
+  /* Grouped by measure, then newest year first. Read down a column rather than
+     across: three years of the tax rate together, then three of capex. Sorting
+     by year alone interleaved them and made the table look like a list. */
+  scored.sort((a, b) => {
+    const order = ANNUAL_METRICS.indexOf(a.metric) - ANNUAL_METRICS.indexOf(b.metric);
+    if (order !== 0) return order;
+    return periodSortKey(b.guide_period) - periodSortKey(a.guide_period);
+  });
 
   // Keep the most recent years only, counted in YEARS rather than rows: two
   // measures across three years is six rows, and that is the table.
-  const years = [];
-  for (const p of scored) {
-    if (!years.includes(p.guide_period)) years.push(p.guide_period);
-  }
+  const years = Array.from(new Set(scored.map((p) => p.guide_period)))
+    .sort((a, b) => periodSortKey(b) - periodSortKey(a));
   const wanted = new Set(years.slice(0, YEARS));
 
   return scored.filter((p) => wanted.has(p.guide_period));
