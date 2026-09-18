@@ -1,20 +1,17 @@
 {
-  "note": "The companies the backfill builds a record for. The first six are the ones the extraction was built against: a full-year-only guider, two different fiscal-year conventions at the same year end, an airline that names quarters by month, and a filer whose guidance lives in a second exhibit. The five after them were added deliberately to break things that six could not - see tests below. Add in batches of five, read the output, then add the next five. Twenty-five bad records built in one run is a day of untangling; five is an hour.",
+  "note": "The companies the backfill builds a record for. A ticker belongs here only if the company puts NUMBERS on a future period in its 8-K earnings release. That is the product's scope, not a limitation to work around: guidance given on the call or in a slide deck is not filed with the SEC, arrives an hour or more after the release, and would break both the promise that every figure is read from EDGAR and the promise that the email lands while the reader is still deciding what to do. Check before adding, not after - read the latest 8-K and look for a forward period with a figure against it. Add in batches of five, read the output, then add the next five.",
 
-  "tickers": [
-    "M", "WMT", "AVGO", "UAL", "DAL", "HON",
-    "JPM", "KO", "NKE", "GE", "CSX"
-  ],
+  "tickers": ["M", "WMT", "AVGO", "UAL", "DAL", "HON", "KO", "GE"],
+
+  "removed": {
+    "CSX": "No numerical guidance in the 8-K. The Q2 2026 release carries results, a CEO quote about strengthening service execution, and the forward-looking-statements boilerplate - not one figure for a future period. Confirmed three ways: this extraction returned no guides, a second model returned none from the same text, and the earlier scorecard had reached the same conclusion independently. CSX gives outlook on the call and at investor days.",
+    "JPM": "Same story. The release and the 99.2 supplement carry results; the outlook for net interest income and expense is given on the call. Banks would also need their own metric vocabulary - net interest income, provision, efficiency ratio - none of which the extraction or the XBRL concept list covers.",
+    "NKE": "Same: no numerical guidance in the filing."
+  },
 
   "tests": {
-    "JPM": "A bank. Guides net interest income and adjusted expense - measures the metric list has no concept for and CONCEPTS has no tag for. Revenue means something different here and there is no operating income line in the ordinary sense. Expect this one to produce few pairs or none; the question is whether it fails visibly or quietly, and whether the publishable rule holds it back rather than printing something wrong.",
-
-    "KO": "Guides ORGANIC revenue growth and COMPARABLE EPS - both non-GAAP constructions with no XBRL tag at all, against a calendar fiscal year. Tests whether the basis check refuses the GAAP figures rather than pairing them, which is the same shape as the United capex mismatch.",
-
-    "NKE": "Fiscal year ends in May, so neither the January cluster nor the calendar year. Guides gross margin expansion in BASIS POINTS - 'up 50 to 75 bps' - which is a percent guide at a hundredth of the scale the formatter assumes. If a 75bp guide prints as 75%, this is where it shows.",
-
-    "GE": "Separated into three companies across 2023 and 2024. Every level guide crosses the break, which is exactly what looksLikeScopeChange and the guide-path suppression were written for - and the known hole is that a separation of about half is indistinguishable from a real cut. Expect the arrow to be wrong somewhere and to learn where.",
-
-    "CSX": "A railroad, guiding volume growth and operating ratio. Operating ratio is a percentage where LOWER is better, which is the clearest test of the no-inversion rule: the email must say 'above' and 'below' and let the reader know what that means, without ever calling one of them a miss."
+    "KO": "Guides organic revenue growth and comparable EPS - non-GAAP constructions with no XBRL tag. Its annual table is the clearest case for the adjusted-label caveat: KO writes 'Underlying effective tax rate', never 'adjusted', and the tagged figure is the GAAP rate.",
+    "GE": "Separated into three companies across 2023 and 2024, so every level guide crosses the break. Exercises the scope-change test and the guide-path suppression. Known hole: a separation of about half is indistinguishable from a real cut, so an arrow may still be drawn where it should not be.",
+    "HON": "Guides annually, so every measure sits at two matched pairs and none earns a table. Correctly marked not publishable. Kept because the scope-change machinery was written for it and it is the best test of whether a spin-off is reported honestly."
   }
 }
