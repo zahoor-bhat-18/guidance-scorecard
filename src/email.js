@@ -389,6 +389,7 @@ function textTable(headings, rows) {
 function annualRows(annual) {
   const rows = [];
   let computed = false;
+  let caveat = false;
 
   for (const a of annual || []) {
     const label = displayLabel(a.metric);
@@ -399,14 +400,19 @@ function annualRows(annual) {
       // and missed "Guided in other, tagged in USD millions" - which is a unit
       // mismatch that never says "unit". Parsing your own error messages is a
       // rule that breaks the moment someone rewords one.
+      // An open year is not a failure to find a figure, so it does not read
+      // like one. The guide is the whole point of the row.
+      const open = a.refusal === "year not ended";
       rows.push([label, periodLabel(a.period), formatFigure(a.guide, a.unit),
-        a.refusal || "not tagged", "n/a"]);
+        open ? "year not ended" : (a.refusal || "not tagged"),
+        open ? "" : "n/a"]);
       continue;
     }
 
     if (a.computed) computed = true;
+    if (a.basisCaveat) caveat = true;
 
-    const marks = a.computed ? "†" : "";
+    const marks = (a.computed ? "†" : "") + (a.basisCaveat ? "‡" : "");
     const guide = guideCell({ guide: a.guide, first: a.first, unit: a.unit });
 
     rows.push([
@@ -419,6 +425,11 @@ function annualRows(annual) {
   }
 
   const notes = [];
+  if (caveat) {
+    notes.push("‡ The company's own label calls this an adjusted figure. The tagged"
+      + " result is the GAAP one, so the two are not the same measure and the gap is not"
+      + " only performance. Nothing here is restated to bridge them.");
+  }
   if (computed) {
     notes.push("† Capital expenditure over revenue, both as the company tagged them for"
       + " that year. The guide is stated as a percentage of sales, so the comparison has"
