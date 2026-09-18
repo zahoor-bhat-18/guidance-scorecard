@@ -1,27 +1,29 @@
 /**
- * How a figure is written, how a period is written, and what order periods go in.
+ * How a figure is written, how a period is written, and what order periods go
+ * in.
  *
- * There was one of these already, private to revisions.js, and it was right:
- * the revision lines have always read "$0.62 to $0.64" and "3% to 3.75%".
- * The record blocks in the email had their own version that printed the bare
- * number, so the same guide appeared twice in one email, once as "$2.80" and
- * once as "2.8".
- *
- * Worse than ugly. "Adjusted EBITDA - guided 68, reported 69" on a company
- * with $22bn of quarterly revenue reads as a broken number, and a reader who
- * cannot tell a margin from a level closes the email.
+ * There was one of these already, private to revisions.js, and the record
+ * blocks in the email had their own version that printed the bare number - so
+ * the same guide appeared twice in one email, once as "$2.80" and once as
+ * "2.8". "Adjusted EBITDA - guided 68, reported 69" on a company with $22bn of
+ * quarterly revenue reads as a broken number.
  *
  * The period label arrived here for the same reason, one change later: the
  * record block printed "Q4 2025" and the revision line under it printed
  * "2026Q4", in the same email, about the same company.
  *
- * So one definition, imported by everything that prints. The same arrangement
- * metrics.js has, for the same reason: two copies of a rule disagree
- * eventually, and the disagreement is invisible until a subscriber finds it.
+ * So one definition, imported by everything that prints.
  */
 
 /**
  * A single number, in its unit.
+ *
+ * PER-SHARE FIGURES CARRY TWO DECIMALS, ALWAYS. A guide of "$1.00 to $2.00"
+ * was printing as "$1 to $2" beside a result of "$1.99", and money written
+ * without its cents looks like a number someone rounded rather than a number
+ * a company published. Every other unit keeps the precision it arrived with -
+ * Broadcom guides $29.4bn and reports $29.6bn, and padding those to two
+ * decimals would invent precision the company did not state.
  *
  * Unknown units fall through to the bare number rather than guessing a symbol.
  * A wrong unit is worse than none: "$66bn" against an operating margin guide
@@ -33,7 +35,7 @@ export function formatValue(n, unit) {
     case "percent": return n + "%";
     case "USD billions": return "$" + n + "bn";
     case "USD millions": return "$" + n + "m";
-    case "USD per share": return "$" + n;
+    case "USD per share": return "$" + n.toFixed(2);
     default: return String(n);
   }
 }
@@ -89,17 +91,12 @@ export function periodLabel(period) {
  * THE FULL YEAR SORTS WHERE Q4 WOULD BE, because for these companies that is
  * what it is. Walmart guides a fourth quarter and then reports a year instead
  * of one, so the year-end row IS the answer to Q4 and belongs in Q4's place.
- * A record that skips from Q1 2027 to Q3 2026 looks like a missing quarter;
- * with FY2026 between them it reads as the sequence it actually is.
  *
  * Deliberately NOT the same as periodOrder in revisions.js, which puts the
  * full year after its own quarters. That one answers "has this period been
  * overtaken", where a year is not closed until its quarters are. This one
  * answers "what goes above what". Same input, two honest answers, so they stay
  * apart.
- *
- * An unparseable period sorts last rather than throwing. It will be visible in
- * the row itself.
  */
 export function periodSortKey(period) {
   const m = String(period || "").match(/^(\d{4})(FY|Q([1-4]))$/);

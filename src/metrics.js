@@ -84,5 +84,20 @@ export function displayLabel(labels) {
     .filter((l) => l.length >= 3)
     .sort((a, b) => a.length - b.length);
 
-  return cleaned[0] || String(list[0] || "");
+  const chosen = cleaned[0] || String(list[0] || "");
+
+  /**
+   * Capitalised, because these open sentences and head columns.
+   *
+   * The label arrives as the company wrote it in its own table, which is
+   * sometimes "revenue" and sometimes "Adjusted EBITDA". So one email carried
+   * "revenue" as a heading directly beside "Adjusted EBITDA", and a revision
+   * line began "adjusted diluted earnings per share for Q3 2026" - which reads
+   * as a typo rather than as the company's own wording.
+   *
+   * ONLY THE FIRST CHARACTER. Title case would turn "non-GAAP" into "Non-Gaap"
+   * and "EPS" into "Eps"; the company's own capitalisation inside the label is
+   * the company's business.
+   */
+  return chosen.charAt(0).toUpperCase() + chosen.slice(1);
 }

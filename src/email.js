@@ -61,6 +61,46 @@ function quartersApart(newer, older) {
   return y * 4 + ((newer % 10) - (older % 10));
 }
 
+/**
+ * Every period a measure should have a row for, between its oldest and newest.
+ *
+ * FROM THE CALENDAR, NOT FROM WHAT HAPPENED TO PAIR.
+ *
+ * The blanks used to be drawn from periods that some measure, somewhere, had
+ * scored. So a gap was only visible if another measure happened to cover it.
+ * Broadcom's revenue ran Q3 2026 back to Q4 2024 and then jumped straight to
+ * Q4 2023 - four missing quarters, no rows, no explanation, just a sequence
+ * that skipped. Nothing else in Broadcom's record covered them either, so
+ * there was nothing to draw a blank from.
+ *
+ * ONLY THE SLOTS THE MEASURE ITSELF USES. A measure guided by the quarter gets
+ * quarters; one guided by the year gets years. Delta guides no full year at
+ * all, and "FY2025 not guided" appeared in all three of its tables - a row
+ * asserting Delta stayed silent about a period it never guides in the first
+ * place. Macy's is the mirror image: it guides only the year, and filling its
+ * quarters would put three invented blanks between every row.
+ *
+ * Slot 4 is Q4 for a company that reports one and the full year for a company
+ * that reports the year instead, which is why the slots come from the
+ * measure's own rows rather than from a rule about calendars.
+ */
+function periodsInSpan(rows) {
+  const keys = rows.map((p) => periodSortKey(p.period)).filter((k) => k > 0);
+  if (!keys.length) return [];
+
+  const slots = new Set(keys.map((k) => k % 10));
+  const usesYear = rows.some((p) => /FY$/.test(String(p.period)));
+
+  const out = [];
+  for (let k = Math.min(...keys); k <= Math.max(...keys); k += 1) {
+    const slot = k % 10;
+    if (!slots.has(slot)) continue;
+    const year = Math.floor(k / 10);
+    out.push(slot === 4 && usesYear ? year + "FY" : year + "Q" + slot);
+  }
+  return out;
+}
+
 function esc(s) {
   return String(s == null ? "" : s)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -92,7 +132,9 @@ function formatDelta(d, unit, signed) {
     case "percent": return sign + size + "pp";
     case "USD billions": return sign + "$" + size + "bn";
     case "USD millions": return sign + "$" + size + "m";
-    case "USD per share": return sign + "$" + size;
+    // Two decimals, matching formatValue. "above by $0.1" beside a guide of
+    // "$1.00 to $2.00" is the same number written two ways in one row.
+    case "USD per share": return sign + "$" + size.toFixed(2);
     default: return sign + size;
   }
 }
@@ -262,14 +304,10 @@ function byMetric(pairs, unanswered, limit) {
 
     const key = metricKey(g.labels[0]);
     const have = new Set(g.rows.map((p) => p.period));
-    const keys = g.rows.map((p) => periodSortKey(p.period));
-    const newest = Math.max(...keys);
-    const oldest = Math.min(...keys);
 
     const extra = [];
-    for (const [period, sortKey] of companyPeriods.entries()) {
+    for (const period of periodsInSpan(g.rows)) {
       if (have.has(period)) continue;
-      if (sortKey > newest || sortKey < oldest) continue;
 
       const u = unansweredByKey.get(key + "|" + period);
       if (u) {
@@ -391,8 +429,22 @@ function annualRows(annual) {
   let computed = false;
   let caveat = false;
 
+  /* One label per measure, not one per row.
+   *
+   * United wrote "Adjusted capital expenditures", "adjusted capital
+   * expenditures" and "Adjusted total capital expenditures" in three
+   * consecutive years, and the table printed all three - the same measure
+   * looking like three, stacked. displayLabel already picks one name from many
+   * variants; it was just never being given the variants. */
+  const labels = new Map();
   for (const a of annual || []) {
-    const label = displayLabel(a.metric);
+    const k = metricKey(a.metric);
+    if (!labels.has(k)) labels.set(k, []);
+    labels.get(k).push(a.metric);
+  }
+
+  for (const a of annual || []) {
+    const label = displayLabel(labels.get(metricKey(a.metric)) || a.metric);
 
     if (!a.comparable) {
       // The reason arrives as a short code rather than being read back out of
