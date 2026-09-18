@@ -361,7 +361,13 @@ function annualRows(annual) {
     const label = displayLabel(a.metric);
 
     if (!a.comparable) {
-      rows.push([label, periodLabel(a.period), formatFigure(a.guide, a.unit), "not tagged", "n/a"]);
+      // The reason arrives as a short code rather than being read back out of
+      // the sentence. The first version tested the prose for the word "unit"
+      // and missed "Guided in other, tagged in USD millions" - which is a unit
+      // mismatch that never says "unit". Parsing your own error messages is a
+      // rule that breaks the moment someone rewords one.
+      rows.push([label, periodLabel(a.period), formatFigure(a.guide, a.unit),
+        a.refusal || "not tagged", "n/a"]);
       continue;
     }
 
@@ -417,12 +423,24 @@ function movedInThisRelease(revisions, latest, limit) {
   return { rows: fromLatest.slice(0, cap), more: Math.max(0, fromLatest.length - cap) };
 }
 
-function belowBarLine(belowBar) {
+/**
+ * Measures guided but not yet a record - excluding any that now have one.
+ *
+ * The line was naming effective tax rate and capital expenditures directly
+ * underneath a table showing three years of both. True of the main record and
+ * useless to a reader, who has just read the answer.
+ */
+function belowBarLine(belowBar, annual) {
   if (!belowBar || !belowBar.length) return "";
+
+  const shown = new Set((annual || []).map((a) => metricKey(a.metric)));
   const named = belowBar
+    .filter((m) => !shown.has(metricKey(m.metric)))
     .slice(0, 6)
     .map((m) => m.metric + " (" + m.total + ")")
     .join(", ");
+
+  if (!named) return "";
   return "Also guided, too few closed periods to show a record yet: " + named + ".";
 }
 
@@ -432,7 +450,7 @@ export function renderEmail(view, options) {
   const { metrics, belowBar } = byMetric(view.pairs || [], view.unanswered || [], METRICS_SHOWN);
   const moved = movedInThisRelease(view.revisions, view.latestRelease, 20);
   const annual = annualRows(view.annual);
-  const alsoLine = belowBarLine(belowBar);
+  const alsoLine = belowBarLine(belowBar, view.annual);
   const anyNote = metrics.some((g) => g.hasNote);
 
   const subject = company + " reported - how their guidance has held up";

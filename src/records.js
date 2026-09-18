@@ -130,6 +130,7 @@ export function forEmail(record) {
       position: p.score ? p.score.position : null,
       comparable: Boolean(p.comparable),
       why: p.why || null,
+      refusal: p.refusal || null,
       computed: Boolean(p.computed),
       basisCaveat: Boolean(p.basisCaveat),
       source: p.source || null,

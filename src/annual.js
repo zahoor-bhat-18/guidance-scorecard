@@ -214,6 +214,7 @@ export function annualRecord(guidanceByRelease, facts, scoreAll) {
         guide: g.guide,
         first: g.first,
         comparable: false,
+        refusal: "no unit",
         why: "The guide was stored without a unit, so there is nothing to compare it to.",
       });
       continue;
@@ -229,6 +230,7 @@ export function annualRecord(guidanceByRelease, facts, scoreAll) {
         guide: g.guide,
         first: g.first,
         comparable: false,
+        refusal: "not tagged",
         why: "The company has not tagged a figure for this year yet.",
       });
       continue;
@@ -245,6 +247,7 @@ export function annualRecord(guidanceByRelease, facts, scoreAll) {
         guide: g.guide,
         first: g.first,
         comparable: false,
+        refusal: "unit mismatch",
         why: "Guided in " + g.unit + ", tagged in " + actual.unit + ".",
       });
       continue;
