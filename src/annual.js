@@ -98,6 +98,34 @@ function asPoint(f) {
   return { low: null, high: null, value: ends[0] };
 }
 
+/**
+ * Does the company's own label say this guide is adjusted?
+ *
+ * XBRL tags GAAP. So a guide the company calls adjusted and a tagged figure
+ * are two different measures, and comparing them without saying so produces
+ * exactly what United's table showed: capital expenditure landing $0.6bn,
+ * $0.9bn and $1.3bn under guidance three years running. United did not
+ * undershoot three times. It guides capital expenditure net of aircraft
+ * purchase deposit returns and sale-leaseback proceeds, and the cash flow
+ * statement tags the gross figure.
+ *
+ * KEYED ON THE LABEL, NOT ON THE BASIS FIELD. The first version used the
+ * guide's basis, which the extraction sets from the heading over the whole
+ * outlook table - Walmart's says non-GAAP because of EPS and operating income,
+ * so "the company guided this on an adjusted basis" appeared against plain
+ * "Capital expenditures", which has no adjusted version. The label is the
+ * company's own word for the measure and does not spread across a table.
+ *
+ * Not computed away. United's adjustment is deposits and sale-leaseback
+ * proceeds, neither reliably tagged, and what is included changes between
+ * years. Assembling it from parts would mean guessing which parts and
+ * publishing the guess as a fact. Saying the two are not the same number is
+ * true, checkable, and costs nothing.
+ */
+function labelSaysAdjusted(written) {
+  return /\badj(\.|usted)?\b/i.test(String(written || ""));
+}
+
 function hasFigure(f) {
   return f.low !== null || f.high !== null || f.value !== null;
 }
@@ -260,7 +288,35 @@ export function annualRecord(guidanceByRelease, facts, scoreAll) {
      * company's own statement about its own calendar, which beats anything
      * derived from a filing date.
      */
-    if (!facts["revenue|" + g.period]) continue;
+    const closed = Boolean(facts["revenue|" + g.period]);
+
+    /**
+     * A year still running: the guide, and no pretence of an answer.
+     *
+     * The first version dropped these, because "not tagged" against a year
+     * that has not ended tells a reader nothing. But dropping the row dropped
+     * the guide with it: United cut its fiscal 2026 capital expenditure from
+     * $8bn to $7.5bn and that guide appeared nowhere in the email - not in the
+     * table, not underneath it. A live guide with no home is worse than a row
+     * that says the year is not over.
+     *
+     * The test is the company's own: a closed year has a tagged revenue
+     * figure, an open one does not. Nothing derived from a filing date.
+     */
+    if (!closed) {
+      pairs.push({
+        metric: g.metric,
+        metric_as_written: g.metric_as_written,
+        guide_period: g.period,
+        unit: g.unit,
+        guide: g.guide,
+        first: g.first,
+        comparable: false,
+        refusal: "year not ended",
+        why: "The fiscal year has not finished, so there is nothing to compare it to yet.",
+      });
+      continue;
+    }
 
     /**
      * A guide with no unit cannot be compared to anything.
@@ -343,7 +399,9 @@ export function annualRecord(guidanceByRelease, facts, scoreAll) {
       actual_period: g.period,
       source: actual.from,
       computed: Boolean(actual.computed),
-      // No adjusted-basis caveat on these measures.
+      basisCaveat: labelSaysAdjusted(g.metric_as_written),
+      // Keyed on the company's own label, never on the extraction's basis
+      // flag.
       //
       // It was set from the guide's basis field, and the extraction marks a
       // whole outlook table non-GAAP when its heading says so - Walmart's does,
@@ -369,9 +427,18 @@ export function annualRecord(guidanceByRelease, facts, scoreAll) {
 
   // Keep the most recent years only, counted in YEARS rather than rows: two
   // measures across three years is six rows, and that is the table.
+  /* Three CLOSED years, plus any year still running.
+   *
+   * The open year is the current guide and belongs at the top whatever else is
+   * shown; it must not take one of the three slots meant for history, or
+   * showing this year's guide would cost the reader a year of record. */
+  const open = new Set(scored.filter((p) => p.refusal === "year not ended")
+    .map((p) => p.guide_period));
+
   const years = Array.from(new Set(scored.map((p) => p.guide_period)))
+    .filter((y) => !open.has(y))
     .sort((a, b) => periodSortKey(b) - periodSortKey(a));
-  const wanted = new Set(years.slice(0, YEARS));
+  const wanted = new Set([...open, ...years.slice(0, YEARS)]);
 
   return scored.filter((p) => wanted.has(p.guide_period));
 }
