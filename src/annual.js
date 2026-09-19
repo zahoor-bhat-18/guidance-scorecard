@@ -93,6 +93,13 @@ function figureOf(g) {
  */
 function asPoint(f) {
   if (f.value !== null) return f;
+
+  // Equal ends are a point too. Coca-Cola's comparable EPS growth arrived as
+  // low 8, high 8 and printed as "8% to 8%" - a range from a number to itself.
+  if (f.low !== null && f.high !== null && f.low === f.high) {
+    return { low: null, high: null, value: f.low };
+  }
+
   const ends = [f.low, f.high].filter((n) => n !== null);
   if (ends.length !== 1) return f;
   return { low: null, high: null, value: ends[0] };
