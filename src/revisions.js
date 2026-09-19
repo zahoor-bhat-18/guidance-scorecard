@@ -28,10 +28,9 @@
  * It decides what moved: the matching, the direction, the scope-change test.
  * It does not decide how any of it is written. It owned a copy of the figure
  * formatter, the period formatter and the label cleaner, and all three drifted
- * from the copies the record block uses - one email carried "Q4 2025" in the
- * table and "2026Q4" in the paragraph underneath. The wording lives in
- * summary.js now, and the stored summary here is only a fallback for records
- * built before it existed.
+ * from the copies the record block uses. The wording lives in summary.js now,
+ * and the stored summary here is only a fallback for records built before it
+ * existed.
  */
 
 import { revisionSentence } from "./summary.js";
@@ -50,11 +49,71 @@ function labelKey(guide) {
 }
 
 function numbersOf(g) {
-  return {
-    low: typeof g.low === "number" ? g.low : null,
-    high: typeof g.high === "number" ? g.high : null,
-    value: typeof g.value === "number" ? g.value : null,
-  };
+  const low = typeof g.low === "number" ? g.low : null;
+  const high = typeof g.high === "number" ? g.high : null;
+  const value = typeof g.value === "number" ? g.value : null;
+
+  /* A RANGE WHOSE ENDS ARE EQUAL IS A POINT. Coca-Cola's first-quarter 2024
+     comparable EPS growth arrived as low 8, high 8, and the email printed
+     "guided 8% to 8%" - a range from a number to itself, which reads as a
+     figure that failed to render. It is a point guide the extraction gave two
+     ends to. */
+  if (low !== null && high !== null && low === high) {
+    return { low: null, high: null, value: low };
+  }
+
+  return { low, high, value };
+}
+
+/**
+ * One guide per measure and period, from a release that stated it more than
+ * once.
+ *
+ * Coca-Cola's release produced two lines about the same thing - "Comparable
+ * net revenues for FY2026 held at 1%" directly above "Comparable net revenues
+ * for FY2026 raised. Was 1% to 2%, now 2% to 3%." General Electric produced
+ * three for operating profit. Both companies state a measure in the outlook
+ * table and again in the prose, and labelKey strips the asterisk and the
+ * qualifier that told them apart, so every occurrence was compared separately
+ * and each produced its own sentence.
+ *
+ * Two contradictory sentences about one guide are worse than either alone. A
+ * reader cannot tell which is true and stops believing both.
+ *
+ * A RANGE BEATS A POINT. Where a release states the same guide twice and one
+ * reading has two ends and the other one, the range is the fuller reading and
+ * the point is usually half of it - Coca-Cola's "held at 1%" is the bottom of
+ * "1% to 2%" with the top lost. Between two readings of the same shape the
+ * later one wins, on the reasoning the record uses everywhere: the last thing
+ * the release says is what management is standing behind.
+ *
+ * KNOWN LIMIT: where a company genuinely guides a segment and a total under
+ * names differing only by a qualifier labelKey removes, this keeps one of
+ * them. That is a real loss, and still better than printing both as though
+ * they contradicted each other. Telling them apart needs labelKey to stop
+ * stripping the qualifier, which would split measures that today group
+ * correctly.
+ */
+function oneGuidePerPeriod(guides) {
+  const byKey = new Map();
+
+  for (const g of guides || []) {
+    const n = numbersOf(g);
+    if (n.low === null && n.high === null && n.value === null) continue;
+    if (!g.period) continue;
+
+    const key = labelKey(g) + "|" + g.period;
+    const held = byKey.get(key);
+    if (!held) { byKey.set(key, g); continue; }
+
+    const heldNumbers = numbersOf(held);
+    const heldIsRange = heldNumbers.low !== null && heldNumbers.high !== null;
+    const isRange = n.low !== null && n.high !== null;
+
+    if (isRange || !heldIsRange) byKey.set(key, g);
+  }
+
+  return Array.from(byKey.values());
 }
 
 function tidy(n) {
@@ -171,30 +230,26 @@ function isClosed(period, reportedPeriods, afterGuides) {
  * such rather than as a change: a company that simply did not repeat a figure
  * has not withdrawn it, and saying it did would be an accusation.
  */
-export function revisionsBetween(beforeGuides, afterGuides, opts) {
+export function revisionsBetween(rawBefore, rawAfter, opts) {
   const options = opts || {};
   const reportedPeriods = options.reportedPeriods || [];
 
+  // Both sides, before anything is compared. A release that states a guide
+  // twice must not produce two revision lines, and a PREVIOUS release that
+  // stated it twice must not leave the wrong reading as the thing moved from.
+  const beforeGuides = oneGuidePerPeriod(rawBefore);
+  const afterGuides = oneGuidePerPeriod(rawAfter);
+
   const index = new Map();
-  for (const g of beforeGuides || []) {
-    const n = numbersOf(g);
-    if (n.low === null && n.high === null && n.value === null) continue;
-    if (!g.period) continue;
+  for (const g of beforeGuides) {
     index.set(labelKey(g) + "|" + g.period, g);
   }
 
   const seen = new Set();
   const out = [];
 
-  for (const g of afterGuides || []) {
+  for (const g of afterGuides) {
     const n = numbersOf(g);
-    if (n.low === null && n.high === null && n.value === null) continue;
-
-    // "organic growth for null is guided for the first time" reached a summary
-    // once. A guide whose period could not be read cannot be placed on a
-    // revision path, and saying nothing is better than saying null.
-    if (!g.period) continue;
-
     const key = labelKey(g) + "|" + (g.period || "");
     const before = index.get(key);
 
@@ -273,10 +328,6 @@ export function revisionsBetween(beforeGuides, afterGuides, opts) {
    * move in that same release is noted as possibly part of it. Noted, not
    * relabelled: earnings really may have been cut as well, and the reader is
    * told what is uncertain rather than having it decided for him.
-   *
-   * The flag is set and the sentence rebuilt, rather than the note being
-   * pasted onto the end of a string. The renderer builds the same sentence
-   * from the same flag, so the two cannot diverge.
    */
   const scoped = out.some((r) => r.direction === "scope change");
   if (scoped) {
