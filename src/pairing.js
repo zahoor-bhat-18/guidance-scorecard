@@ -5,45 +5,54 @@
  * and they were the last place in the project still deciding what counts as
  * one measure by comparing raw strings.
  *
- * WHAT WENT WRONG
- *
- * Walmart's Q2 FY2025 release guides three lines for Q3: "Consolidated net
- * sales (cc)", "Consolidated operating income (cc)", "Adjusted EPS". The Q3
- * release reports operating income as "Adjusted operating income, constant
- * currency". Two labels, one measure, and pairing matched on the lowercased
- * string - so net sales and EPS paired and operating income did not.
- *
- * The record then showed no Q3 2025 operating income pair, and the email,
- * having been taught to print gaps, said "not guided". Walmart had guided it,
- * in a table, in a range. The product was calling a company silent because it
- * had renamed a row.
- *
- * Every other part of this project already grouped these correctly, through
- * metricKey: the email's blocks, the coverage count, the revision path. Only
- * the step that decides whether a pair EXISTS was still on exact match. It is
- * the same lesson as metrics.js and format.js, arrived at for the fourth time.
- *
- * HOW IT MATCHES NOW
+ * HOW IT MATCHES
  *
  * The exact label first, because when the company uses the same words on both
- * sides there is nothing to interpret. Only if that misses does it fall back to
- * the measure key.
+ * sides there is nothing to interpret. Only if that misses does it fall back
+ * to the measure key.
  *
  * THE FALLBACK REFUSES TO GUESS. metricKey strips "adjusted" and "constant
  * currency", so a release reporting both GAAP and adjusted operating income
  * produces two actuals with the same key. Picking one would be a coin toss
- * dressed as an answer, so an ambiguous key is refused and says so. The basis
- * check downstream would catch some of those; some is not enough when the
- * output is a number a portfolio manager acts on.
+ * dressed as an answer, so an ambiguous key is refused and says so.
  *
  * Every fuzzy match is RECORDED on the pair - matched_on, and the label the
- * actual was found under. A wrong match is then visible in /api/record rather
- * than being an invisible assumption, which is the same reason every other
- * diagnostic in this project exists.
+ * actual was found under - so a wrong match is visible in /api/record rather
+ * than being an invisible assumption.
  */
 
 import { metricKey } from "./metrics.js";
 import { samePeriod } from "./period.js";
+
+/**
+ * A RANGE WHOSE ENDS ARE EQUAL IS A POINT.
+ *
+ * Coca-Cola's first-quarter 2024 comparable EPS growth arrived as low 8, high
+ * 8, and the email printed "guided 8% to 8%" - a range from a number to
+ * itself, which reads as a figure that failed to render. It is a point guide
+ * the extraction gave two ends to.
+ *
+ * It matters beyond the wording. score.js treats a range and a point
+ * differently on purpose: a range gets a verdict, a point gets a distance and
+ * no verdict, because inventing a tolerance around someone else's single
+ * figure is a judgement this tool has no standing to make. A degenerate range
+ * was collecting "above" and "below" verdicts against a number the company
+ * gave as one figure.
+ *
+ * revisions.js collapses the same shape for the same reason. Both are needed:
+ * the pairs and the revision path read the guides separately.
+ */
+function figureOf(g) {
+  const low = g.low ?? null;
+  const high = g.high ?? null;
+  const value = g.value ?? null;
+
+  if (typeof low === "number" && typeof high === "number" && low === high) {
+    return { low: null, high: null, value: low };
+  }
+
+  return { low, high, value };
+}
 
 export function pairUp(guides, actuals) {
   const byLabel = new Map();
@@ -90,7 +99,7 @@ export function pairUp(guides, actuals) {
       basis: g.basis,
       unit: g.unit,
       shape: g.shape,
-      guide: { low: g.low ?? null, high: g.high ?? null, value: g.value ?? null },
+      guide: figureOf(g),
       guide_period: g.period,
       guide_period_text: g.period_text,
     };
@@ -114,8 +123,7 @@ export function pairUp(guides, actuals) {
     base.actual_period = a.period;
     // Carried onto the pair. It was not, and the backfill's own diagnostic for
     // unreadable periods reads this field - so it printed "(none returned)" for
-    // every pair regardless of what the model actually said, and three rounds
-    // of debugging were spent reasoning from it.
+    // every pair regardless of what the model actually said.
     base.actual_period_text = a.period_text;
     base.period_assumed = Boolean(a.period_assumed);
     base.actual_found_as = a.found_as;

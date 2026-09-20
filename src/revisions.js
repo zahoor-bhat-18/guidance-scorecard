@@ -240,9 +240,56 @@ export function revisionsBetween(rawBefore, rawAfter, opts) {
   const beforeGuides = oneGuidePerPeriod(rawBefore);
   const afterGuides = oneGuidePerPeriod(rawAfter);
 
+  /**
+   * The previous release's readings, ALL of them, by measure and period.
+   *
+   * Collapsing the before side to one reading the way the after side is
+   * collapsed produced a new lie. Coca-Cola's email read "Comparable net
+   * revenues for FY2026 cut. Was 4%, now 2% to 3%" - a cut the company never
+   * made. Both releases had stated that guide twice, and the two sides were
+   * collapsed independently: the after side kept a range, the before side kept
+   * a point from a different sentence, and the arithmetic between them
+   * invented a revision.
+   *
+   * So the before side keeps every reading, and the one compared against is
+   * the one whose SHAPE matches what the company is saying now. A range is
+   * measured against the range it replaced, a point against a point. Only when
+   * no reading matches does it fall back, and then to a range over a point,
+   * for the same reason the after side prefers one: a point is usually half of
+   * a range with the other end lost.
+   */
   const index = new Map();
-  for (const g of beforeGuides) {
-    index.set(labelKey(g) + "|" + g.period, g);
+  for (const g of rawBefore || []) {
+    const n = numbersOf(g);
+    if (n.low === null && n.high === null && n.value === null) continue;
+    if (!g.period) continue;
+
+    const key = labelKey(g) + "|" + g.period;
+    if (!index.has(key)) index.set(key, []);
+    index.get(key).push(g);
+  }
+
+  /* The reading to measure against: same shape first, then a range, then
+     whatever came last. */
+  function readingFor(key, after) {
+    const readings = index.get(key);
+    if (!readings || !readings.length) return null;
+
+    const wantRange = after.low !== null && after.high !== null;
+    const shaped = readings.filter((r) => {
+      const n = numbersOf(r);
+      const isRange = n.low !== null && n.high !== null;
+      return isRange === wantRange;
+    });
+    if (shaped.length) return shaped[shaped.length - 1];
+
+    const ranges = readings.filter((r) => {
+      const n = numbersOf(r);
+      return n.low !== null && n.high !== null;
+    });
+    if (ranges.length) return ranges[ranges.length - 1];
+
+    return readings[readings.length - 1];
   }
 
   const seen = new Set();
@@ -251,7 +298,7 @@ export function revisionsBetween(rawBefore, rawAfter, opts) {
   for (const g of afterGuides) {
     const n = numbersOf(g);
     const key = labelKey(g) + "|" + (g.period || "");
-    const before = index.get(key);
+    const before = readingFor(key, n);
 
     if (!before) {
       const row = {
@@ -300,8 +347,9 @@ export function revisionsBetween(rawBefore, rawAfter, opts) {
   // Guided before, absent now. Only worth saying when the period is still
   // open - a guide for a period that has since been reported was answered,
   // not dropped.
-  for (const [key, before] of index.entries()) {
+  for (const [key, readings] of index.entries()) {
     if (seen.has(key)) continue;
+    const before = readings[readings.length - 1];
     if (isClosed(before.period, reportedPeriods, afterGuides)) continue;
 
     const row = {

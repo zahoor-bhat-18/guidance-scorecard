@@ -74,6 +74,11 @@ export function displayLabel(labels) {
 
   const cleaned = list
     .map((l) => String(l || "")
+      // Footnote markers, as numbers AND as asterisks or daggers. GE writes
+      // "Adjusted EPS*" and "Free Cash Flow*" in its outlook table, with the
+      // non-GAAP reconciliation note at the foot of the page, and the marker
+      // arrived in the email as though it were part of the measure's name.
+      .replace(/([a-zA-Z)])\s*[*\u2020\u2021]+(?=\s|$)/g, "$1")
       .replace(/([a-zA-Z)])\s+\d{1,2}(?:\s*,\s*\d{1,2})*(?=\s|$)/g, "$1")
       .replace(/\b(first|second|third|fourth)\s+quarter\b/gi, " ")
       .replace(/\bof\s+fiscal\s+year\s*\d{2,4}\b/gi, " ")
