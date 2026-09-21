@@ -251,7 +251,12 @@ const SITE = process.env.SITE_URL || "https://guidance.zahoorbhat.com";
 
 /* --rebuild discards the stored record and scores everything again. The
    default merges, so an ordinary run can only ADD. */
-const REBUILD = process.argv.slice(2).includes("--rebuild");
+/* Arguments, split on spaces and commas whatever way they arrive. A workflow
+   input box hands "DAL --rebuild" over as ONE argument, which read as a ticker
+   called "DAL --REBUILD" and a rebuild flag that was never seen. */
+const ARGS = process.argv.slice(2).join(" ").split(/[\s,]+/).filter(Boolean);
+
+const REBUILD = ARGS.includes("--rebuild");
 
 /**
  * The record as it stands, over the public API.
@@ -687,9 +692,7 @@ async function main() {
   if (!env.SEC_USER_AGENT) throw new Error("SEC_USER_AGENT is not set.");
   if (!env.DEEPSEEK_API_KEY) throw new Error("DEEPSEEK_API_KEY is not set.");
 
-  const fromArg = process.argv.slice(2)
-    .filter((a) => !a.startsWith("--"))
-    .join(",").trim();
+  const fromArg = ARGS.filter((a) => !a.startsWith("--")).join(",").trim();
   const universe = JSON.parse(await readFile("config/universe.json", "utf8"));
   const tickers = fromArg
     ? fromArg.split(",").map((t) => t.trim().toUpperCase()).filter(Boolean)
