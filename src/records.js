@@ -59,14 +59,19 @@ function unansweredOf(record) {
     if (p.comparable) continue;
     if (!p.guide_period) continue;
 
-    // Nothing came back at all: the release does not report it.
-    const notReported = p.actual == null && !p.actual_found_as;
-    // A figure came back for the right period and was refused on basis or
-    // unit. The release reported something; it is not comparable.
-    const refusedOnBasis = p.actual != null && p.actual_period === p.guide_period;
-
-    if (!notReported && !refusedOnBasis) continue;
-
+    /* EVERY GUIDE, whatever the reason it could not be answered.
+     *
+     * This used to keep two reasons and drop the rest, which meant a measure
+     * the company guides could vanish from the email entirely - General
+     * Electric guides revenue growth and operating profit every year and
+     * neither appeared anywhere, because the release prints revenue in dollars
+     * and the guide is a rate, so every pair was refused and every refusal was
+     * discarded.
+     *
+     * What the company guided is the product. Whether XBRL or the release
+     * happens to carry a comparable answer is our problem, and saying "not
+     * reported" is the honest way to have it. The reason stays on the record
+     * for anyone who looks. */
     const key = String(p.metric_as_written) + "|" + p.guide_period;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -77,6 +82,7 @@ function unansweredOf(record) {
       unit: p.unit,
       guide: p.guide,
       guidePath: p.guidePath || null,
+      why: p.why || null,
       unanswered: true,
     });
   }
@@ -101,9 +107,23 @@ function unansweredOf(record) {
  * rather than silent.
  */
 export function forEmail(record) {
+  /**
+   * FLAGGED PAIRS ARE SHOWN NOW, MARKED.
+   *
+   * They used to be held out, on the reasoning that a caution beside a number
+   * reads as a disclaimer and a disclaimer is a number nobody trusts. That was
+   * right about the caution and wrong about the cost: General Electric's free
+   * cash flow has three matched years and every one was flagged for beating
+   * its guide by around five per cent, so the measure disappeared and the
+   * email showed one table where it should have shown two.
+   *
+   * A flag means the gap is large enough to be worth checking, not that the
+   * figure is wrong. Held back, the reader sees nothing and cannot tell. Shown
+   * with a mark, they can.
+   */
   const comparable = (record.pairs || []).filter((p) => p.comparable && p.score);
-  const clean = comparable.filter((p) => !(p.score.flags && p.score.flags.length));
-  const withheld = comparable.length - clean.length;
+  const clean = comparable;
+  const withheld = 0;
 
   return {
     ticker: record.ticker,
@@ -194,6 +214,7 @@ function trim(p) {
     actual: typeof p.score.actualAsGuided === "number" ? p.score.actualAsGuided : p.actual,
     actualAsReported: p.actual,
     position: p.score.position,
+    flagged: Boolean(p.score.flags && p.score.flags.length),
     summary: p.score.summary,
     quote: p.quote,
   };
