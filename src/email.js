@@ -278,9 +278,18 @@ function byMetric(pairs, unanswered, limit) {
    * So an unanswered guide can open a table of its own. Every row in it will
    * read "not reported", which is the truth and is worth more than silence.
    */
+  /* The newest period anything has been answered for. A guide for a period
+     after it is a guide for a period that has not happened, and "not
+     reported" against it is false - Delta's FY2026 and Q3 2026 were both
+     printing it, the second directly above a line saying Delta had just
+     guided Q3 2026. Those guides belong in What Moved, which is where they
+     already are. */
+  const newestScored = Math.max(0, ...Array.from(companyPeriods.values()));
+
   const unansweredByKey = new Map();
   for (const u of unanswered || []) {
     if (!u.metric || !u.period) continue;
+    if (newestScored && periodSortKey(u.period) > newestScored) continue;
 
     const key = metricKey(u.metric);
     unansweredByKey.set(key + "|" + u.period, u);
@@ -339,9 +348,25 @@ function byMetric(pairs, unanswered, limit) {
     const key = metricKey(g.labels[0]);
     const have = new Set(g.rows.map((p) => p.period));
 
+    /* Slots already taken, by position rather than by name. FY2025 and Q4
+       2025 share slot 4: a measure with a full-year row there must not also
+       get an invented "Q4 2025 not guided" underneath it. Genuine rows for
+       both still show - Delta really does guide Q4 and the year separately -
+       this only stops a BLANK being made up for a slot a real row fills. */
+    const slotsTaken = new Set(g.rows.map((p) => periodSortKey(p.period)));
+
+    /* The calendar comes from the rows that were actually scored. An
+       unanswered guide appears as itself; it does not get to decide which
+       slots the measure has. Otherwise one stray full-year guide on a
+       quarterly measure turned every year into a "not guided" row, and
+       Delta's operating margin table - a measure Delta has never guided
+       annually - carried two of them. */
+    const scoredRows = g.rows.filter((p) => !p.unanswered);
     const extra = [];
-    for (const period of periodsInSpan(g.rows)) {
+    for (const period of periodsInSpan(scoredRows.length ? scoredRows : g.rows)) {
       if (have.has(period)) continue;
+      if (!scoredRows.length) continue;
+      if (slotsTaken.has(periodSortKey(period))) continue;
 
       const u = unansweredByKey.get(key + "|" + period);
       if (u) {
@@ -381,13 +406,15 @@ function countLine(g) {
   if (g.below) parts.push(g.below + " below");
   if (g.noVerdict) parts.push(g.noVerdict + " against a single figure");
 
-  let line = g.total + (g.total === 1 ? " period" : " periods") + ": " + parts.join(", ");
-
   const tail = [];
   if (g.notReported) tail.push(g.notReported + " not reported");
   if (g.notGuided) tail.push(g.notGuided + " not guided");
-  if (tail.length) line += "; " + tail.join(", ");
 
+  /* Nothing scored yet: say what there is, not "0 periods: ;". */
+  if (!g.total) return tail.join(", ") || "guided, not yet reported";
+
+  let line = g.total + (g.total === 1 ? " period" : " periods") + ": " + parts.join(", ");
+  if (tail.length) line += "; " + tail.join(", ");
   return line;
 }
 
