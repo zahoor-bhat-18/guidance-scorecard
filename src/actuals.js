@@ -306,6 +306,20 @@ const SYSTEM = [
   "adjusted, reported currency and constant currency. Take the one asked for. If",
   "it asks for adjusted and only an as-reported figure exists, return null.",
   "",
+  "HEADINGS: many releases list results as short lines under a heading, and the",
+  "HEADING states the period and the basis for every line beneath it. For example:",
+  "  June Quarter 2024 GAAP Financial Results",
+  "    Earnings per share of $2.01",
+  "  June Quarter 2024 Adjusted Financial Results",
+  "    Earnings per share of $2.36",
+  "Both lines say only 'Earnings per share', but the second is the adjusted figure",
+  "for the June quarter because its heading says so. Asked for adjusted EPS, the",
+  "answer is 2.36. Use the heading to tell them apart; do not return null because",
+  "the line itself repeats. Put that heading, verbatim, in section, and take",
+  "period_text from it when the line does not state a period of its own. A release",
+  "that also has a 'Full Year' heading reports the full year there - never answer",
+  "a quarter with a figure from under a full-year heading.",
+  "",
   "EXPECTS: if it asks for a change and the release reports only a level, return",
   "null - do NOT return the level. If it asks for a figure in one unit and only",
   "another unit is reported, return null. A number of the wrong kind is not the",
@@ -328,6 +342,7 @@ const SYSTEM = [
   '{"actuals":[{',
   '  "metric": "the metric you were asked for, copied back unchanged",',
   '  "found_as": "what this release calls it, verbatim, or null",',
+  '  "section": "the heading the figure sits under, verbatim, or null",',
   '  "period_text": "the period the figure covers, in the release\'s words, or null",',
   '  "value": number or null,',
   '  "unit": "USD millions|USD billions|USD per share|percent|multiple|other",',
@@ -428,7 +443,17 @@ export async function actualsFrom(env, cik, release, requests, cal) {
 
     // What the release called the figure that was taken. The quote is included
     // because a table row often carries the qualifier the label omits.
-    const found = markers(String(row.found_as || "") + " " + String(row.quote || ""));
+    /* The heading is read as well as the label and the line.
+     *
+     * Delta lists results as bullets under "June Quarter 2024 Adjusted
+     * Financial Results", and the bullet reads only "Earnings per share of
+     * $2.36". This check looked for the word adjusted in the label and the
+     * line, found it in neither, and refused the correct adjusted figure as
+     * "the figure taken is as reported" - even on the runs where the model had
+     * found exactly the right number. The basis was stated; it was stated one
+     * line up. */
+    const found = markers(String(row.found_as || "") + " " + String(row.section || "")
+      + " " + String(row.quote || ""));
 
     let basisMismatch = null;
     if (value !== null && row.found_as) {
@@ -507,6 +532,7 @@ export async function actualsFrom(env, cik, release, requests, cal) {
       period_wanted: req.periodWanted,
       expected: req.expect.describe,
       found_as: row.found_as ?? null,
+      section: row.section ?? null,
       period_text: row.period_text ?? null,
       period: resolved.period,
       period_assumed: periodAssumed,

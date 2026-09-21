@@ -298,17 +298,78 @@ export function refineCalendar(cal, text) {
  * the March quarter". There is no 6 in it. The number was invented, then
  * compared against a real 6.8% actual to produce a near-miss out of nothing.
  */
+/* Words that make the number after them a decline. "Flat" is deliberately
+   NOT here - see guardGuide: "flat" is the company declining to give a
+   number, and a 0 read out of it is an inference, not a figure. */
+const DOWN_BEFORE = /\b(down|declines?|declined|decreases?|decreased|lower|negative|minus|reduction|contraction|drop|fall)\s+(?:(?:of|by|approximately|approx\.?|about|roughly|around|nearly)\s+)*\$?\s*$/i;
+
 export function quoteNumbers(quote) {
   const found = new Set();
   if (!quote) return found;
 
+  const text = String(quote);
   const re = /(\()?\s*\$?\s*(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)/g;
   let m;
-  while ((m = re.exec(String(quote))) !== null) {
+  let lastNegative = false;
+  let lastEnd = 0;
+  while ((m = re.exec(text)) !== null) {
     const n = parseFloat(m[2].replace(/,/g, ""));
     if (!Number.isFinite(n)) continue;
     found.add(n);
+
+    // Accounting negatives: (2).
     if (m[1]) found.add(-n);
+
+    const start = m.index + m[0].indexOf(m[2]);
+    const before = text.slice(Math.max(0, start - 40), start);
+
+    /**
+     * A DECLINE WRITTEN IN WORDS IS A NEGATIVE NUMBER.
+     *
+     * Delta guided second-quarter 2025 revenue "Down 2% - up 2%". The model
+     * read it correctly as -2 to 2, and this function could find only 2 in
+     * the sentence - it knew negatives in parentheses and nothing else - so
+     * the guard concluded -2 was invented and dropped the whole guide. Delta
+     * then showed "not guided" for a quarter it had guided plainly.
+     *
+     * Every company that writes "down 2%", "a decline of approximately 3%" or
+     * "decrease of 1%" was losing its guide the same way. The figure is in
+     * the sentence; it is just spelled with a word instead of a sign.
+     */
+    let negative = DOWN_BEFORE.test(before);
+
+    /**
+     * A DECLINE GOVERNS THE WHOLE RANGE IT OPENS.
+     *
+     * "A decrease of 1% to 2%" is -1 to -2, but the word "decrease" sits
+     * before the first number only. Joined by nothing but "to", "and",
+     * "through" or a dash, the second number inherits the sign of the first.
+     * Any other word between them - "up", "increase", "growth" - ends the
+     * run, which is what keeps "Down 2% - up 2%" reading -2 and +2.
+     */
+    const between = text.slice(lastEnd, start);
+    if (!negative && lastNegative
+      && /^\s*%?\s*(?:to|and|through|-|\u2013)\s*\$?\s*$/i.test(between)) {
+      negative = true;
+    }
+    if (negative) found.add(-n);
+
+    /**
+     * A minus sign attached to the number: "-$0.35", "-2%".
+     *
+     * Only when the sign does not join two numbers. "3-5%" and "3%-5%" are
+     * ranges written with a hyphen, and reading the 5 as negative would turn
+     * a range into nonsense. So the character before the sign must not be a
+     * digit or a percent sign.
+     */
+    const sign = text[start - 1] === "$" ? start - 2 : start - 1;
+    if ((text[sign] === "-" || text[sign] === "\u2212") && !/[\d%]/.test(text[sign - 1] || "")) {
+      found.add(-n);
+      negative = true;
+    }
+
+    lastNegative = negative;
+    lastEnd = m.index + m[0].length;
   }
   return found;
 }
@@ -477,18 +538,13 @@ const SYSTEM = [
   '  "period_text": "the period as written, e.g. fourth quarter, full year 2025",',
   '  "shape": "range|point|at_least|at_most|growth_range|growth_point|reaffirmed|withdrawn",',
   '  "low": number or null, "high": number or null, "value": number or null,',
-  '  "unit": "USD millions|USD billions|USD per share|percent|multiple|other",',
+  '  "unit": "USD millions|USD billions|USD per share|percent|other",',
   '  "quote": "the sentence it came from, verbatim, 40 words or fewer"',
   "}]}",
   "",
   "low and high for a range. value for everything else. All three null for",
   "reaffirmed and withdrawn. Numbers as written: 4.6 billion is low 4.6 with",
   "unit USD billions, not 4600.",
-  "",
-  "unit multiple is for a ratio written in turns: \"adjusted debt to EBITDAR of",
-  "2x to 3x\" is low 2, high 3, unit multiple. Leverage, coverage and turns",
-  "guides are stated this way and are not percentages. Do not put them under",
-  "unit other - other means the unit could not be read at all.",
   "",
   "If the release gives no guidance at all, return {\"guides\":[]}.",
 ].join("\n");

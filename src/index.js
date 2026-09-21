@@ -195,7 +195,11 @@ async function checkOne(env, ticker, full) {
   if (!full) return summary;
 
   const priorGuidance = await guidanceFrom(env, cik, prior, startingCalendar);
-  const requests = requestsFrom(priorGuidance.guides);
+  // The calendar goes with the guides, as it does in the backfill and the live
+  // send. Without it the request never learns that Delta calls its second
+  // quarter the June quarter, and this diagnostic shows a request the backfill
+  // no longer sends - which is worse than no diagnostic.
+  const requests = requestsFrom(priorGuidance.guides, calendar);
 
   if (!requests.length) {
     const onlyNew = await guidanceFrom(env, cik, current, calendar);
@@ -447,7 +451,7 @@ export default {
         // what step two uses - both sides must label periods the same way.
         const priorGuidance = await guidanceFrom(env, cik, prior, startingCalendar);
         const calendar = priorGuidance.calendar || startingCalendar;
-        const requests = requestsFrom(priorGuidance.guides);
+        const requests = requestsFrom(priorGuidance.guides, calendar);
 
         if (!requests.length) {
           return json({
