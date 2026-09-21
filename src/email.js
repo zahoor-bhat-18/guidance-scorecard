@@ -38,7 +38,7 @@ const MONO = "ui-monospace,SFMono-Regular,Menlo,monospace";
 const ROWS_PER_METRIC = 10;
 
 /* Six measures, not four. */
-const METRICS_SHOWN = 6;
+const METRICS_SHOWN = 10;
 
 /**
  * How far back a measure can have gone quiet and still be shown.
@@ -241,15 +241,19 @@ function byMetric(pairs, unanswered, limit) {
   const groups = new Map();
   const companyPeriods = new Map();
 
+  const group = (key, unit) => {
+    if (!groups.has(key)) {
+      groups.set(key, { labels: [], unit, rows: [], above: 0, within: 0, below: 0, noVerdict: 0 });
+    }
+    return groups.get(key);
+  };
+
   for (const p of pairs) {
     // Grouped on the shared metric identity, NOT on the label as the company
     // wrote it. Broadcom names the quarter inside its labels, so grouping by
     // label split one measure into four and dropped three of them.
     const key = metricKey(p.metric);
-    if (!groups.has(key)) {
-      groups.set(key, { labels: [], unit: p.unit, rows: [], above: 0, within: 0, below: 0, noVerdict: 0 });
-    }
-    const g = groups.get(key);
+    const g = group(key, p.unit);
     g.labels.push(p.metric);
     g.rows.push(p);
     if (p.position === "above") g.above += 1;
@@ -262,10 +266,30 @@ function byMetric(pairs, unanswered, limit) {
     }
   }
 
+  /**
+   * A measure with NO comparable pair at all still gets a table.
+   *
+   * General Electric guides revenue growth and operating profit every year.
+   * The release prints revenue in dollars, not as a rate, so every pair was
+   * refused - and with the groups built only from scored pairs, the measures
+   * had no table to be refused in. Two of the three things GE actually guides
+   * were absent from an email about GE's guidance.
+   *
+   * So an unanswered guide can open a table of its own. Every row in it will
+   * read "not reported", which is the truth and is worth more than silence.
+   */
   const unansweredByKey = new Map();
   for (const u of unanswered || []) {
     if (!u.metric || !u.period) continue;
-    unansweredByKey.set(metricKey(u.metric) + "|" + u.period, u);
+
+    const key = metricKey(u.metric);
+    unansweredByKey.set(key + "|" + u.period, u);
+
+    const g = group(key, u.unit);
+    g.labels.push(u.metric);
+    if (!g.rows.some((p) => p.period === u.period)) {
+      g.rows.push({ period: u.period, unit: u.unit, guide: u.guide, guidePath: u.guidePath || null, unanswered: true });
+    }
   }
 
   const out = Array.from(groups.values());
@@ -289,16 +313,25 @@ function byMetric(pairs, unanswered, limit) {
 
   const live = out.filter((g) => !stale(g));
 
-  const earned = live.filter((g) => g.total >= 3);
-  earned.sort((a, b) => b.total - a.total);
+  /**
+   * THE THREE-PAIR BAR IS GONE.
+   *
+   * It existed because Delta's gross leverage was appearing on the strength of
+   * one period, which is an anecdote rather than a record. That reasoning
+   * still holds for how much a single row proves - and the count line above
+   * every table says how many periods it rests on, so a reader can see it is
+   * one.
+   *
+   * What the bar cost was worse: a measure the company guides every quarter
+   * could be absent from an email about that company's guidance, and the
+   * reader had no way to tell whether it had been dropped, missed, or never
+   * guided. The point of the product is the guidance; the record is how much
+   * of it can be answered yet.
+   */
+  const earned = live.slice().sort((a, b) => b.total - a.total || b.rows.length - a.rows.length);
 
-  // Guided, but not enough closed periods to show a record yet. Named rather
-  // than dropped - and only while the company is still guiding it. A measure
-  // abandoned in 2023 does not belong in a line about what they guide.
-  const belowBar = live
-    .filter((g) => g.total < 3)
-    .sort((a, b) => b.total - a.total)
-    .map((g) => ({ metric: g.metric, total: g.total, unit: g.unit, rows: g.rows.slice(0, 2) }));
+  // Nothing sits below a bar any more; every measure has a table of its own.
+  const belowBar = [];
 
   for (const g of earned) {
     g.allPeriods = g.rows.length;
@@ -334,6 +367,7 @@ function byMetric(pairs, unanswered, limit) {
     g.notGuided = g.rows.filter((p) => p.notGuided).length;
     g.notReported = g.rows.filter((p) => p.unanswered).length;
     g.hasNote = g.rows.some((p) => !p.notGuided && guideCell(p).noted);
+    g.hasFlag = g.rows.some((p) => p.flagged);
   }
 
   return { metrics: earned.slice(0, limit || METRICS_SHOWN), belowBar };
@@ -361,6 +395,10 @@ const SPLIT_NOTE = "* An earlier guide for this period was stated before a share
   + " another change to what is being counted, so it is not comparable and no path is"
   + " shown. Nothing here is restated.";
 
+const FLAG_NOTE = "\u2020 The gap is large enough that it may not be a beat or a miss at"
+  + " all - a restatement, a disposal or the wrong row will produce one the same size."
+  + " The figure is the company's; the caution is ours.";
+
 function rowCells(p) {
   if (p.notGuided) {
     return [periodLabel(p.period), "not guided", "", ""];
@@ -375,7 +413,7 @@ function rowCells(p) {
   return [
     period,
     guide.text,
-    formatValue(p.actual, p.unit) || String(p.actual),
+    (formatValue(p.actual, p.unit) || String(p.actual)) + (p.flagged ? "\u2020" : ""),
     outcomeCell(p),
   ];
 }
@@ -465,7 +503,7 @@ function annualRows(annual) {
     if (a.computed) computed = true;
     if (a.basisCaveat) caveat = true;
 
-    const marks = (a.computed ? "†" : "") + (a.basisCaveat ? "‡" : "");
+    const marks = (a.computed ? "\u00a7" : "") + (a.basisCaveat ? "\u2021" : "");
     const guide = guideCell({ guide: a.guide, first: a.first, unit: a.unit });
 
     rows.push([
@@ -484,7 +522,7 @@ function annualRows(annual) {
       + " only performance. Nothing here is restated to bridge them.");
   }
   if (computed) {
-    notes.push("† Capital expenditure over revenue, both as the company tagged them for"
+    notes.push("\u00a7 Capital expenditure over revenue, both as the company tagged them for"
       + " that year. The guide is stated as a percentage of sales, so the comparison has"
       + " to be one too.");
   }
@@ -565,6 +603,7 @@ export function renderEmail(view, options) {
   const annual = annualRows(view.annual);
   const alsoRows = belowBarRows(belowBar, view.annual);
   const anyNote = metrics.some((g) => g.hasNote);
+  const anyFlag = metrics.some((g) => g.hasFlag);
 
   const subject = company + " reported - how their guidance has held up";
 
@@ -585,6 +624,11 @@ export function renderEmail(view, options) {
 
   if (anyNote) {
     t.push(SPLIT_NOTE);
+    t.push("");
+  }
+
+  if (anyFlag) {
+    t.push(FLAG_NOTE);
     t.push("");
   }
 
@@ -670,6 +714,11 @@ export function renderEmail(view, options) {
   if (anyNote) {
     h.push('<p style="margin-top:14px;font-size:12px;color:' + MUTED + ';line-height:1.5;">'
       + esc(SPLIT_NOTE) + '</p>');
+  }
+
+  if (anyFlag) {
+    h.push('<p style="margin-top:10px;font-size:12px;color:' + MUTED + ';line-height:1.5;">'
+      + esc(FLAG_NOTE) + '</p>');
   }
 
   if (annual.rows.length) {
