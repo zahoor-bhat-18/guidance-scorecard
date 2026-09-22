@@ -356,22 +356,31 @@ const SYSTEM = [
   "wrong basis or wrong kind of number, value null, found_as null, quote null.",
 ].join("\n");
 
-async function callModel(env, requests, text) {
-  if (!env.DEEPSEEK_API_KEY) throw new Error("DEEPSEEK_API_KEY is not set on the Worker.");
+/**
+ * Which model reads the release for actuals.
+ *
+ * DeepSeek by default. Gemini when ACTUALS_MODEL is "gemini", or when the
+ * diagnostic route is asked for it with ?model=gemini.
+ *
+ * Switchable rather than switched, because the evidence so far is one release.
+ * Delta's March quarter 2026 release prints "Earnings per share of $0.64" under
+ * "March Quarter 2026 Non-GAAP Financial Results", in the first fifty lines, and
+ * DeepSeek returned nothing for it with the heading instruction in place and the
+ * basis check able to read the heading. The prompt was not the problem and the
+ * pipeline was not the problem. Whether a different model is the answer is a
+ * question for the same release, run both ways, not for a changed default.
+ */
+const GEMINI_MODEL = "gemini-2.5-flash";
+const GEMINI_ENDPOINT = (model, key) =>
+  "https://generativelanguage.googleapis.com/v1beta/models/"
+  + encodeURIComponent(model) + ":generateContent?key=" + encodeURIComponent(key);
 
-  const user = [
-    "METRICS TO FIND:",
-    JSON.stringify(requests.map((r) => ({
-      metric: r.query,
-      period: r.periodWanted || "the period that has just ended",
-      basis: r.expectBasis.describe,
-      expects: r.expect.describe,
-      expects_unit: r.expect.unit,
-    })), null, 1),
-    "",
-    "RELEASE:",
-    text,
-  ].join("\n");
+function providerOf(env) {
+  return String(env.ACTUALS_MODEL || "deepseek").toLowerCase() === "gemini" ? "gemini" : "deepseek";
+}
+
+async function askDeepSeek(env, user) {
+  if (!env.DEEPSEEK_API_KEY) throw new Error("DEEPSEEK_API_KEY is not set.");
 
   const r = await fetch(ENDPOINT, {
     method: "POST",
@@ -390,13 +399,57 @@ async function callModel(env, requests, text) {
     }),
   });
 
-  if (!r.ok) {
-    const body = await r.text();
-    throw new Error("Model returned " + r.status + ": " + body.slice(0, 300));
-  }
-
+  if (!r.ok) throw new Error("DeepSeek returned " + r.status + ": " + (await r.text()).slice(0, 300));
   const data = await r.json();
-  const content = ((data.choices || [])[0] || {}).message?.content || "";
+  return ((data.choices || [])[0] || {}).message?.content || "";
+}
+
+/* The same request shape the earlier scorecard used for Gemini, where it ran
+   as a fallback: the system instruction goes separately from the
+   conversation, and JSON is asked for by MIME type rather than by format. */
+async function askGemini(env, user) {
+  if (!env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
+
+  const r = await fetch(GEMINI_ENDPOINT(env.GEMINI_MODEL || GEMINI_MODEL, env.GEMINI_API_KEY), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: SYSTEM }] },
+      contents: [{ role: "user", parts: [{ text: user }] }],
+      generationConfig: {
+        temperature: 0,
+        responseMimeType: "application/json",
+      },
+    }),
+  });
+
+  const body = await r.text();
+  if (!r.ok) throw new Error("Gemini returned " + r.status + ": " + body.slice(0, 300));
+
+  const data = JSON.parse(body);
+  const cand = (data.candidates || [])[0];
+  if (!cand) throw new Error("Gemini returned no candidate: " + body.slice(0, 300));
+  return ((cand.content && cand.content.parts) || []).map((x) => x.text || "").join("").trim();
+}
+
+async function callModel(env, requests, text) {
+  const user = [
+    "METRICS TO FIND:",
+    JSON.stringify(requests.map((r) => ({
+      metric: r.query,
+      period: r.periodWanted || "the period that has just ended",
+      basis: r.expectBasis.describe,
+      expects: r.expect.describe,
+      expects_unit: r.expect.unit,
+    })), null, 1),
+    "",
+    "RELEASE:",
+    text,
+  ].join("\n");
+
+  const content = providerOf(env) === "gemini"
+    ? await askGemini(env, user)
+    : await askDeepSeek(env, user);
   const clean = content.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
 
   let parsed;
@@ -556,6 +609,7 @@ export async function actualsFrom(env, cik, release, requests, cal) {
       textChars: filing.chars,
     },
     requested: requests.length,
+    model: providerOf(env) === "gemini" ? (env.GEMINI_MODEL || GEMINI_MODEL) : MODEL,
     found: actuals.filter((a) => a.value !== null).length,
     unitMismatches: actuals.filter((a) => a.unit_mismatch).length,
     basisMismatches: actuals.filter((a) => a.basis_mismatch).length,
