@@ -471,7 +471,14 @@ export default {
         }
 
         // Step two: what did they actually do?
-        const result = await actualsFrom(env, cik, current, requests, calendar);
+        //
+        // ?model=gemini reads this one release with Gemini instead of the
+        // default, and changes nothing else - no setting, no stored record. It
+        // exists so two models can be compared on the same filing, which is
+        // the only comparison worth making.
+        const modelParam = String(url.searchParams.get("model") || "").toLowerCase();
+        const runEnv = modelParam ? { ...env, ACTUALS_MODEL: modelParam } : env;
+        const result = await actualsFrom(runEnv, cik, current, requests, calendar);
         const scored = scoreAll(pairUp(priorGuidance.guides, result.actuals));
         const pairs = scored.pairs;
 
