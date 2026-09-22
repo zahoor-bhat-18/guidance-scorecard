@@ -340,6 +340,7 @@ const SYSTEM = [
   "",
   "Reply with JSON only. No prose, no markdown fences. Shape:",
   '{"actuals":[{',
+  '  "id": the id of the request this answers, copied back unchanged,',
   '  "metric": "the metric you were asked for, copied back unchanged",',
   '  "found_as": "what this release calls it, verbatim, or null",',
   '  "section": "the heading the figure sits under, verbatim, or null",',
@@ -435,7 +436,8 @@ async function askGemini(env, user) {
 async function callModel(env, requests, text) {
   const user = [
     "METRICS TO FIND:",
-    JSON.stringify(requests.map((r) => ({
+    JSON.stringify(requests.map((r, i) => ({
+      id: i,
       metric: r.query,
       period: r.periodWanted || "the period that has just ended",
       basis: r.expectBasis.describe,
@@ -479,14 +481,48 @@ export async function actualsFrom(env, cik, release, requests, cal) {
   const filing = await readFiling(env, cik, release.accession);
   const rows = await callModel(env, requests, filing.text);
 
+  /**
+   * EACH ANSWER IS MATCHED TO ITS REQUEST BY ID, NOT BY NAME.
+   *
+   * Matching by name alone handed one answer to two questions. Delta's release
+   * is asked for "Earnings Per Share" twice - the quarter and the full year -
+   * and the model returns two rows, both named "Earnings Per Share". The map
+   * kept the first and gave it to both requests. When the full-year row came
+   * first it was empty, because the year had not ended, and the quarter lost a
+   * figure printed plainly on page one: "Earnings per share of $0.64". When it
+   * came first carrying a value, the quarter was handed the year: Delta's
+   * fourth-quarter EPS guide of $1.60 to $1.90 was scored against $5.82, the
+   * full-year figure, and flagged as a 205% beat.
+   *
+   * Two different models failed this identically, which is what gave it away.
+   * The fault was never in the reading.
+   *
+   * So every request carries an id and the model copies it back. The name is a
+   * fallback only when it is unambiguous - when exactly one request and one
+   * answer share it. Position is the last resort, as before.
+   */
+  const byId = new Map();
   const byName = new Map();
+  const nameCount = new Map();
   for (const row of rows) {
+    if (row.id !== undefined && row.id !== null && !byId.has(Number(row.id))) {
+      byId.set(Number(row.id), row);
+    }
     const k = String(row.metric || row.metric_as_written || "").trim().toLowerCase();
-    if (k && !byName.has(k)) byName.set(k, row);
+    if (!k) continue;
+    nameCount.set(k, (nameCount.get(k) || 0) + 1);
+    if (!byName.has(k)) byName.set(k, row);
+  }
+  const askedCount = new Map();
+  for (const req of requests) {
+    const k = req.query.toLowerCase();
+    askedCount.set(k, (askedCount.get(k) || 0) + 1);
   }
 
   const actuals = requests.map((req, i) => {
-    const row = byName.get(req.query.toLowerCase()) || rows[i] || {};
+    const k = req.query.toLowerCase();
+    const nameIsUnique = nameCount.get(k) === 1 && askedCount.get(k) === 1;
+    const row = byId.get(i) || (nameIsUnique ? byName.get(k) : null) || rows[i] || {};
     const value = typeof row.value === "number" ? row.value : null;
     const unit = row.unit || null;
 
