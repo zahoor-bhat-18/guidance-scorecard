@@ -36,6 +36,7 @@ import { earningsReleases, guidanceFrom } from "../src/guidance.js";
 import { requestsFrom, actualsFrom } from "../src/actuals.js";
 import { samePeriod } from "../src/period.js";
 import { scoreAll } from "../src/score.js";
+import { pairUp } from "../src/pairing.js";
 import { revisionsBetween } from "../src/revisions.js";
 
 /* How many releases to read.
@@ -116,54 +117,9 @@ function metricKey(guide) {
     .trim();
 }
 
-/**
- * Pair a guide to its actual. The same rule as the Worker: identical periods
- * or nothing.
- */
-function pairUp(guides, actuals) {
-  const byName = new Map();
-  for (const a of actuals) byName.set(String(a.metric_as_written || "").toLowerCase(), a);
-
-  const pairs = [];
-  for (const g of guides) {
-    const hasNumber =
-      typeof g.low === "number" || typeof g.high === "number" || typeof g.value === "number";
-    if (!hasNumber) continue;
-
-    const a = byName.get(String(g.metric_as_written || "").toLowerCase());
-    const base = {
-      metric: g.metric,
-      metric_as_written: g.metric_as_written,
-      basis: g.basis,
-      unit: g.unit,
-      shape: g.shape,
-      guide: { low: g.low ?? null, high: g.high ?? null, value: g.value ?? null },
-      guide_period: g.period,
-      guide_period_text: g.period_text,
-    };
-
-    if (!a) { pairs.push({ ...base, comparable: false, why: "No actual was looked for under this metric." }); continue; }
-
-    base.actual = a.value;
-    base.actual_unit = a.unit;
-    base.actual_period = a.period;
-    base.actual_found_as = a.found_as;
-    base.quote = a.quote;
-
-    if (a.value === null) { pairs.push({ ...base, comparable: false, why: "The release does not report this figure." }); continue; }
-    if (!g.period) { pairs.push({ ...base, comparable: false, why: "The guide's period could not be read." }); continue; }
-    if (!a.period) { pairs.push({ ...base, comparable: false, why: "The actual's period could not be read." }); continue; }
-    if (!samePeriod(g.period, a.period)) {
-      pairs.push({ ...base, comparable: false, why: "Different periods: the guide is for " + g.period + " and the figure reported is for " + a.period + "." });
-      continue;
-    }
-    if (a.unit_mismatch) { pairs.push({ ...base, comparable: false, why: "The figure reported is not the kind of number that was guided." }); continue; }
-    if (a.basis_mismatch) { pairs.push({ ...base, comparable: false, why: a.basis_mismatch }); continue; }
-
-    pairs.push({ ...base, comparable: true });
-  }
-  return pairs;
-}
+/* pairUp lives in src/pairing.js and is imported. This file carried its own
+   copy, matching a guide to an actual by name alone, and every pairing fix
+   made in the shared file stopped at the boundary. One definition. */
 
 /**
  * Coverage, measured rather than assumed.
