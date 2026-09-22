@@ -29,6 +29,7 @@ import { earningsReleases, guidanceFrom, readFiling, refineCalendar } from "./gu
 import { requestsFrom, actualsFrom } from "./actuals.js";
 import { resolvePeriod, samePeriod } from "./period.js";
 import { scoreAll } from "./score.js";
+import { pairUp } from "./pairing.js";
 import { revisionsBetween } from "./revisions.js";
 import { releaseText } from "./text.js";
 import { readRecord, listRecords, forEmail, headline } from "./records.js";
@@ -74,91 +75,9 @@ const PERIOD_FIXTURES = [
   { text: "$21.5 billion to $21.75 billion", direction: "future" },
 ];
 
-/**
- * A guide and its actual, paired only when they mean the same period.
- *
- * The rule the whole product turns on, and the one that was missing while
- * every test looked fine. Macy's guides the full year and reports a quarter:
- * an adjusted EBITDA margin guide of 7.7-7.9% sat next to a first-quarter 5.9%
- * and would have published as a two-point miss ten months before the year
- * ended. Walmart reaffirmed 6-8% full-year operating income growth and
- * delivered 17.4% in one quarter.
- *
- * Neither is a beat or a miss. Neither period is over.
- *
- * So identical or nothing. No tolerance, no nearest match. A pair that cannot
- * be shown to refer to one period is reported with the reason and left
- * unscored.
- */
-function pairUp(guides, actuals) {
-  const byName = new Map();
-  for (const a of actuals) byName.set(String(a.metric_as_written || "").toLowerCase(), a);
-
-  const pairs = [];
-  for (const g of guides) {
-    const hasNumber =
-      typeof g.low === "number" || typeof g.high === "number" || typeof g.value === "number";
-    if (!hasNumber) continue;
-
-    const a = byName.get(String(g.metric_as_written || "").toLowerCase());
-
-    const base = {
-      metric: g.metric,
-      metric_as_written: g.metric_as_written,
-      basis: g.basis,
-      unit: g.unit,
-      shape: g.shape,
-      guide: { low: g.low ?? null, high: g.high ?? null, value: g.value ?? null },
-      guide_period: g.period,
-      guide_period_text: g.period_text,
-    };
-
-    if (!a) {
-      pairs.push({ ...base, comparable: false, why: "No actual was looked for under this metric." });
-      continue;
-    }
-
-    base.actual = a.value;
-    base.actual_unit = a.unit;
-    base.actual_period = a.period;
-    base.actual_period_text = a.period_text;
-    base.actual_found_as = a.found_as;
-    base.expected_basis = a.expected_basis;
-    base.quote = a.quote;
-
-    if (a.value === null) {
-      pairs.push({ ...base, comparable: false, why: "The release does not report this figure." });
-      continue;
-    }
-    if (!g.period) {
-      pairs.push({ ...base, comparable: false, why: "The guide's period could not be read: " + (g.period_why || "unknown") });
-      continue;
-    }
-    if (!a.period) {
-      pairs.push({ ...base, comparable: false, why: "The actual's period could not be read: " + (a.period_why || "unknown") });
-      continue;
-    }
-    if (!samePeriod(g.period, a.period)) {
-      pairs.push({
-        ...base,
-        comparable: false,
-        why: "Different periods: the guide is for " + g.period + " and the figure reported is for " + a.period + ".",
-      });
-      continue;
-    }
-    if (a.unit_mismatch) {
-      pairs.push({ ...base, comparable: false, why: "The figure reported is not the kind of number that was guided." });
-      continue;
-    }
-    if (a.basis_mismatch) {
-      pairs.push({ ...base, comparable: false, why: a.basis_mismatch });
-      continue;
-    }
-
-    pairs.push({ ...base, comparable: true });
-  }
-  return pairs;
-}
+/* pairUp lives in src/pairing.js and is imported. This file carried its own
+   copy, matching a guide to an actual by name alone, and every pairing fix
+   made in the shared file stopped at the boundary. One definition. */
 
 /** One company, end to end, reduced to what is worth reading. */
 async function checkOne(env, ticker, full) {
