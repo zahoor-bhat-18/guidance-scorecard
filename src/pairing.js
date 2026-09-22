@@ -54,19 +54,39 @@ function figureOf(g) {
   return { low, high, value };
 }
 
+/**
+ * Of several actuals under one label, the one for this guide's period.
+ *
+ * Matching on the label alone handed one actual to every guide sharing it.
+ * Delta's fourth-quarter release answers two guides both called "Earnings Per
+ * Share" - the quarter and the year - and both were paired with whichever
+ * actual came first. The year's $5.82 was scored against the quarter's $1.60
+ * to $1.90 guide as a 205% beat. It is the same fault that cost the Q1 2026
+ * figure in the actuals extraction, one step further down, and it was found
+ * the same way: fixing the first exposed the second.
+ */
+function forPeriod(candidates, period) {
+  if (!candidates || !candidates.length) return null;
+  const exact = candidates.find((a) => a.period && period && samePeriod(period, a.period));
+  if (exact) return exact;
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
 export function pairUp(guides, actuals) {
   const byLabel = new Map();
   const byMeasure = new Map();
-  const measureCount = new Map();
 
   for (const a of actuals || []) {
     const label = String(a.metric_as_written || "").toLowerCase().trim();
-    if (label && !byLabel.has(label)) byLabel.set(label, a);
+    if (label) {
+      if (!byLabel.has(label)) byLabel.set(label, []);
+      byLabel.get(label).push(a);
+    }
 
     const key = metricKey(a.metric_as_written || "");
     if (!key) continue;
-    measureCount.set(key, (measureCount.get(key) || 0) + 1);
-    if (!byMeasure.has(key)) byMeasure.set(key, a);
+    if (!byMeasure.has(key)) byMeasure.set(key, []);
+    byMeasure.get(key).push(a);
   }
 
   const pairs = [];
@@ -80,17 +100,15 @@ export function pairUp(guides, actuals) {
     const label = written.toLowerCase().trim();
     const key = metricKey(written);
 
-    let a = byLabel.get(label);
+    let a = forPeriod(byLabel.get(label), g.period);
     let matchedOn = a ? "label" : null;
     let ambiguous = false;
 
     if (!a && key) {
-      if (measureCount.get(key) === 1) {
-        a = byMeasure.get(key);
-        matchedOn = "measure";
-      } else if ((measureCount.get(key) || 0) > 1) {
-        ambiguous = true;
-      }
+      const candidates = byMeasure.get(key) || [];
+      a = forPeriod(candidates, g.period);
+      if (a) matchedOn = "measure";
+      else if (candidates.length > 1) ambiguous = true;
     }
 
     const base = {
@@ -167,6 +185,39 @@ export function pairUp(guides, actuals) {
     }
 
     pairs.push({ ...base, comparable: true });
+  }
+
+  /**
+   * A QUARTER CANNOT EQUAL ITS OWN FULL YEAR.
+   *
+   * A fourth-quarter release reports two figures for the same measure - the
+   * quarter and the year - often in adjacent columns. Delta guided its
+   * December quarter 2025 EPS at $1.60 to $1.90; the model answered the
+   * quarter with $5.82, the full-year figure, and the email showed a 205% beat
+   * with a warning mark beside it. The same run answered the full-year guide
+   * with the same $5.82, correctly.
+   *
+   * That is the tell, and it needs no judgement: when the quarter and the year
+   * of one measure come back with the same figure from the same release, the
+   * quarter has been handed the year. It is refused and says why, rather than
+   * printed and flagged. A result can legitimately be flagged; this one is
+   * simply the wrong row.
+   */
+  const yearFigure = new Map();
+  for (const p of pairs) {
+    const m = String(p.guide_period || "").match(/^(\d{4})FY$/);
+    if (!m || typeof p.actual !== "number") continue;
+    yearFigure.set(metricKey(p.metric_as_written || "") + "|" + m[1], p.actual);
+  }
+  for (const p of pairs) {
+    const m = String(p.guide_period || "").match(/^(\d{4})Q4$/);
+    if (!m || !p.comparable || typeof p.actual !== "number") continue;
+    const year = yearFigure.get(metricKey(p.metric_as_written || "") + "|" + m[1]);
+    if (typeof year !== "number") continue;
+    if (Math.abs(year - p.actual) <= Math.abs(year) * 0.005) {
+      p.comparable = false;
+      p.why = "The figure taken for the fourth quarter is the full-year figure.";
+    }
   }
 
   return pairs;
