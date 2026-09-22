@@ -51,12 +51,28 @@ function decimalsOf(n) {
   return dot === -1 ? 0 : s.length - dot - 1;
 }
 
-function guidePrecision(guide) {
-  return Math.max(
+/**
+ * The precision a guide was stated to.
+ *
+ * MONEY PER SHARE IS ALWAYS STATED TO THE CENT. Delta guided "$0.50 to $0.90"
+ * for the March quarter of 2026 and reported $0.64. The guide arrives as the
+ * numbers 0.5 and 0.9 - a number does not keep its trailing zero - so this
+ * read the guide as stated to one decimal, rounded the result to match, and
+ * the email printed "$0.60". Its second quarter read "$1.60, above by $0.10"
+ * when the company reported $1.56, above by $0.06. Both are figures the company
+ * never published.
+ *
+ * The rule that judges a guide at the precision it was stated to is right. The
+ * number simply cannot say what precision a price was written at, and for a
+ * per-share figure the answer is not in doubt: cents.
+ */
+function guidePrecision(guide, unit) {
+  const stated = Math.max(
     decimalsOf(guide.low),
     decimalsOf(guide.high),
     decimalsOf(guide.value)
   );
+  return unit === "USD per share" ? Math.max(2, stated) : stated;
 }
 
 /**
@@ -166,7 +182,7 @@ export function scorePair(pair, originalGuide) {
   // the guide's precision regardless turned a 17.4% result into 17%, and a
   // reported 2.6 into 3 against a guide of 2, which is worse than the problem
   // it was fixing.
-  const places = guidePrecision(pair.guide || {});
+  const places = guidePrecision(pair.guide || {}, pair.unit);
   const compared = places > 0 ? Number(actual.toFixed(places)) : tidy(actual);
   const rounded = compared !== tidy(actual);
   const asGuided = rounded
