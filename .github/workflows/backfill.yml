@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       tickers:
-        description: "Comma-separated tickers. Leave blank to build the whole universe in config/universe.json."
+        description: "Comma-separated tickers. Leave blank for the whole universe. Add --rebuild to re-score, --fresh to ask the model again instead of reusing saved answers."
         required: false
         default: ""
 
@@ -35,11 +35,54 @@ jobs:
         with:
           node-version: "24"
 
+      # SAVED MODEL ANSWERS. Every answer DeepSeek has given is kept in KV
+      # under one key, so a rebuild only pays for questions it has never
+      # asked. See scripts/answers.mjs for why and how.
+      #
+      # Read over the Cloudflare API rather than wrangler, because a missing
+      # key must be told apart from a real answer. A 404, a bad token or an
+      # unreadable file all mean the same thing here: start empty and ask the
+      # model. The run still works; it just pays. The first line of the
+      # summary says how many answers were reused, which is how you notice.
+      #
+      # The namespace id is the one in wrangler.jsonc. It is not a secret.
+      - name: Fetch saved model answers
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          mkdir -p answers
+          code=$(curl -s -o answers/download.json -w "%{http_code}" \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces/ae1f3bc993714a41973b9fd4492ff641/values/answers%3Abackfill" || echo "none")
+          echo "KV answered: $code"
+          if [ "$code" = "200" ] && node -e 'const j = JSON.parse(require("fs").readFileSync("answers/download.json", "utf8")); if (!j || !j.answers) process.exit(1); console.log(Object.keys(j.answers).length + " saved answers downloaded.")'; then
+            mv answers/download.json answers/answers.json
+          else
+            echo "No usable saved answers. This run will ask the model for everything."
+            rm -f answers/download.json
+          fi
+
       - name: Build the records
         env:
           SEC_USER_AGENT: ${{ vars.SEC_USER_AGENT }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: node scripts/backfill.mjs ${{ inputs.tickers }}
+
+      # Always, even if the build failed part-way: answers already paid for
+      # are kept. The file holds every saved answer, old and new, so writing
+      # it whole never loses one.
+      - name: Save model answers
+        if: always()
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -f out/answers/answers.json ]; then
+            npx --yes wrangler@4 kv key put "answers:backfill" --path out/answers/answers.json --binding CACHE --remote
+          else
+            echo "No answers file was written. Nothing to save."
+          fi
 
       # Straight onto the run page, so a run can be read on a phone without
       # downloading a zip and unzipping 60KB of JSON to find out it worked.
