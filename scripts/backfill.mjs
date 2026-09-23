@@ -38,6 +38,7 @@ import { samePeriod } from "../src/period.js";
 import { scoreAll } from "../src/score.js";
 import { pairUp } from "../src/pairing.js";
 import { revisionsBetween } from "../src/revisions.js";
+import { startAnswers } from "./answers.mjs";
 
 /* How many releases to read.
    Eight scoreable quarters needs more than eight releases, because a guide for
@@ -213,6 +214,13 @@ const SITE = process.env.SITE_URL || "https://guidance.zahoorbhat.com";
 const ARGS = process.argv.slice(2).join(" ").split(/[\s,]+/).filter(Boolean);
 
 const REBUILD = ARGS.includes("--rebuild");
+
+/* --fresh asks the model again instead of reusing saved answers. See
+   scripts/answers.mjs. The workflow downloads the saved answers to
+   ANSWERS_IN before the run and uploads ANSWERS_OUT after it. */
+const FRESH = ARGS.includes("--fresh");
+const ANSWERS_IN = "answers/answers.json";
+const ANSWERS_OUT = "out/answers/answers.json";
 
 /**
  * The record as it stands, over the public API.
@@ -656,6 +664,10 @@ async function main() {
 
   await mkdir("out", { recursive: true });
 
+  // Before any model call, so every one goes through the store.
+  const answers = await startAnswers({ from: ANSWERS_IN, fresh: FRESH });
+  console.log(answers.stats.loaded + " saved model answers on file." + (FRESH ? " --fresh: none will be reused." : ""));
+
   const summary = [];
   let failures = 0;
 
@@ -711,11 +723,17 @@ async function main() {
       summary.push({ ticker, error: e.message });
     }
 
+    // After every company, not once at the end: a run that dies on the sixth
+    // company has already paid for the first five.
+    await answers.save(ANSWERS_OUT);
+
     await sleep(PAUSE_MS);
   }
 
   await writeFile("out/summary.json", JSON.stringify({ builtAt: new Date().toISOString(), summary }, null, 2));
-  await writeFile("out/summary.md", markdownFor(summary, failures));
+  await answers.save(ANSWERS_OUT);
+  console.log(answers.line());
+  await writeFile("out/summary.md", answers.line() + "\n\n" + markdownFor(summary, failures));
 
   // The silent-miss guard, carried over from the other product. A run where
   // everything failed must not look like a run where everything worked, or a
