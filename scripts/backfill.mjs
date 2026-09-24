@@ -211,7 +211,9 @@ const SITE = process.env.SITE_URL || "https://guidance.zahoorbhat.com";
 /* Arguments, split on spaces and commas whatever way they arrive. A workflow
    input box hands "DAL --rebuild" over as ONE argument, which read as a ticker
    called "DAL --REBUILD" and a rebuild flag that was never seen. */
-const ARGS = process.argv.slice(2).join(" ").split(/[\s,]+/).filter(Boolean);
+const ARGS = process.argv.slice(2).join(" ").split(/[\s,]+/).filter(Boolean)
+  // A phone turns "--" into a long dash. Read "—rebuild" as "--rebuild".
+  .map((a) => a.replace(/^[\u2012\u2013\u2014\u2015]+(?=[a-z])/i, "--"));
 
 const REBUILD = ARGS.includes("--rebuild");
 
@@ -733,7 +735,15 @@ async function main() {
   await writeFile("out/summary.json", JSON.stringify({ builtAt: new Date().toISOString(), summary }, null, 2));
   await answers.save(ANSWERS_OUT);
   console.log(answers.line());
-  await writeFile("out/summary.md", answers.line() + "\n\n" + markdownFor(summary, failures));
+  // WHAT THIS RUN ACTUALLY DID, first. Three runs in a row were meant to
+  // rebuild and merged instead, and the summary looked the same either way.
+  const keptTotal = summary.reduce((n, s) => n + (s.carriedOver || 0), 0);
+  const mode = (REBUILD
+    ? "REBUILT: stored records ignored, every pair scored again."
+    : "MERGED, not rebuilt: " + keptTotal + " stored pairs kept as they were.")
+    + " Arguments received: " + (ARGS.join(" ") || "(none)");
+  console.log(mode);
+  await writeFile("out/summary.md", mode + "\n\n" + answers.line() + "\n\n" + markdownFor(summary, failures));
 
   // The silent-miss guard, carried over from the other product. A run where
   // everything failed must not look like a run where everything worked, or a
