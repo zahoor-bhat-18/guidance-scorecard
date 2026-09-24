@@ -37,6 +37,7 @@ import { requestsFrom, actualsFrom } from "../src/actuals.js";
 import { samePeriod } from "../src/period.js";
 import { scoreAll } from "../src/score.js";
 import { pairUp } from "../src/pairing.js";
+import { periodLabel } from "../src/format.js";
 import { revisionsBetween } from "../src/revisions.js";
 import { startAnswers } from "./answers.mjs";
 
@@ -625,6 +626,13 @@ function markdownFor(records, failures) {
       for (const t of r.unreadablePeriods) lines.push("- `" + t + "`");
     }
 
+    if (r.periodMismatches && r.periodMismatches.length) {
+      lines.push("");
+      lines.push("**Periods that did not match**");
+      lines.push("");
+      for (const t of r.periodMismatches) lines.push("- " + t);
+    }
+
     if (r.sampleRevisions && r.sampleRevisions.length) {
       lines.push("");
       lines.push("**Revisions, most recent first**");
@@ -714,6 +722,19 @@ async function main() {
             .filter((p) => !p.comparable && String(p.why || "").includes("period could not be read"))
             .map((p) => String(p.actual_period_text || "(none returned)"))
         )).slice(0, 8),
+        // "Different periods" is grouped above with the periods blanked out,
+        // so GE's nine and Coca-Cola's sixteen could not be read. Each one is
+        // listed here: the measure, the period guided, the period the figure
+        // was reported for, and the model's own wording for that period -
+        // which is what tells a real mismatch from a mislabelled one.
+        periodMismatches: Array.from(new Set(
+          record.pairs
+            .filter((p) => !p.comparable && String(p.why || "").startsWith("Different periods"))
+            .map((p) => String(p.metric_as_written || "?")
+              + ": guided for " + periodLabel(p.guide_period)
+              + ", reported for " + periodLabel(p.actual_period)
+              + (p.actual_period_text ? ' (release wording: "' + p.actual_period_text + '")' : ""))
+        )).slice(0, 20),
       });
 
       console.log("  " + ticker + ": " + comparable.length
