@@ -17,6 +17,16 @@ on:
         description: "Comma-separated tickers. Leave blank for the whole universe. Add --rebuild to re-score, --fresh to ask the model again instead of reusing saved answers."
         required: false
         default: ""
+      # Tick boxes, not typed flags. Typed "--rebuild" was mangled or cut by the
+      # phone three runs in a row, and each time the run quietly merged instead.
+      rebuild:
+        description: "Rebuild: discard stored records and score everything again (free, uses saved answers)"
+        type: boolean
+        default: false
+      fresh:
+        description: "Ask the model again instead of reusing saved answers (costs money)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -67,7 +77,7 @@ jobs:
         env:
           SEC_USER_AGENT: ${{ vars.SEC_USER_AGENT }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-        run: node scripts/backfill.mjs ${{ inputs.tickers }}
+        run: node scripts/backfill.mjs ${{ inputs.tickers }} ${{ inputs.rebuild && '--rebuild' || '' }} ${{ inputs.fresh && '--fresh' || '' }}
 
       # Always, even if the build failed part-way: answers already paid for
       # are kept. The file holds every saved answer, old and new, so writing
