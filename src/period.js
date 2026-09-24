@@ -47,6 +47,10 @@ const ORDINALS = {
 };
 
 const MONTH_WORDS = Object.keys(MONTHS).join("|");
+/* A month and day with no year after it: "December 31" in "Twelve months
+   ended December 31". Only used when DATE_RE finds no full date. */
+const DAY_NO_YEAR_RE = new RegExp("\\b(" + MONTH_WORDS + ")\\.?\\s+(\\d{1,2})\\b(?!\\s*,?\\s*\\d{4})");
+
 const DATE_RE = new RegExp("\\b(" + MONTH_WORDS + ")\\.?\\s+(\\d{1,2})\\s*,?\\s*(\\d{4})\\b");
 
 /* Airlines name a quarter by the month it ends in - "the June quarter", "the
@@ -211,7 +215,21 @@ export function resolvePeriod(text, cal, opts) {
   /* ---- 1. A period stated with its end date ---- */
 
   const hasEnded = /\b(ended|ending)\b/.test(t);
-  const dateMatch = t.match(DATE_RE);
+  let dateMatch = t.match(DATE_RE);
+
+  /* AN END DATE WITHOUT ITS YEAR. GE heads its full-year column "Twelve
+     months ended December 31" and never says which December. That read as no
+     period at all, the fallback took the quarter the release reports, and all
+     nine of GE's full-year guides were refused against a "Q4" that was really
+     the year. The year is the nearest one in the direction being read: for a
+     result, the last December 31 before the release was filed. */
+  if (hasEnded && !dateMatch) {
+    const bare = t.match(DAY_NO_YEAR_RE);
+    if (bare && MONTHS[bare[1]] && Number.isFinite(reference)) {
+      const y = nearestMonthYear(MONTHS[bare[1]], reference, direction);
+      dateMatch = [bare[0], bare[1], bare[2], String(y)];
+    }
+  }
 
   if (hasEnded && dateMatch) {
     const month = MONTHS[dateMatch[1]];
@@ -226,6 +244,19 @@ export function resolvePeriod(text, cal, opts) {
         return {
           period: null,
           why: "This is a year-to-date or half-year figure, which is not comparable with a quarterly or annual guide.",
+        };
+      }
+
+      /* A RESULT CANNOT END AFTER THE RELEASE THAT REPORTS IT. Coca-Cola's
+         October 2024 release says "Year Ending December 31, 2024" beside its
+         full-year outlook. Read as a result, that is a guide scored against
+         itself. Refused here; nothing else a release says about a future
+         period is a result either. */
+      if (direction === "past" && Number.isFinite(reference)
+          && Date.parse(iso + "T00:00:00Z") > reference) {
+        return {
+          period: null,
+          why: "This period ends on " + iso + ", after the release was filed, so the figure is an outlook, not a result.",
         };
       }
 
@@ -386,6 +417,15 @@ function classifySpan(t) {
   if (/\b(26|39)\s*weeks?\b/.test(t)) return "ytd";
   if (/\b(six|6|nine|9)\s*months?\b/.test(t)) return "ytd";
   if (/\byear[-\s]to[-\s]date\b/.test(t)) return "ytd";
+  // A half is year-to-date too. "first half ended June 30" read as no length,
+  // and the recovery for unreadable periods would have called it the quarter.
+  if (/\bhalf[-\s]year\b|\b(first|second|1st|2nd)\s+half\b/.test(t)) return "ytd";
+  if (/\bquarter (ended|ending)\b/.test(t)) return "quarter";
+  // "Year Ended December 31, 2025" - Coca-Cola's and Waste Management's
+  // full-year column. Only "fiscal year ended" was recognised, so sixteen
+  // Coca-Cola full-year pairs were refused as the fourth quarter. Checked
+  // after the year-to-date and half-year wordings, which also contain "year".
+  if (/\byear (ended|ending)\b/.test(t)) return "year";
   return null;
 }
 
