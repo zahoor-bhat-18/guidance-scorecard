@@ -587,6 +587,47 @@ export function isEffectGuide(g) {
 }
 
 /**
+ * ONE GUIDE PER MEASURE AND PERIOD WHEN A COMPANY GIVES TWO BASES.
+ *
+ * Micron's guidance table has a GAAP column and a non-GAAP column: operating
+ * expenses "$1.60 billion" and "$1.40 billion", EPS "$18.90 ± $0.40" and
+ * "$19.15 ± $0.40". Both came back under the same label and period, pairing
+ * kept the first - the GAAP one - and scored it against the NON-GAAP result:
+ * "operating expenses $1.60bn guided, $1.52bn reported" when the like-for-like
+ * reading is $1.40bn guided, above. All eleven operating-expense rows and all
+ * seven EPS rows were compared across bases, and the guide path read the two
+ * columns as a cut from $1.60bn to $1.40bn.
+ *
+ * Where the twins carry different numbers, the non-GAAP one is kept: it is
+ * what the company and the market judge the quarter on, and what the results
+ * table is asked for. Where the numbers are the same (Micron's revenue is one
+ * figure under both headings) the GAAP one is kept, so nothing that is not
+ * adjusted gets asked for as if it were.
+ *
+ * Returns the set of guides to leave out. They still go into asExtracted, so
+ * the questions asked of the next release do not change.
+ */
+function gaapTwins(guides) {
+  const drop = new Set();
+  const byKey = new Map();
+  for (const g of guides) {
+    if (!g.period) continue;
+    const key = String(g.metric_as_written || "").trim().toLowerCase() + "|" + g.period;
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(g);
+  }
+  const nums = (g) => [g.low, g.high, g.value].map((n) => (typeof n === "number" ? n : null)).join(",");
+  for (const group of byKey.values()) {
+    const gaap = group.filter((g) => g.basis === "gaap");
+    const adjusted = group.filter((g) => g.basis === "non_gaap");
+    if (!gaap.length || !adjusted.length) continue;
+    const same = gaap.every((a) => adjusted.some((b) => nums(a) === nums(b)));
+    for (const g of same ? adjusted : gaap) drop.add(g);
+  }
+  return drop;
+}
+
+/**
  * The same guide, reported twice.
  *
  * Delta prints its outlook in a table AND describes it in the narrative, so
@@ -739,7 +780,8 @@ export async function guidanceFrom(env, cik, release, cal) {
   // What is scored, tracked and revised: the same, without currency and deal
   // effects. Set aside rather than hidden - listed in the backfill summary.
   const effects = asExtracted.filter(isEffectGuide);
-  const guides = asExtracted.filter((g) => !isEffectGuide(g));
+  const twins = gaapTwins(asExtracted);
+  const guides = asExtracted.filter((g) => !isEffectGuide(g) && !twins.has(g));
 
   return {
     release: {
