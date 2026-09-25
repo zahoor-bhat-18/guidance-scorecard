@@ -559,6 +559,22 @@ export default {
      * so nothing in between serves yesterday's run. Nothing private in it:
      * company names, pair counts and the scored lines the emails show anyway.
      */
+    /**
+     * Every SEC ticker with its company name, for search-as-you-type on the
+     * signup form. Read once per visitor and filtered in the browser, so typing
+     * costs nothing. Written monthly by scripts/tickers.mjs.
+     */
+    if (url.pathname === "/api/tickers") {
+      const list = await env.CACHE.get("tickers:names", { cacheTtl: 3600 });
+      return new Response(list || "[]", {
+        status: list ? 200 : 503,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": list ? "public, max-age=86400" : "no-store",
+        },
+      });
+    }
+
     if (url.pathname === "/api/summary") {
       const text = await env.CACHE.get("summary:latest");
       return new Response(text || "No summary stored yet. Run the backfill once.", {
