@@ -636,11 +636,16 @@ export function printsAdjustedRevenue(text) {
  * A company with no adjusted revenue never gets past the third test, so its
  * answers and its costs are untouched.
  */
-function revenueToRecheck(requests, actuals, text) {
+function revenueToRecheck(requests, actuals, text, release, cal) {
   if (!printsAdjustedRevenue(text)) return [];
   const out = [];
   requests.forEach((req, i) => {
     if (req.metric !== "revenue" || req.expectBasis.saysGaap) return;
+    // A period that had not ended when the release was filed has no result
+    // to find. Delta's July and October 2023 releases were each re-asked for
+    // full-year 2023 revenue and, correctly, returned nothing - two paid
+    // questions that could only ever come back empty.
+    if (!guidePeriodClosed(req, release, cal)) return;
     const a = actuals[i];
     const found = markers(String(a.found_as || "") + " " + String(a.section || "") + " " + String(a.quote || ""));
     if (a.value !== null && found.adjusted) return;
@@ -682,16 +687,20 @@ function adjustedRevenueRequest(req) {
  * Every replacement keeps what it replaced, so it can be audited.
  */
 async function recheckRevenue(env, requests, actuals, text, release, cal) {
-  const idx = revenueToRecheck(requests, actuals, text);
-  if (!idx.length) return { asked: 0, replaced: 0 };
+  const idx = revenueToRecheck(requests, actuals, text, release, cal);
+  const adjustedFor = new Map();
+  if (!idx.length) return { asked: 0, replaced: 0, adjustedFor };
 
   const again = idx.map((i) => adjustedRevenueRequest(requests[i]));
+  // Remembered for growthFromLevels: once the release is known to print an
+  // adjusted revenue line, the adjusted line is the one to build growth from.
+  idx.forEach((i, j) => adjustedFor.set(i, again[j]));
   let rows;
   try {
     rows = await callModel(env, again, text);
   } catch (e) {
     console.log("Revenue re-check failed for " + release.accession + ": " + e.message);
-    return { asked: idx.length, replaced: 0 };
+    return { asked: idx.length, replaced: 0, adjustedFor };
   }
 
   const byId = new Map();
@@ -733,7 +742,198 @@ async function recheckRevenue(env, requests, actuals, text, release, cal) {
     }
   });
 
-  return { asked: idx.length, replaced };
+  return { asked: idx.length, replaced, adjustedFor };
+}
+
+/** Had the guided period ended by the time this release was filed? */
+function guidePeriodClosed(req, release, cal) {
+  if (!req.guidePeriod || !release || !release.filed || !cal) return true;
+  return periodIsClosedBy(req.guidePeriod, release.filed, cal);
+}
+
+/* ------------------------------------------------------------------ *
+ * Growth guides: computed from two printed amounts
+ * ------------------------------------------------------------------ */
+
+/**
+ * The same period one year earlier: "2024Q3" -> "2023Q3", "2023FY" -> "2022FY".
+ * Labels are the company's own, so one year back is the label year minus one.
+ */
+export function priorYearPeriod(period) {
+  const m = String(period || "").match(/^(\d{4})(FY|Q[1-4])$/);
+  return m ? String(parseInt(m[1], 10) - 1) + m[2] : null;
+}
+
+/**
+ * Is this number printed in this quote?
+ *
+ * Commas are ignored ("14,594" is 14594) and the match must be a whole
+ * number, so 14594 is not found inside 145940 or 1.14594.
+ */
+export function numberInQuote(value, quote) {
+  if (typeof value !== "number" || !Number.isFinite(value) || !quote) return false;
+  const q = String(quote).replace(/(\d),(?=\d{3}\b)/g, "$1");
+  const forms = new Set([String(value), value.toFixed(1), value.toFixed(2)]);
+  if (Number.isInteger(value)) forms.add(String(value));
+  for (const f of forms) {
+    const re = new RegExp("(^|[^\\d.])" + f.replace(".", "\\.") + "(?![\\d])");
+    if (re.test(q)) return true;
+  }
+  return false;
+}
+
+/** The amount for a period - a level, never a change or a percentage. */
+function levelRequest(req, basisFrom, period, cal) {
+  return {
+    ...req,
+    shape: "point",
+    guidePeriod: period,
+    periodWanted: describePeriod(period, cal),
+    expectBasis: basisFrom.expectBasis,
+    expect: {
+      kind: "level",
+      unit: "other",
+      describe: "the AMOUNT for this period (a level, e.g. in $ millions) - NOT a change and"
+        + " NOT a percentage. Where a table shows this period beside the prior year, take"
+        + " this period's column. Write period_text as the whole period that column covers,"
+        + " in words, e.g. 'Three months ended September 30, 2023' or 'Year ended December"
+        + " 31, 2022' - even when the column heading is abbreviated (such as 'Sep 23'),"
+        + " because a bare date or abbreviation cannot be checked and the answer is"
+        + " discarded",
+    },
+  };
+}
+
+/**
+ * Which answers need their growth built from two amounts.
+ *
+ * A guide stated as a percentage change, for a period that has ended, whose
+ * answer is empty - or whose revenue answer is known to be the wrong line
+ * (the release prints an adjusted revenue line, the re-check found no
+ * adjusted growth, and the as-reported figure is still in place).
+ *
+ * Why: a release often prints the AMOUNTS and not the change. Delta's
+ * October 2024 release shows adjusted operating revenue of $14,594m against
+ * $14,553m and prints "-" in the % column. Asked for a percentage change, the
+ * model correctly found none. The change is arithmetic on two printed
+ * figures, so the code does the arithmetic.
+ */
+function growthToBuild(requests, actuals, adjustedFor, release, cal) {
+  const out = [];
+  requests.forEach((req, i) => {
+    const isGrowth = req.shape === "growth_range" || req.shape === "growth_point";
+    if (!isGrowth || req.unit !== "percent") return;
+    if (!priorYearPeriod(req.guidePeriod)) return;
+    if (!guidePeriodClosed(req, release, cal)) return;
+    const a = actuals[i];
+    const empty = a.value === null;
+    const wrongLine = a.revenue_recheck === "kept" && a.value !== null
+      && !markers(String(a.found_as || "") + " " + String(a.section || "") + " " + String(a.quote || "")).adjusted;
+    if (empty || wrongLine) out.push(i);
+  });
+  return out;
+}
+
+/**
+ * Ask for the two amounts, check them, compute the change.
+ *
+ * Two questions per guide, sent together: this period's amount and the same
+ * period a year earlier, on the basis the guide needs (the adjusted line, for
+ * revenue that has one). Every answer runs through toActual like any other.
+ *
+ * Both amounts are used only if all of these hold:
+ *   - each came back with a number, in the same unit, not a percentage;
+ *   - each number is printed in its own quote;
+ *   - this period's amount is for the guided period and passes the basis check;
+ *   - the prior amount is for the period one year earlier, and either passes
+ *     the basis check itself or sits in the same row as this period's amount.
+ * The last rule exists because a comparison table often labels the adjusted
+ * row plainly ("Operating revenue 14,594 14,553 41") - the row carrying the
+ * verified adjusted figure for this period is the adjusted series.
+ *
+ * Otherwise nothing changes: an empty answer stays empty, a kept figure stays.
+ */
+async function growthFromLevels(env, requests, actuals, adjustedFor, text, release, cal) {
+  const idx = growthToBuild(requests, actuals, adjustedFor, release, cal);
+  if (!idx.length) return { asked: 0, computed: 0 };
+
+  const asks = [];
+  for (const i of idx) {
+    const basisFrom = adjustedFor.get(i) || requests[i];
+    asks.push(levelRequest(requests[i], basisFrom, requests[i].guidePeriod, cal));
+    asks.push(levelRequest(requests[i], basisFrom, priorYearPeriod(requests[i].guidePeriod), cal));
+  }
+
+  let rows;
+  try {
+    rows = await callModel(env, asks, text);
+  } catch (e) {
+    console.log("Growth from amounts failed for " + release.accession + ": " + e.message);
+    return { asked: idx.length, computed: 0 };
+  }
+  const byId = new Map();
+  for (const row of rows) {
+    if (row.id !== undefined && row.id !== null && !byId.has(Number(row.id))) byId.set(Number(row.id), row);
+  }
+
+  let computed = 0;
+  idx.forEach((i, k) => {
+    const curReq = asks[2 * k], priorReq = asks[2 * k + 1];
+    const curRow = byId.get(2 * k) || {}, priorRow = byId.get(2 * k + 1) || {};
+    const cur = toActual(curReq, curRow, release, cal);
+    const prior = toActual(priorReq, priorRow, release, cal);
+
+    const why = [];
+    if (cur.value === null || prior.value === null) why.push("an amount is missing");
+    else {
+      if (!cur.unit || cur.unit === "percent" || String(cur.unit).toLowerCase() !== String(prior.unit || "").toLowerCase())
+        why.push("units differ or are not amounts (" + cur.unit + " / " + prior.unit + ")");
+      if (!numberInQuote(cur.value, curRow.quote)) why.push("this period's amount is not in its quote");
+      if (!numberInQuote(prior.value, priorRow.quote)) why.push("the prior amount is not in its quote");
+      if (cur.period !== curReq.guidePeriod || cur.period_assumed) why.push("this period's amount is for " + cur.period);
+      if (prior.period !== priorReq.guidePeriod || prior.period_assumed) why.push("the prior amount is for " + prior.period);
+      if (cur.basis_mismatch) why.push("this period's amount: " + cur.basis_mismatch);
+      if (prior.basis_mismatch && !numberInQuote(cur.value, priorRow.quote)) why.push("the prior amount: " + prior.basis_mismatch);
+      if (cur.period_open) why.push("the period had not ended");
+      if (!(prior.value > 0)) why.push("the prior amount is not positive");
+    }
+
+    const before = actuals[i];
+    const growth = why.length ? null : Math.round((cur.value / prior.value - 1) * 10000) / 100;
+    console.log("Growth from amounts " + release.accession + " " + requests[i].guidePeriod
+      + ": " + JSON.stringify(cur.found_as) + " " + cur.value + " vs " + JSON.stringify(prior.found_as) + " " + prior.value
+      + (why.length ? " - not used (" + why.join("; ") + ")" : " = " + growth + "% - USED")
+      + (before.value !== null ? ", was " + before.value : ""));
+
+    if (why.length) return;
+    actuals[i] = {
+      ...cur,
+      metric: before.metric,
+      metric_as_written: before.metric_as_written,
+      basis: before.basis,
+      expected_basis: (adjustedFor.get(i) || requests[i]).expectBasis.describe,
+      guided_shape: before.guided_shape,
+      guided_unit: before.guided_unit,
+      guide_period: before.guide_period,
+      period_wanted: before.period_wanted,
+      expected: before.expected,
+      value: growth,
+      unit: "percent",
+      unit_mismatch: false,
+      basis_mismatch: null,
+      found_as: String(cur.found_as || "amount") + " - change computed from " + cur.value + " and " + prior.value
+        + " " + cur.unit,
+      quote: String(curRow.quote) + (String(priorRow.quote) === String(curRow.quote) ? "" : " | " + String(priorRow.quote)),
+      growth_computed: { current: cur.value, prior: prior.value, unit: cur.unit, prior_period: prior.period },
+      replaced_figure: before.value !== null
+        ? { found_as: before.found_as, value: before.value, quote: before.quote }
+        : (before.replaced_figure || null),
+      revenue_recheck: before.revenue_recheck,
+    };
+    computed++;
+  });
+
+  return { asked: idx.length, computed };
 }
 
 /**
@@ -801,6 +1001,9 @@ export async function actualsFrom(env, cik, release, requests, cal) {
   // Revenue only, and only where the release prints an adjusted revenue line.
   const recheck = await recheckRevenue(env, requests, actuals, filing.text, release, cal);
 
+  // Any growth guide still without a usable answer: build it from two amounts.
+  const growth = await growthFromLevels(env, requests, actuals, recheck.adjustedFor, filing.text, release, cal);
+
   return {
     release: {
       accession: release.accession,
@@ -817,6 +1020,8 @@ export async function actualsFrom(env, cik, release, requests, cal) {
     basisMismatches: actuals.filter((a) => a.basis_mismatch).length,
     revenueRechecked: recheck.asked,
     revenueReplaced: recheck.replaced,
+    growthAsked: growth.asked,
+    growthComputed: growth.computed,
     actuals,
   };
 }
