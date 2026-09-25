@@ -294,11 +294,16 @@ function byMetric(pairs, unanswered, limit) {
     const key = metricKey(u.metric);
     unansweredByKey.set(key + "|" + u.period, u);
 
+    /* NO ROW FOR A GUIDE WE COULD NOT MATCH.
+     *
+     * These rows read "not reported" - and Delta DID report its FY2024 EPS
+     * ($6.16) and its revenue in every quarter shown. The extraction missed
+     * them. A reader who knows Delta sees a false statement about the company,
+     * which costs more than the row is worth. So the guide is counted, and the
+     * count line says how many were left out and why. */
     const g = group(key, u.unit);
     g.labels.push(u.metric);
-    if (!g.rows.some((p) => p.period === u.period)) {
-      g.rows.push({ period: u.period, unit: u.unit, guide: u.guide, guidePath: u.guidePath || null, unanswered: true });
-    }
+    if (!g.rows.some((p) => p.period === u.period)) g.unmatched = (g.unmatched || 0) + 1;
   }
 
   const out = Array.from(groups.values());
@@ -320,7 +325,8 @@ function byMetric(pairs, unanswered, limit) {
     return quartersApart(newestOverall, newest) > STALE_AFTER_QUARTERS;
   }
 
-  const live = out.filter((g) => !stale(g));
+  // A measure with nothing scored has nothing to show.
+  const live = out.filter((g) => g.rows.length && !stale(g));
 
   /**
    * THE THREE-PAIR BAR IS GONE.
@@ -370,7 +376,8 @@ function byMetric(pairs, unanswered, limit) {
 
       const u = unansweredByKey.get(key + "|" + period);
       if (u) {
-        extra.push({ period, unit: u.unit, guide: u.guide, guidePath: u.guidePath || null, unanswered: true });
+        // Guided, not matched: counted in the line above the table, not drawn.
+        continue;
       } else {
         // IT SAYS "NOT GUIDED", NEVER "NOT DISCLOSED". Whether the company
         // withheld it or the extraction missed it is not knowable from here,
@@ -407,7 +414,10 @@ function countLine(g) {
   if (g.noVerdict) parts.push(g.noVerdict + " against a single figure");
 
   const tail = [];
-  if (g.notReported) tail.push(g.notReported + " not reported");
+  if (g.unmatched) {
+    tail.push(g.unmatched + (g.unmatched === 1 ? " guided period" : " guided periods")
+      + " left out, no matching reported figure found");
+  }
   if (g.notGuided) tail.push(g.notGuided + " not guided");
 
   /* Nothing scored yet: say what there is, not "0 periods: ;". */
