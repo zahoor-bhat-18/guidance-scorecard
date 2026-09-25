@@ -467,6 +467,41 @@ function guardGuide(input) {
 }
 
 /**
+ * A currency or deal EFFECT, not a guide for the measure itself.
+ *
+ * Coca-Cola writes "Comparable net revenues (non-GAAP) are expected to include
+ * an approximate 1% currency tailwind ... in addition to an approximate 1%
+ * headwind from acquisitions and divestitures". The model returned that as
+ * "comparable net revenues guided at 1%", and it was scored against revenue
+ * growth of 6%: "guided 1, reported 6", flagged as a very large gap. The same
+ * for EPS ("guided 3, reported 11"), and in the revision lines, where a change
+ * in the acquisition headwind printed as "Comparable net revenues raised".
+ *
+ * The test is on the guide's OWN numbers. It is an effect only when every
+ * number the guide carries is a number the quote attaches to a headwind or
+ * tailwind. "Comparable EPS 9% to 10% growth, which includes approx. 3%
+ * currency tailwind" keeps its 9% to 10%: those are not the tailwind's
+ * numbers. Deterministic, so it does not depend on the model's labelling.
+ */
+const EFFECT_RE =
+  /(-?\d+(?:\.\d+)?)\s*%?\s*(?:(?:to|-|–)\s*(-?\d+(?:\.\d+)?)\s*%?\s*)?(?:currency\s+|fx\s+|foreign\s+exchange\s+|structural\s+)?(?:headwind|tailwind)s?\b/gi;
+
+export function isEffectGuide(g) {
+  const nums = [g && g.low, g && g.high, g && g.value].filter((n) => typeof n === "number");
+  if (!nums.length) return false;
+
+  const quote = String((g && g.quote) || "").replace(/\s+/g, " ");
+  const effectNumbers = new Set();
+  for (const m of quote.matchAll(EFFECT_RE)) {
+    effectNumbers.add(Math.abs(parseFloat(m[1])));
+    if (m[2] !== undefined) effectNumbers.add(Math.abs(parseFloat(m[2])));
+  }
+  if (!effectNumbers.size) return false;
+
+  return nums.every((n) => effectNumbers.has(Math.abs(n)));
+}
+
+/**
  * The same guide, reported twice.
  *
  * Delta prints its outlook in a table AND describes it in the narrative, so
@@ -612,7 +647,14 @@ export async function guidanceFrom(env, cik, release, cal) {
     return { ...g, period: r.period, period_how: r.how || null, period_why: r.why || null };
   });
 
-  const guides = dedupeGuides(withPeriods);
+  // Every guide as extracted, in order - what the next release is ASKED
+  // about. Kept unchanged so the backfill sends the model the same questions
+  // it always has and reuses the saved answers.
+  const asExtracted = dedupeGuides(withPeriods);
+  // What is scored, tracked and revised: the same, without currency and deal
+  // effects. Set aside rather than hidden - listed in the backfill summary.
+  const effects = asExtracted.filter(isEffectGuide);
+  const guides = asExtracted.filter((g) => !isEffectGuide(g));
 
   return {
     release: {
@@ -628,5 +670,7 @@ export async function guidanceFrom(env, cik, release, cal) {
     recovered: guides.filter((g) => g.numbers_recovered).length,
     unresolvedPeriods: guides.filter((g) => !g.period).length,
     guides,
+    effects,
+    asExtracted,
   };
 }
