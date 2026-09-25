@@ -36,9 +36,15 @@ async function main() {
 
   const raw = await r.json();
   const map = {};
+  // Ticker and company name, for the search box on the site: typing "M" lists
+  // Meta, Macy's, Microsoft. Kept apart from the map because the poller reads
+  // the map every minute and has no use for names.
+  const names = [];
   for (const row of Object.values(raw)) {
     if (!row || !row.ticker || !row.cik_str) continue;
-    map[String(row.ticker).toUpperCase()] = String(row.cik_str).padStart(10, "0");
+    const t = String(row.ticker).toUpperCase();
+    if (!(t in map)) names.push([t, String(row.title || "").trim()]);
+    map[t] = String(row.cik_str).padStart(10, "0");
   }
 
   const count = Object.keys(map).length;
@@ -58,7 +64,17 @@ async function main() {
   );
   if (!put.ok) throw new Error("KV write failed: " + put.status + " " + (await put.text()).slice(0, 200));
 
-  const line = count + " tickers written to tickers:cik.";
+  const namesBody = new FormData();
+  namesBody.set("value", JSON.stringify(names));
+  namesBody.set("metadata", "{}");
+  const putNames = await fetch(
+    "https://api.cloudflare.com/client/v4/accounts/" + ACCOUNT
+    + "/storage/kv/namespaces/" + KV_ID + "/values/tickers%3Anames",
+    { method: "PUT", headers: { Authorization: "Bearer " + CF_TOKEN }, body: namesBody }
+  );
+  if (!putNames.ok) throw new Error("KV write failed for names: " + putNames.status + " " + (await putNames.text()).slice(0, 200));
+
+  const line = count + " tickers written to tickers:cik, and " + names.length + " names to tickers:names.";
   console.log(line);
 
   if (process.env.GITHUB_STEP_SUMMARY) {
