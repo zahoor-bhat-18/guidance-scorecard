@@ -762,7 +762,10 @@ async function main() {
   const mode = (REBUILD
     ? "REBUILT: stored records ignored, every pair scored again."
     : "MERGED, not rebuilt: " + keptTotal + " stored pairs kept as they were.")
-    + " Arguments received: " + (ARGS.join(" ") || "(none)");
+    + " Arguments received: " + (ARGS.join(" ") || "(none)") + "."
+    // Which code ran, to match against the latest commit on GitHub, and when.
+    + " Code: " + String(process.env.GITHUB_SHA || "local").slice(0, 7) + "."
+    + " Run at " + new Date().toISOString().slice(0, 16).replace("T", " ") + " UTC.";
   console.log(mode);
   await writeFile("out/summary.md", mode + "\n\n" + answers.line() + "\n\n" + markdownFor(summary, failures));
 
