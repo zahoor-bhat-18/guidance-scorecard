@@ -321,7 +321,10 @@ async function buildOne(ticker) {
     const priorGuidance = guidanceByRelease[i + 1];
     const currentGuidance = guidanceByRelease[i];
 
-    const requests = requestsFrom(priorGuidance.guides, calendar);
+    // Asked about everything as extracted, effects included, so the questions
+    // are identical to earlier runs and the saved answers are reused. Only
+    // priorGuidance.guides - effects removed - is paired and revised below.
+    const requests = requestsFrom(priorGuidance.asExtracted || priorGuidance.guides, calendar);
 
     let actuals = [];
     if (requests.length) {
@@ -533,6 +536,11 @@ async function buildOne(ticker) {
     },
     pairs: merged,
     carriedOver: kept,
+    // Guides set aside as currency or deal effects (see isEffectGuide), so a
+    // wrongly set-aside guide can be seen rather than silently missing.
+    effectsSetAside: guidanceByRelease.flatMap((g) => (g.effects || []).map((e) =>
+      String(e.metric_as_written || "?") + " for " + periodLabel(e.period) + ": \""
+      + String(e.quote || "").replace(/\s+/g, " ").slice(0, 140) + "\"")),
     annual,
     revisions,
     currentGuidance: guidanceByRelease[0].guides,
@@ -624,6 +632,13 @@ function markdownFor(records, failures) {
       lines.push("**Period wording that could not be resolved**");
       lines.push("");
       for (const t of r.unreadablePeriods) lines.push("- `" + t + "`");
+    }
+
+    if (r.effectsSetAside && r.effectsSetAside.length) {
+      lines.push("");
+      lines.push("**Set aside as currency or deal effects, not guides**");
+      lines.push("");
+      for (const t of r.effectsSetAside) lines.push("- " + t);
     }
 
     if (r.periodMismatches && r.periodMismatches.length) {
@@ -727,6 +742,7 @@ async function main() {
         // listed here: the measure, the period guided, the period the figure
         // was reported for, and the model's own wording for that period -
         // which is what tells a real mismatch from a mislabelled one.
+        effectsSetAside: (record.effectsSetAside || []).slice(0, 12),
         periodMismatches: Array.from(new Set(
           record.pairs
             .filter((p) => !p.comparable && String(p.why || "").startsWith("Different periods"))
