@@ -124,3 +124,8 @@ jobs:
             echo "Writing $key"
             npx --yes wrangler@4 kv key put "$key" --path "$file" --binding CACHE --remote
           done
+          # The summary as text, served at /api/summary, so it can be read
+          # whole instead of copied off a phone screen.
+          if [ -f out/summary.md ]; then
+            npx --yes wrangler@4 kv key put "summary:latest" --path out/summary.md --binding CACHE --remote
+          fi
