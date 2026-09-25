@@ -58,10 +58,17 @@ function markers(text) {
   };
 }
 
-/* Measures with no adjusted version to confuse. Revenue is revenue - there is
-   no adjusted revenue, which is part of why it survives a GAAP-only scorecard
-   when nothing else does. Asking these to carry an "adjusted" marker would
-   reject every one of them. */
+/* Measures that usually have no adjusted version. Asking these to carry an
+   "adjusted" marker would reject most of them, so they are asked for as
+   reported.
+
+   REVENUE IS THE EXCEPTION THAT PROVED THIS WRONG. Delta prints both "Total
+   Revenue" (GAAP, including refinery sales to third parties) and "Total
+   Revenue, adjusted" - and guides the adjusted one. Asked for "the figure as
+   reported", the model took the GAAP line twice: Q4 2023 scored 6% against a
+   9-12% guide, and full-year 2023 15% against "adjusted revenue growth of 20
+   percent". Revenue stays on this list, so every existing question is
+   unchanged; the case is handled after the answer, by recheckRevenue below. */
 const NO_ADJUSTED_VERSION = new Set(["revenue", "capex", "operating_cash_flow"]);
 
 function exemptFromAdjustment(metric, label) {
@@ -92,6 +99,9 @@ function expectedBasis(guide) {
     wantsAdjusted,
     wantsCC: mk.cc,
     exempt,
+    // Not sent to the model. Read by recheckRevenue: a guide that says GAAP
+    // wants the GAAP line and is never re-asked for the adjusted one.
+    saysGaap: mk.gaap,
     describe: [
       wantsAdjusted ? "the ADJUSTED (non-GAAP) version" : mk.gaap ? "the GAAP version" : "the figure as reported",
       mk.cc ? "in CONSTANT CURRENCY" : null,
@@ -465,6 +475,268 @@ async function callModel(env, requests, text) {
 }
 
 /**
+ * One answer turned into an actual: basis check, period, open-period test.
+ * Moved out of actualsFrom unchanged, so the revenue re-check below runs its
+ * answers through exactly the same checks as every other answer.
+ */
+function toActual(req, row, release, cal) {
+  const value = typeof row.value === "number" ? row.value : null;
+  const unit = row.unit || null;
+
+  const wantedPercent = req.expect.unit === "percent";
+  const gotPercent = unit === "percent";
+  const unitMismatch = value !== null && Boolean(unit) && wantedPercent !== gotPercent;
+
+  // What the release called the figure that was taken. The quote is included
+  // because a table row often carries the qualifier the label omits.
+  /* The heading is read as well as the label and the line.
+   *
+   * Delta lists results as bullets under "June Quarter 2024 Adjusted
+   * Financial Results", and the bullet reads only "Earnings per share of
+   * $2.36". This check looked for the word adjusted in the label and the
+   * line, found it in neither, and refused the correct adjusted figure as
+   * "the figure taken is as reported" - even on the runs where the model had
+   * found exactly the right number. The basis was stated; it was stated one
+   * line up. */
+  const found = markers(String(row.found_as || "") + " " + String(row.section || "")
+    + " " + String(row.quote || ""));
+
+  let basisMismatch = null;
+  if (value !== null && row.found_as) {
+    if (req.expectBasis.wantsAdjusted && !found.adjusted) {
+      basisMismatch = "The guide is on an adjusted basis and the figure taken is as reported.";
+    } else if (!req.expectBasis.wantsAdjusted && !req.expectBasis.exempt && found.adjusted) {
+      basisMismatch = "The guide is on a GAAP basis and the figure taken is adjusted.";
+    } else if (req.expectBasis.wantsCC && !found.cc) {
+      basisMismatch = "The guide is in constant currency and the figure taken is not.";
+    }
+  }
+
+  let resolved = cal
+    ? resolvePeriod(row.period_text, cal, { referenceDate: release.filed, direction: "past" })
+    : { period: null, why: "No fiscal calendar was supplied." };
+
+  /* The period the release must be reporting, when the stated one cannot be
+   * used.
+   *
+   * The first version only fired when the period text was MISSING, and it
+   * almost never was. Broadcom returns wording we cannot parse rather than
+   * no wording at all, so nine answers a run fell through a recovery written
+   * for a case that barely happens.
+   *
+   * So it fires whenever the period is unresolved - absent, unparseable, or
+   * a phrase never met before.
+   *
+   * With one exception, and it is the important one. If the stated text says
+   * the figure covers a year-to-date or half-year span, that is not a period
+   * we failed to read, it is the WRONG period honestly reported. Overriding
+   * it would pair a six-month figure against a quarterly guide, which is the
+   * failure this whole product is built to avoid. Those stay refused.
+   */
+  let periodAssumed = false;
+  if (cal && value !== null && !resolved.period) {
+    /* Only text that names a year-to-date span AND NOTHING ELSE counts as
+     * honestly reporting the wrong period.
+     *
+     * "three and nine months ended August 2, 2026" is a table HEADER: the
+     * table carries the quarter and the year to date side by side, and the
+     * figure taken is almost certainly the quarter. Refusing it because the
+     * words "nine months" appear throws away the answer over wording that
+     * describes the table rather than the figure. */
+    const stated = String(row.period_text || "");
+    const namesYtd = /year[-\s]to[-\s]date|six months|nine months|26 weeks|39 weeks|half[-\s]year/i.test(stated);
+    // "three AND nine months" is the wording, not "three months" - the first
+    // attempt missed it and refused the very case it was written for.
+    const namesQuarter =
+      /three months|13 weeks|quarter|three\s+and\s+(six|nine)\s+months|13\s+and\s+(26|39)\s+weeks/i
+        .test(stated);
+    const statedWrongSpan = namesYtd && !namesQuarter;
+
+    if (!statedWrongSpan) {
+      const fromFiling = periodReportedBy(release.filed, cal);
+      if (fromFiling) {
+        resolved = {
+          period: fromFiling,
+          how: "the stated period could not be read"
+            + (row.period_text ? ' ("' + row.period_text + '")' : " and none was given")
+            + ", so the quarter this release reports was taken from its filing date",
+        };
+        periodAssumed = true;
+      }
+    }
+  }
+
+  /* HAD THE PERIOD ENDED WHEN THIS RELEASE WAS FILED?
+   *
+   * Coca-Cola's July 2026 release was asked for its FY2026 free cash flow
+   * and answered with $12.4bn - the raised outlook, not a result. The pair
+   * then read "guided 12.2, reported 12.4": one guide scored against the
+   * next. The same for its tax rate, capex and operating cash flow, in every
+   * run so far. periodIsClosedBy existed for exactly this and nothing called
+   * it. A figure for a period still open is an outlook, whatever the model
+   * called it. Marked here, refused in pairing with its own reason. */
+  const periodOpen = Boolean(
+    cal && resolved.period && release && release.filed
+    && !periodIsClosedBy(resolved.period, release.filed, cal)
+  );
+
+  return {
+    metric: req.metric,
+    metric_as_written: req.metric_as_written,
+    asked_as: req.query,
+    basis: req.basis,
+    expected_basis: req.expectBasis.describe,
+    guided_shape: req.shape,
+    guided_unit: req.unit,
+    guide_period: req.guidePeriod,
+    period_wanted: req.periodWanted,
+    expected: req.expect.describe,
+    found_as: row.found_as ?? null,
+    section: row.section ?? null,
+    period_text: row.period_text ?? null,
+    period: resolved.period,
+    period_assumed: periodAssumed,
+    period_open: periodOpen,
+    period_how: resolved.how || null,
+    period_why: resolved.why || null,
+    value,
+    unit,
+    unit_mismatch: unitMismatch,
+    basis_mismatch: basisMismatch,
+    quote: row.quote ?? null,
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * Revenue: the adjusted line, when the release prints one
+ * ------------------------------------------------------------------ */
+
+/**
+ * Does this release print an adjusted revenue line?
+ *
+ * Read from the release text by code, not by the model. Delta's reads
+ * "Total Revenue, adjusted $ 14,223"; narratives say "adjusted operating
+ * revenue". Either form counts.
+ */
+const ADJUSTED_REVENUE_LINE =
+  /\b(?:total\s+)?(?:operating\s+)?revenues?\s*,\s*adjusted\b|\badjusted\s+(?:total\s+)?(?:operating\s+)?revenues?\b/i;
+
+export function printsAdjustedRevenue(text) {
+  return ADJUSTED_REVENUE_LINE.test(String(text || ""));
+}
+
+/**
+ * Which revenue answers need asking again, for the adjusted line.
+ *
+ * All three must hold:
+ *   - the request is revenue and its guide does not say GAAP;
+ *   - the answer is not already the adjusted figure (a plain line was taken,
+ *     or nothing was found at all);
+ *   - the release itself prints an adjusted revenue line.
+ * A company with no adjusted revenue never gets past the third test, so its
+ * answers and its costs are untouched.
+ */
+function revenueToRecheck(requests, actuals, text) {
+  if (!printsAdjustedRevenue(text)) return [];
+  const out = [];
+  requests.forEach((req, i) => {
+    if (req.metric !== "revenue" || req.expectBasis.saysGaap) return;
+    const a = actuals[i];
+    const found = markers(String(a.found_as || "") + " " + String(a.section || "") + " " + String(a.quote || ""));
+    if (a.value !== null && found.adjusted) return;
+    out.push(i);
+  });
+  return out;
+}
+
+/**
+ * The same request, asking for the adjusted line.
+ *
+ * A NEW question, so it has its own fingerprint and is paid once, then saved.
+ * The original question is untouched and its saved answer is still used.
+ */
+function adjustedRevenueRequest(req) {
+  return {
+    ...req,
+    expectBasis: {
+      wantsAdjusted: true,
+      wantsCC: req.expectBasis.wantsCC,
+      exempt: false,
+      saysGaap: false,
+      describe: "the ADJUSTED revenue line - where the release prints both a total revenue line and"
+        + " an adjusted revenue line, take the ADJUSTED one"
+        + (req.expectBasis.wantsCC ? ", in CONSTANT CURRENCY" : ""),
+    },
+  };
+}
+
+/**
+ * Ask again for the adjusted revenue line, and use it only if it passes.
+ *
+ * The answer runs through toActual, the same checks as every other answer.
+ * It replaces the original only if it came back with a number, labelled as
+ * adjusted revenue, with no basis or unit problem, and for the period the
+ * guide was for. Otherwise the original stands - which is right for a figure
+ * that has no adjusted version.
+ *
+ * Every replacement keeps what it replaced, so it can be audited.
+ */
+async function recheckRevenue(env, requests, actuals, text, release, cal) {
+  const idx = revenueToRecheck(requests, actuals, text);
+  if (!idx.length) return { asked: 0, replaced: 0 };
+
+  const again = idx.map((i) => adjustedRevenueRequest(requests[i]));
+  let rows;
+  try {
+    rows = await callModel(env, again, text);
+  } catch (e) {
+    console.log("Revenue re-check failed for " + release.accession + ": " + e.message);
+    return { asked: idx.length, replaced: 0 };
+  }
+
+  const byId = new Map();
+  for (const row of rows) {
+    if (row.id !== undefined && row.id !== null && !byId.has(Number(row.id))) byId.set(Number(row.id), row);
+  }
+
+  let replaced = 0;
+  idx.forEach((i, j) => {
+    const row = byId.get(j) || {};
+    const cand = toActual(again[j], row, release, cal);
+    const label = String(cand.found_as || "") + " " + String(cand.quote || "");
+    const ok = cand.value !== null
+      && !cand.basis_mismatch
+      && !cand.unit_mismatch
+      && !cand.period_open
+      && /revenue|sales/i.test(label)
+      && Boolean(cand.period)
+      && (!requests[i].guidePeriod || cand.period === requests[i].guidePeriod);
+
+    const before = actuals[i];
+    console.log("Revenue re-check " + release.accession + " " + (requests[i].guidePeriod || "?")
+      + ": was " + JSON.stringify(before.found_as) + " " + before.value
+      + ", adjusted answer " + JSON.stringify(cand.found_as) + " " + cand.value
+      + (ok ? " - REPLACED" : " - kept original"));
+
+    if (ok) {
+      actuals[i] = {
+        ...cand,
+        // What was asked stays as it was: the guide's own basis and wording.
+        basis: before.basis,
+        expected_basis: before.expected_basis,
+        revenue_recheck: "replaced",
+        replaced_figure: { found_as: before.found_as, value: before.value, quote: before.quote },
+      };
+      replaced++;
+    } else {
+      actuals[i] = { ...before, revenue_recheck: "kept" };
+    }
+  });
+
+  return { asked: idx.length, replaced };
+}
+
+/**
  * One release and a list of metrics in, the reported figures out.
  *
  * Every requested metric comes back whether found or not. A missing row and a
@@ -523,132 +795,11 @@ export async function actualsFrom(env, cik, release, requests, cal) {
     const k = req.query.toLowerCase();
     const nameIsUnique = nameCount.get(k) === 1 && askedCount.get(k) === 1;
     const row = byId.get(i) || (nameIsUnique ? byName.get(k) : null) || rows[i] || {};
-    const value = typeof row.value === "number" ? row.value : null;
-    const unit = row.unit || null;
-
-    const wantedPercent = req.expect.unit === "percent";
-    const gotPercent = unit === "percent";
-    const unitMismatch = value !== null && Boolean(unit) && wantedPercent !== gotPercent;
-
-    // What the release called the figure that was taken. The quote is included
-    // because a table row often carries the qualifier the label omits.
-    /* The heading is read as well as the label and the line.
-     *
-     * Delta lists results as bullets under "June Quarter 2024 Adjusted
-     * Financial Results", and the bullet reads only "Earnings per share of
-     * $2.36". This check looked for the word adjusted in the label and the
-     * line, found it in neither, and refused the correct adjusted figure as
-     * "the figure taken is as reported" - even on the runs where the model had
-     * found exactly the right number. The basis was stated; it was stated one
-     * line up. */
-    const found = markers(String(row.found_as || "") + " " + String(row.section || "")
-      + " " + String(row.quote || ""));
-
-    let basisMismatch = null;
-    if (value !== null && row.found_as) {
-      if (req.expectBasis.wantsAdjusted && !found.adjusted) {
-        basisMismatch = "The guide is on an adjusted basis and the figure taken is as reported.";
-      } else if (!req.expectBasis.wantsAdjusted && !req.expectBasis.exempt && found.adjusted) {
-        basisMismatch = "The guide is on a GAAP basis and the figure taken is adjusted.";
-      } else if (req.expectBasis.wantsCC && !found.cc) {
-        basisMismatch = "The guide is in constant currency and the figure taken is not.";
-      }
-    }
-
-    let resolved = cal
-      ? resolvePeriod(row.period_text, cal, { referenceDate: release.filed, direction: "past" })
-      : { period: null, why: "No fiscal calendar was supplied." };
-
-    /* The period the release must be reporting, when the stated one cannot be
-     * used.
-     *
-     * The first version only fired when the period text was MISSING, and it
-     * almost never was. Broadcom returns wording we cannot parse rather than
-     * no wording at all, so nine answers a run fell through a recovery written
-     * for a case that barely happens.
-     *
-     * So it fires whenever the period is unresolved - absent, unparseable, or
-     * a phrase never met before.
-     *
-     * With one exception, and it is the important one. If the stated text says
-     * the figure covers a year-to-date or half-year span, that is not a period
-     * we failed to read, it is the WRONG period honestly reported. Overriding
-     * it would pair a six-month figure against a quarterly guide, which is the
-     * failure this whole product is built to avoid. Those stay refused.
-     */
-    let periodAssumed = false;
-    if (cal && value !== null && !resolved.period) {
-      /* Only text that names a year-to-date span AND NOTHING ELSE counts as
-       * honestly reporting the wrong period.
-       *
-       * "three and nine months ended August 2, 2026" is a table HEADER: the
-       * table carries the quarter and the year to date side by side, and the
-       * figure taken is almost certainly the quarter. Refusing it because the
-       * words "nine months" appear throws away the answer over wording that
-       * describes the table rather than the figure. */
-      const stated = String(row.period_text || "");
-      const namesYtd = /year[-\s]to[-\s]date|six months|nine months|26 weeks|39 weeks|half[-\s]year/i.test(stated);
-      // "three AND nine months" is the wording, not "three months" - the first
-      // attempt missed it and refused the very case it was written for.
-      const namesQuarter =
-        /three months|13 weeks|quarter|three\s+and\s+(six|nine)\s+months|13\s+and\s+(26|39)\s+weeks/i
-          .test(stated);
-      const statedWrongSpan = namesYtd && !namesQuarter;
-
-      if (!statedWrongSpan) {
-        const fromFiling = periodReportedBy(release.filed, cal);
-        if (fromFiling) {
-          resolved = {
-            period: fromFiling,
-            how: "the stated period could not be read"
-              + (row.period_text ? ' ("' + row.period_text + '")' : " and none was given")
-              + ", so the quarter this release reports was taken from its filing date",
-          };
-          periodAssumed = true;
-        }
-      }
-    }
-
-    /* HAD THE PERIOD ENDED WHEN THIS RELEASE WAS FILED?
-     *
-     * Coca-Cola's July 2026 release was asked for its FY2026 free cash flow
-     * and answered with $12.4bn - the raised outlook, not a result. The pair
-     * then read "guided 12.2, reported 12.4": one guide scored against the
-     * next. The same for its tax rate, capex and operating cash flow, in every
-     * run so far. periodIsClosedBy existed for exactly this and nothing called
-     * it. A figure for a period still open is an outlook, whatever the model
-     * called it. Marked here, refused in pairing with its own reason. */
-    const periodOpen = Boolean(
-      cal && resolved.period && release && release.filed
-      && !periodIsClosedBy(resolved.period, release.filed, cal)
-    );
-
-    return {
-      metric: req.metric,
-      metric_as_written: req.metric_as_written,
-      asked_as: req.query,
-      basis: req.basis,
-      expected_basis: req.expectBasis.describe,
-      guided_shape: req.shape,
-      guided_unit: req.unit,
-      guide_period: req.guidePeriod,
-      period_wanted: req.periodWanted,
-      expected: req.expect.describe,
-      found_as: row.found_as ?? null,
-      section: row.section ?? null,
-      period_text: row.period_text ?? null,
-      period: resolved.period,
-      period_assumed: periodAssumed,
-      period_open: periodOpen,
-      period_how: resolved.how || null,
-      period_why: resolved.why || null,
-      value,
-      unit,
-      unit_mismatch: unitMismatch,
-      basis_mismatch: basisMismatch,
-      quote: row.quote ?? null,
-    };
+    return toActual(req, row, release, cal);
   });
+
+  // Revenue only, and only where the release prints an adjusted revenue line.
+  const recheck = await recheckRevenue(env, requests, actuals, filing.text, release, cal);
 
   return {
     release: {
@@ -664,6 +815,8 @@ export async function actualsFrom(env, cik, release, requests, cal) {
     found: actuals.filter((a) => a.value !== null).length,
     unitMismatches: actuals.filter((a) => a.unit_mismatch).length,
     basisMismatches: actuals.filter((a) => a.basis_mismatch).length,
+    revenueRechecked: recheck.asked,
+    revenueReplaced: recheck.replaced,
     actuals,
   };
 }
