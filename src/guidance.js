@@ -374,6 +374,90 @@ export function quoteNumbers(quote) {
   return found;
 }
 
+/**
+ * THE ENDS OF A RANGE WRITTEN AS A MIDPOINT AND A BAND.
+ *
+ * Micron guides "Revenue $10.60 billion ± $200 million" and "Diluted EPS
+ * $2.50 ± $0.15"; Nvidia "Revenue is expected to be $55.0 billion, plus or
+ * minus 2%". The model reads those correctly as $10.40bn to $10.80bn, $2.35
+ * to $2.65 and $53.9bn to $56.1bn - and the guard, finding no 10.40 or 10.80
+ * in the sentence, decided both ends were invented and dropped the guide.
+ * Micron's first backfill kept one guide in fourteen releases, and its
+ * subscriber was told it gives too little guidance to score.
+ *
+ * The ends ARE in the sentence, as arithmetic the company wrote out: midpoint
+ * minus band, midpoint plus band. Only those two numbers are added, and only
+ * where the sentence says ±, +/- or "plus or minus". The band is read in the
+ * company's own unit:
+ *   $10.60 billion ± $200 million  -> 10.40 to 10.80 (band converted to billions)
+ *   86.0% ± 1.0%                   -> 85 to 87 (percentage points)
+ *   72.0%, plus or minus 50 basis points -> 71.5 to 72.5
+ *   $55.0 billion, plus or minus 2%      -> 53.9 to 56.1 (2% OF the midpoint)
+ */
+const SCALE = { thousand: 1e3, million: 1e6, m: 1e6, billion: 1e9, bn: 1e9, b: 1e9 };
+const BAND_RE = new RegExp(
+  "(-?\\$?\\s*-?\\d[\\d,]*(?:\\.\\d+)?)\\s*(billion|million|thousand|bn|b|m|%|percent)?"
+  + "\\s*,?\\s*(?:\u00b1|\\+\\s*\\/\\s*-|plus\\s+or\\s+minus)\\s*"
+  + "(\\$?\\s*\\d[\\d,]*(?:\\.\\d+)?)\\s*(billion|million|thousand|bn|b|m|%|percent|basis\\s+points|bps)?",
+  "gi"
+);
+
+export function bandEnds(quote) {
+  const ends = new Set();
+  const text = String(quote || "");
+  const num = (s) => parseFloat(String(s).replace(/[$,\s]/g, ""));
+  const tidy = (x) => Number(x.toFixed(6));
+
+  for (const m of text.matchAll(BAND_RE)) {
+    const mid = num(m[1]);
+    const band = num(m[3]);
+    if (!Number.isFinite(mid) || !Number.isFinite(band) || band <= 0) continue;
+
+    const midUnit = (m[2] || "").toLowerCase();
+    const bandUnit = (m[4] || "").toLowerCase().replace(/\s+/g, " ");
+    const midIsPercent = midUnit === "%" || midUnit === "percent";
+
+    let width;
+    if (bandUnit === "basis points" || bandUnit === "bps") {
+      width = band / 100;
+    } else if (bandUnit === "%" || bandUnit === "percent") {
+      // A percentage band on a percentage is points; on money it is a share
+      // of the midpoint.
+      width = midIsPercent ? band : Math.abs(mid) * band / 100;
+    } else if (SCALE[bandUnit] && SCALE[midUnit]) {
+      width = band * SCALE[bandUnit] / SCALE[midUnit];
+    } else if (SCALE[bandUnit] && !midUnit) {
+      // "$10,600 million ± $200 million" is caught above; a bare midpoint with
+      // a scaled band is too ambiguous to guess at.
+      continue;
+    } else {
+      width = band;
+    }
+
+    for (const e of [mid - width, mid + width]) {
+      ends.add(tidy(e));
+      // The model may give a billions figure in millions, as it does elsewhere.
+      if (SCALE[midUnit] === 1e9) ends.add(tidy(e * 1000));
+    }
+  }
+
+  /* "72.0% and 73.0%, respectively, plus or minus 50 basis points" - one band
+     for several midpoints, so it sits next to none of them. Applied to every
+     percentage in the same sentence before it, and only for a band in points. */
+  const RESP = /respectively,?\s*(?:\u00b1|\+\s*\/\s*-|plus\s+or\s+minus)\s*(\d+(?:\.\d+)?)\s*(basis\s+points|bps|%|percent)/gi;
+  for (const m of text.matchAll(RESP)) {
+    const unit = m[2].toLowerCase();
+    const width = /basis|bps/.test(unit) ? parseFloat(m[1]) / 100 : parseFloat(m[1]);
+    const sentence = text.slice(0, m.index).split(/[.;](?=\s|$)/).pop();
+    for (const p of sentence.matchAll(/(-?\d+(?:\.\d+)?)\s*%/g)) {
+      const mid = parseFloat(p[1]);
+      ends.add(tidy(mid - width));
+      ends.add(tidy(mid + width));
+    }
+  }
+  return ends;
+}
+
 function present(value, pool) {
   if (typeof value !== "number" || !Number.isFinite(value)) return true;
   for (const n of pool) {
@@ -443,6 +527,7 @@ function guardGuide(input) {
   const g = input.shape === "reaffirmed" ? recoverReaffirmed(input) : input;
 
   const pool = quoteNumbers(g.quote);
+  for (const e of bandEnds(g.quote)) pool.add(e);
   const stated = [];
   if (typeof g.low === "number") stated.push(["low", g.low]);
   if (typeof g.high === "number") stated.push(["high", g.high]);
