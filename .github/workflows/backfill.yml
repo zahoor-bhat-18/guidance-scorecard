@@ -28,6 +28,18 @@ on:
         type: boolean
         default: false
 
+  # A new company someone asked for on the site. Sent by the Worker when a
+  # signup is confirmed (requestBackfill in src/index.js). Only a holder of
+  # the repository token can send one, same as the send workflow's trigger.
+  repository_dispatch:
+    types: [backfill-request]
+
+# One backfill at a time. Two running together would each save their own copy
+# of the model answers, and the second to finish would drop the first's.
+concurrency:
+  group: backfill
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
@@ -77,7 +89,19 @@ jobs:
         env:
           SEC_USER_AGENT: ${{ vars.SEC_USER_AGENT }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-        run: node scripts/backfill.mjs ${{ inputs.tickers }} ${{ inputs.rebuild && '--rebuild' || '' }} ${{ inputs.fresh && '--fresh' || '' }}
+          # From the Worker on a request, from the box on a hand run. Passed
+          # through the environment, not pasted into the command.
+          REQUESTED: ${{ github.event.client_payload.tickers }}
+          TYPED: ${{ inputs.tickers }}
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            # A request with no tickers must not fall through to the whole
+            # universe, which a blank box means on a hand run.
+            if [ -z "$REQUESTED" ]; then echo "Request carried no tickers."; exit 1; fi
+            node scripts/backfill.mjs $REQUESTED
+          else
+            node scripts/backfill.mjs $TYPED ${{ inputs.rebuild && '--rebuild' || '' }} ${{ inputs.fresh && '--fresh' || '' }}
+          fi
 
       # Always, even if the build failed part-way: answers already paid for
       # are kept. The file holds every saved answer, old and new, so writing
@@ -129,3 +153,21 @@ jobs:
           if [ -f out/summary.md ]; then
             npx --yes wrangler@4 kv key put "summary:latest" --path out/summary.md --binding CACHE --remote
           fi
+
+      # Only for a request from the site: tell everyone following each new
+      # company what the backfill found. Runs even if the build failed, so a
+      # company that could not be built gets a message rather than silence.
+      - name: Tell who asked
+        if: always() && github.event_name == 'repository_dispatch'
+        env:
+          REQUESTED: ${{ github.event.client_payload.tickers }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          UNSUB_SECRET: ${{ secrets.UNSUB_SECRET }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          KV_NAMESPACE_ID: ${{ vars.KV_NAMESPACE_ID }}
+          SITE_URL: ${{ vars.SITE_URL }}
+          EMAIL_FROM: ${{ vars.EMAIL_FROM }}
+          REPLY_TO: ${{ vars.REPLY_TO }}
+          POSTAL_ADDRESS: ${{ vars.POSTAL_ADDRESS }}
+        run: node scripts/notify.mjs "$REQUESTED"
