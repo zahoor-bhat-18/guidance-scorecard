@@ -92,17 +92,38 @@
     padding:13px 14px;border:1px solid #D3D8D0;background-color:#FBFBF8;color:#16281F;border-radius:8px;
   }
   input::placeholder{color:#8A9A91}
-  .tick-wrap{position:relative;flex:1 1 14rem;display:flex}
-  .tick-wrap input{flex:1 1 auto;width:100%}
-  #suggest{position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:20;list-style:none;margin:0;padding:4px;
-    background-color:#FBFBF8;border:1px solid #D3D8D0;border-radius:8px;box-shadow:0 6px 18px rgba(22,40,31,.08);max-height:320px;overflow-y:auto}
-  #suggest[hidden]{display:none}
-  #suggest li{display:flex;align-items:baseline;gap:10px;padding:9px 10px;border-radius:6px;cursor:pointer;font-size:14px;color:#16281F}
-  #suggest li b{font-family:"IBM Plex Mono",monospace;font-weight:500;min-width:4.5em}
-  #suggest li span.name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#3E5247}
-  #suggest li span.tag{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#8A9A91;white-space:nowrap}
-  #suggest li span.tag.on{color:#1F8A5C}
-  #suggest li[aria-selected=true],#suggest li:hover{background-color:#EEF0EA}
+  /* Signup, matching Filing Watch: email, a company picker with chips, one button. */
+  .capture{margin:24px 0 8px;background-color:#FBFBF8;border:1px solid #D3D8D0;border-radius:10px;padding:26px 24px;max-width:560px}
+  .capture .field{margin:0 0 20px}
+  .capture label.meta{display:block;margin-bottom:9px;font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:#5B7166}
+  .capture input[type=email],.capture input[type=text]{
+    width:100%;box-sizing:border-box;font:400 16px/1.4 "Inter",sans-serif;color:#16281F;
+    background-color:#fff;border:1px solid #D3D8D0;border-radius:7px;padding:13px 14px;
+  }
+  .capture input:focus{outline:2px solid #1F8A5C;outline-offset:1px;border-color:#1F8A5C}
+  .combo{position:relative}
+  .results{display:none;position:absolute;z-index:20;left:0;right:0;top:calc(100% + 5px);margin:0;padding:0;list-style:none;
+    background-color:#fff;border:1px solid #D3D8D0;border-radius:8px;max-height:274px;overflow:auto;box-shadow:0 12px 30px rgba(22,40,31,.10)}
+  .results.open{display:block}
+  .results li{display:flex;gap:12px;align-items:baseline;padding:11px 14px;cursor:pointer;border-bottom:1px solid #E7E7DE}
+  .results li:last-child{border-bottom:0}
+  .results li:hover,.results li[aria-selected=true]{background-color:#F2F7F4}
+  .results .tk{font:500 13px/1 "IBM Plex Mono",monospace;color:#1F8A5C;min-width:56px}
+  .results .nm{font:400 14px/1.35 "Inter",sans-serif;color:#3E5248}
+  .results .noresult{color:#5B7166;cursor:default;font:400 14px/1.4 "Inter",sans-serif}
+  ol.picked{list-style:none;margin:14px 0 0;padding:0}
+  ol.picked li{display:flex;gap:12px;align-items:center;padding:10px 12px;margin-bottom:7px;background-color:#fff;border:1px solid #D3D8D0;border-radius:7px}
+  ol.picked .tk{font:500 13px/1.5 "IBM Plex Mono",monospace;color:#1F8A5C;min-width:56px}
+  ol.picked .nm{font:400 15px/1.5 "Inter",sans-serif;color:#16281F;flex:1}
+  ol.picked button{background:none;border:0;color:#5B7166;font-size:20px;line-height:1;cursor:pointer;padding:0 4px}
+  ol.picked button:hover{color:#A33B2E}
+  button.submit{width:100%;font:500 16px/1 "Inter",sans-serif;color:#fff;background-color:#16281F;border:0;border-radius:7px;padding:16px;cursor:pointer;margin-top:4px;transition:background-color .2s}
+  button.submit:hover:not(:disabled){background-color:#1F8A5C}
+  button.submit:disabled{background-color:#9BA79F;cursor:not-allowed}
+  .fineprint{font:400 13px/1.55 "Inter",sans-serif;color:#5B7166;margin:11px 0 0}
+  .signnote{font:400 14px/1.5 "Inter",sans-serif;margin:12px 0 0;padding:11px 14px;display:none;border-radius:6px}
+  .signnote.err{display:block;background-color:#FBF3F2;color:#A33B2E;border-left:2px solid #A33B2E}
+  .signnote.ok{display:block;background-color:#F1F7F3;color:#1F8A5C;border-left:2px solid #1F8A5C}
   input:focus-visible{outline:2px solid #1F8A5C;outline-offset:2px}
   button.go{
     font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;
@@ -238,20 +259,28 @@
   <section id="follow">
     <div class="head"><span class="mono">Follow a company</span><span class="rule"></span></div>
     <h2>One email per company, per quarter.</h2>
-    <p class="lead" style="margin-top:18px">Tell us which tickers you cover. Confirm by
-    clicking the link we send. Leave whenever you like.</p>
+    <p class="lead" style="margin-top:18px">Pick the companies you cover. When one files its
+    earnings release, you get its record against its own guidance within minutes.</p>
 
-    <form id="signup">
-      <input type="email" name="email" placeholder="you@fund.com" required autocomplete="email">
-      <div class="tick-wrap">
-        <input type="text" name="tickers" id="tickers" placeholder="Type a ticker or company" required
-          autocomplete="off" autocapitalize="characters" spellcheck="false"
-          role="combobox" aria-autocomplete="list" aria-controls="suggest" aria-expanded="false">
-        <ul id="suggest" role="listbox" hidden></ul>
+    <div class="capture">
+      <div class="field">
+        <label class="meta" for="em">Where should the emails go</label>
+        <input id="em" type="email" name="email" placeholder="you@fund.com" autocomplete="email" required>
       </div>
-      <button class="go" type="submit">Send the link</button>
-    </form>
-    <p class="note" id="says" style="min-height:1.3em;margin-top:12px"></p>
+      <div class="field">
+        <label class="meta" for="tk">Which companies do you cover</label>
+        <div class="combo">
+          <input id="tk" type="text" placeholder="Type a ticker or company name, e.g. DAL"
+                 autocomplete="off" autocapitalize="characters" spellcheck="false"
+                 role="combobox" aria-expanded="false" aria-controls="results" aria-autocomplete="list">
+          <ul class="results" id="results" role="listbox"></ul>
+        </div>
+        <ol class="picked" id="picked"></ol>
+      </div>
+      <button class="submit" id="go" type="button">Get the scorecards</button>
+      <div class="signnote" id="says" role="status" aria-live="polite"></div>
+      <p class="fineprint">Free while in test. One email per company each quarter, nothing else. Unsubscribe any time.</p>
+    </div>
   </section>
 
   <footer>
@@ -360,116 +389,167 @@
     }
   })();
 
-  /* ---- Search as you type ----
-   * Suggests for the ticker being typed after the last comma, so several can
-   * be entered: "DAL, ME" suggests for "ME". Matching tickers first (exact,
-   * then covered, then shortest), then companies whose name contains the text.
+  /* ---- Company picker, as on Filing Watch ----
+   * Type, pick from the list, and the company becomes a line underneath with
+   * a button to remove it. No commas to type. The list of every SEC company
+   * loads on first focus; matching tickers come first, then names.
    */
-  function suggestFor(list, coveredSet, text, max) {
-    const q = String(text || "").split(",").pop().trim().toUpperCase();
-    if (!q) return [];
-    const byTicker = [];
-    const byName = [];
-    for (const [t, name] of list) {
-      if (t.startsWith(q)) byTicker.push([t, name]);
-      else if (q.length >= 2 && String(name).toUpperCase().includes(q)) byName.push([t, name]);
-    }
-    const rank = ([t]) => (t === q ? 0 : 1) * 1e6 + (coveredSet.has(t) ? 0 : 1) * 1e3 + t.length;
-    byTicker.sort((a, b) => rank(a) - rank(b) || a[0].localeCompare(b[0]));
-    byName.sort((a, b) => (coveredSet.has(a[0]) ? 0 : 1) - (coveredSet.has(b[0]) ? 0 : 1) || a[0].length - b[0].length);
-    return byTicker.concat(byName).slice(0, max || 8);
-  }
+  const MAX_COMPANIES = 5;   // the Worker takes five per signup
 
-  function withPicked(text, ticker) {
-    const parts = String(text || "").split(",");
-    parts[parts.length - 1] = " " + ticker;
-    return parts.map((p) => p.trim()).filter(Boolean).join(", ") + ", ";
+  function searchCompanies(list, taken, text) {
+    const q = String(text || "").trim().toUpperCase();
+    if (!q) return [];
+    const exact = [], starts = [], within = [];
+    for (const [t, n] of list) {
+      if (taken.has(t)) continue;
+      const name = String(n).toUpperCase();
+      if (t === q) exact.push([t, n]);
+      else if (t.startsWith(q) || name.startsWith(q)) starts.push([t, n]);
+      else if (q.length >= 2 && name.includes(q)) within.push([t, n]);
+      if (exact.length + starts.length + within.length > 400) break;
+    }
+    starts.sort((a, b) => a[0].length - b[0].length || a[0].localeCompare(b[0]));
+    return exact.concat(starts, within).slice(0, 8);
   }
 
   (function () {
-    const box = document.getElementById("tickers");
-    const list = document.getElementById("suggest");
-    let all = null;
+    const emailEl = document.getElementById("em");
+    const tkEl = document.getElementById("tk");
+    const listEl = document.getElementById("results");
+    const pickEl = document.getElementById("picked");
+    const goEl = document.getElementById("go");
+    const noteEl = document.getElementById("says");
+
+    let companies = [];
     let loading = null;
-    let shown = [];
-    let at = -1;
+    let matches = [];
+    let cursor = -1;
+    const picked = [];
+
+    const say = (msg, kind) => { noteEl.textContent = msg; noteEl.className = "signnote " + kind; };
 
     const load = () => loading || (loading = fetch("/api/tickers")
-      .then((r) => (r.ok ? r.json() : []))
-      .then((d) => { all = Array.isArray(d) ? d : []; })
-      .catch(() => { all = []; }));
+      .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then((rows) => { companies = Array.isArray(rows) ? rows : []; })
+      .catch(() => say("Couldn't load the company list. Reload the page and try again.", "err")));
+    tkEl.addEventListener("focus", load, { once: true });
 
-    const close = () => {
-      list.hidden = true; shown = []; at = -1;
-      box.setAttribute("aria-expanded", "false");
-    };
-
-    const draw = () => {
-      if (!all || !shown.length) return close();
-      list.innerHTML = shown.map(([t, name], i) =>
-        '<li role="option" data-t="' + esc(t) + '" aria-selected="' + (i === at) + '">'
-        + '<b>' + esc(t) + '</b><span class="name">' + esc(name) + '</span>'
-        + (covered.has(t) ? '<span class="tag on">Covered</span>' : '<span class="tag">Not covered yet</span>')
-        + '</li>').join("");
-      list.hidden = false;
-      box.setAttribute("aria-expanded", "true");
-    };
-
-    const pickAt = (i) => {
-      const hit = shown[i];
-      if (!hit) return;
-      box.value = withPicked(box.value, hit[0]);
-      close();
-      box.focus();
-    };
-
-    box.addEventListener("focus", load);
-    box.addEventListener("input", async () => {
-      await load();
-      shown = suggestFor(all, covered, box.value, 8);
-      at = -1;
-      draw();
-    });
-    box.addEventListener("keydown", (e) => {
-      if (list.hidden) return;
-      if (e.key === "ArrowDown") { e.preventDefault(); at = Math.min(at + 1, shown.length - 1); draw(); }
-      else if (e.key === "ArrowUp") { e.preventDefault(); at = Math.max(at - 1, 0); draw(); }
-      else if (e.key === "Enter" && at >= 0) { e.preventDefault(); pickAt(at); }
-      else if (e.key === "Escape") { close(); }
-    });
-    // pointerdown, not click: it fires before the box loses focus, so the
-    // list is still there to be picked from on a phone.
-    list.addEventListener("pointerdown", (e) => {
-      const li = e.target.closest("li");
-      if (!li) return;
-      e.preventDefault();
-      pickAt(shown.findIndex(([t]) => t === li.dataset.t));
-    });
-    box.addEventListener("blur", () => setTimeout(close, 150));
-  })();
-
-  document.getElementById("signup").addEventListener("submit", async (ev) => {
-    ev.preventDefault();
-    const says = document.getElementById("says");
-    const form = ev.target;
-    says.textContent = "Sending…";
-
-    try {
-      const r = await fetch("/api/signup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: form.email.value.trim(),
-          tickers: form.tickers.value.trim(),
-        }),
-      });
-      const d = await r.json();
-      says.textContent = d.error ? d.error : "Check your inbox and click the link to confirm.";
-      if (!d.error) form.reset();
-    } catch (e) {
-      says.textContent = "That did not go through. Try again in a moment.";
+    function renderResults() {
+      const typed = tkEl.value.trim();
+      if (!matches.length) {
+        listEl.innerHTML = typed ? '<li class="noresult">No company matches that.</li>' : "";
+        listEl.className = typed ? "results open" : "results";
+        tkEl.setAttribute("aria-expanded", typed ? "true" : "false");
+        return;
+      }
+      listEl.innerHTML = matches.map(([t, n], i) =>
+        '<li role="option" data-i="' + i + '" aria-selected="' + (i === cursor) + '">'
+        + '<span class="tk">' + esc(t) + '</span><span class="nm">' + esc(n) + "</span></li>").join("");
+      listEl.className = "results open";
+      tkEl.setAttribute("aria-expanded", "true");
     }
-  });
+
+    function closeResults() {
+      listEl.className = "results";
+      listEl.innerHTML = "";
+      cursor = -1;
+      tkEl.setAttribute("aria-expanded", "false");
+    }
+
+    function renderPicked() {
+      pickEl.innerHTML = picked.map(([t, n], i) =>
+        '<li><span class="tk">' + esc(t) + '</span><span class="nm">' + esc(n) + "</span>"
+        + '<button type="button" data-rm="' + i + '" aria-label="Remove ' + esc(t) + '">&times;</button></li>').join("");
+    }
+
+    function add(co) {
+      if (!co) return;
+      if (picked.length >= MAX_COMPANIES) {
+        say("Five at a time. Sign up again for more; they are added to the same list.", "err");
+        return;
+      }
+      if (picked.some(([t]) => t === co[0])) return;
+      picked.push(co);
+      renderPicked();
+      tkEl.value = "";
+      matches = [];
+      closeResults();
+      tkEl.focus();
+    }
+
+    tkEl.addEventListener("input", () => {
+      load().then(() => {
+        matches = searchCompanies(companies, new Set(picked.map(([t]) => t)), tkEl.value);
+        cursor = matches.length ? 0 : -1;
+        renderResults();
+      });
+    });
+
+    tkEl.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        if (!matches.length) return;
+        e.preventDefault();
+        cursor = (cursor + (e.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length;
+        renderResults();
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        if (cursor >= 0) add(matches[cursor]);
+      } else if (e.key === "Escape") {
+        closeResults();
+      }
+    });
+
+    listEl.addEventListener("click", (e) => {
+      const li = e.target.closest("li[data-i]");
+      if (li) add(matches[Number(li.dataset.i)]);
+    });
+
+    pickEl.addEventListener("click", (e) => {
+      const b = e.target.closest("button[data-rm]");
+      if (!b) return;
+      picked.splice(Number(b.dataset.rm), 1);
+      renderPicked();
+    });
+
+    document.addEventListener("click", (e) => {
+      if (!e.target.closest(".combo")) closeResults();
+    });
+
+    goEl.addEventListener("click", async () => {
+      const email = emailEl.value.trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+        say("That email doesn't look right.", "err");
+        emailEl.focus();
+        return;
+      }
+      if (!picked.length) {
+        say("Pick at least one company to follow.", "err");
+        tkEl.focus();
+        return;
+      }
+
+      goEl.disabled = true;
+      say("Sending…", "ok");
+      try {
+        const r = await fetch("/api/signup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, tickers: picked.map(([t]) => t).join(",") }),
+        });
+        const d = await r.json();
+        if (!r.ok || d.error) throw new Error(d.error || "Something went wrong.");
+        say("Check your email to confirm. If it is not in your inbox, look in spam and mark it"
+          + " as not spam \u2014 this is a new sending address.", "ok");
+        picked.length = 0;
+        renderPicked();
+        emailEl.value = "";
+      } catch (e) {
+        say(e.message || "That did not go through. Try again in a moment.", "err");
+      } finally {
+        goEl.disabled = false;
+      }
+    });
+  })();
 </script>
 
 </body>
