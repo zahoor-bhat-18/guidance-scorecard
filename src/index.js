@@ -242,6 +242,63 @@ async function poll(env) {
   await env.CACHE.put("poll:last", new Date().toISOString() + " dispatched " + fresh.join(","));
 }
 
+/* ------------------------------------------------------------------
+ * New companies on request
+ *
+ * Someone signs up for a ticker nobody has asked for before. Once they
+ * confirm, the backfill is started for it in GitHub Actions, and when it
+ * finishes scripts/notify.mjs tells everyone following it whether the company
+ * puts enough numeric guidance in its releases to score.
+ *
+ * Started on CONFIRMATION, not signup, so a typo or a bot costs nothing.
+ * Capped, because each new company costs model calls: five tickers per
+ * signup, ten new companies a day across everyone.
+ * ------------------------------------------------------------------ */
+
+const MAX_TICKERS_PER_SIGNUP = 5;
+const NEW_COMPANIES_PER_DAY = 10;
+// How long a request blocks another for the same ticker. Long enough to
+// cover a backfill that is queued or running; a finished one leaves a record,
+// and a ticker with a record is never requested again.
+const REQUEST_HOLD = 6 * 60 * 60;
+
+async function requestBackfill(env, tickers) {
+  const out = { started: [], alreadyUnderway: [], overLimit: [], failed: [] };
+  if (!tickers.length) return out;
+
+  const day = "backfills:" + new Date().toISOString().slice(0, 10);
+  const used = parseInt((await env.CACHE.get(day)) || "0", 10) || 0;
+
+  const go = [];
+  for (const t of tickers) {
+    if (await env.CACHE.get("requested:" + t)) out.alreadyUnderway.push(t);
+    else if (used + go.length >= NEW_COMPANIES_PER_DAY) out.overLimit.push(t);
+    else go.push(t);
+  }
+  if (!go.length) return out;
+
+  const r = await fetch("https://api.github.com/repos/" + env.GITHUB_REPO + "/dispatches", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + env.GITHUB_TOKEN,
+      Accept: "application/vnd.github+json",
+      "User-Agent": "guidance-scorecard",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ event_type: "backfill-request", client_payload: { tickers: go.join(",") } }),
+  });
+
+  if (!r.ok) {
+    out.failed = go;
+    return out;
+  }
+
+  for (const t of go) await env.CACHE.put("requested:" + t, new Date().toISOString(), { expirationTtl: REQUEST_HOLD });
+  await env.CACHE.put(day, String(used + go.length), { expirationTtl: 2 * 24 * 60 * 60 });
+  out.started = go;
+  return out;
+}
+
 export default {
   async scheduled(event, env, ctx) {
     ctx.waitUntil(poll(env));
@@ -693,20 +750,18 @@ export default {
 
         const asked = cleanTickers(body.tickers);
         if (!asked.length) return json({ error: "Name at least one ticker." }, 400);
+        if (asked.length > MAX_TICKERS_PER_SIGNUP) {
+          return json({ error: "Up to " + MAX_TICKERS_PER_SIGNUP + " tickers at a time." }, 400);
+        }
 
-        const stored = await listRecords(env);
-        const published = new Set(
-          (stored.records || []).filter((r) => r.publishable).map((r) => r.ticker)
-        );
-
-        const known = asked.filter((t) => published.has(t));
-        const unknown = asked.filter((t) => !published.has(t));
+        // Any company registered with the SEC can be followed. One without a
+        // record is built after the address is confirmed.
+        const secTickers = (await env.CACHE.get("tickers:cik", "json")) || {};
+        const known = asked.filter((t) => secTickers[t]);
+        const unknown = asked.filter((t) => !secTickers[t]);
 
         if (!known.length) {
-          return json({
-            error: "Nothing is published yet for " + unknown.join(", ")
-              + ". Covered today: " + Array.from(published).sort().join(", ") + ".",
-          }, 400);
+          return json({ error: "EDGAR has no company under " + unknown.join(", ") + "." }, 400);
         }
 
         const token = await hold(env, email, known);
@@ -720,7 +775,7 @@ export default {
           following: known,
           notCovered: unknown,
           message: unknown.length
-            ? "Check your inbox. Nothing is published yet for " + unknown.join(", ") + "."
+            ? "Check your inbox. EDGAR has no company under " + unknown.join(", ") + "."
             : "Check your inbox and click the link to confirm.",
         });
       } catch (e) {
@@ -742,12 +797,52 @@ export default {
         }
 
         const newly = done.added.filter((t) => !done.alreadyHad.includes(t));
+
+        // Where each ticker in THIS signup stands - not only the new ones.
+        // Someone told "today's limit is reached, sign up again tomorrow" is
+        // already following the ticker when they come back, and still needs
+        // the backfill started.
+        const stored = await listRecords(env);
+        const recorded = new Map((stored.records || []).map((r) => [r.ticker, r]));
+        const covered = done.added.filter((t) => recorded.has(t) && recorded.get(t).publishable);
+        const thin = done.added.filter((t) => recorded.has(t) && !recorded.get(t).publishable);
+        const fresh = done.added.filter((t) => !recorded.has(t));
+        const req = await requestBackfill(env, fresh);
+
+        const para = (text) => "<p>" + text + "</p>";
+        const names = (list) => "<b>" + list.join(", ") + "</b>";
+
         return page("Confirmed",
-          "<h1>Confirmed</h1><p>You are following <b>" + done.tickers.join(", ") + "</b>.</p>"
+          "<h1>Confirmed</h1><p>You are following " + names(done.tickers) + ".</p>"
           + (newly.length !== done.added.length
-              ? "<p>You were already following " + done.added.filter((t) => done.alreadyHad.includes(t)).join(", ") + ".</p>"
+              ? para("You were already following " + done.added.filter((t) => done.alreadyHad.includes(t)).join(", ") + ".")
               : "")
-          + "<p>An email arrives when one of them reports. Every one carries a link to leave.</p>");
+          + (covered.length
+              ? para(names(covered) + ": covered. An email arrives when " + (covered.length > 1 ? "each" : "it") + " next reports.")
+              : "")
+          + (req.started.length
+              ? para(names(req.started) + ": new here, so we are reading "
+                + (req.started.length > 1 ? "their" : "its") + " last fourteen earnings releases now. Within about"
+                + " fifteen minutes you will get an email saying whether there is guidance to score.")
+              : "")
+          + (req.alreadyUnderway.length
+              ? para(names(req.alreadyUnderway) + ": already being set up. You will get the same email when it is done.")
+              : "")
+          + (thin.length
+              ? para(names(thin) + ": on your list, but "
+                + (thin.length > 1 ? "their" : "its") + " earnings releases carry too little numeric guidance to"
+                + " score. You will only hear from us if that changes.")
+              : "")
+          + (req.overLimit.length
+              ? para(names(req.overLimit) + ": today's limit for new companies is reached. Sign up for "
+                + (req.overLimit.length > 1 ? "them" : "it") + " again tomorrow and we will set "
+                + (req.overLimit.length > 1 ? "them" : "it") + " up then.")
+              : "")
+          + (req.failed.length
+              ? para(names(req.failed) + ": we could not start the setup just now. Sign up again in a few"
+                + " minutes, or write to hello@zahoorbhat.com.")
+              : "")
+          + para("Every email carries a link to leave."));
       } catch (e) {
         return page("Confirm", "<h1>That did not work</h1><p>" + e.message + "</p>");
       }
