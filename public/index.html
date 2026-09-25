@@ -92,6 +92,17 @@
     padding:13px 14px;border:1px solid #D3D8D0;background-color:#FBFBF8;color:#16281F;border-radius:8px;
   }
   input::placeholder{color:#8A9A91}
+  .tick-wrap{position:relative;flex:1 1 14rem;display:flex}
+  .tick-wrap input{flex:1 1 auto;width:100%}
+  #suggest{position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:20;list-style:none;margin:0;padding:4px;
+    background-color:#FBFBF8;border:1px solid #D3D8D0;border-radius:8px;box-shadow:0 6px 18px rgba(22,40,31,.08);max-height:320px;overflow-y:auto}
+  #suggest[hidden]{display:none}
+  #suggest li{display:flex;align-items:baseline;gap:10px;padding:9px 10px;border-radius:6px;cursor:pointer;font-size:14px;color:#16281F}
+  #suggest li b{font-family:"IBM Plex Mono",monospace;font-weight:500;min-width:4.5em}
+  #suggest li span.name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#3E5247}
+  #suggest li span.tag{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#8A9A91;white-space:nowrap}
+  #suggest li span.tag.on{color:#1F8A5C}
+  #suggest li[aria-selected=true],#suggest li:hover{background-color:#EEF0EA}
   input:focus-visible{outline:2px solid #1F8A5C;outline-offset:2px}
   button.go{
     font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;
@@ -232,7 +243,12 @@
 
     <form id="signup">
       <input type="email" name="email" placeholder="you@fund.com" required autocomplete="email">
-      <input type="text" name="tickers" placeholder="DAL, WMT" required>
+      <div class="tick-wrap">
+        <input type="text" name="tickers" id="tickers" placeholder="Type a ticker or company" required
+          autocomplete="off" autocapitalize="characters" spellcheck="false"
+          role="combobox" aria-autocomplete="list" aria-controls="suggest" aria-expanded="false">
+        <ul id="suggest" role="listbox" hidden></ul>
+      </div>
       <button class="go" type="submit">Send the link</button>
     </form>
     <p class="note" id="says" style="min-height:1.3em;margin-top:12px"></p>
@@ -247,6 +263,10 @@
 </div>
 
 <script>
+  // Tickers with a published record. Filled when the records load; the search
+  // box marks these "Covered" and everything else "Not covered yet".
+  let covered = new Set();
+
   const detail = document.getElementById("detail");
   const pick = document.getElementById("pick");
 
@@ -319,6 +339,7 @@
       const r = await fetch("/api/records");
       const d = await r.json();
       const records = (d.records || []).filter((x) => x.publishable);
+      covered = new Set(records.map((x) => x.ticker));
 
       if (!records.length) {
         detail.innerHTML = '<p class="note" style="margin-top:20px">No records are published yet.</p>';
@@ -337,6 +358,94 @@
     } catch (e) {
       detail.innerHTML = '<p class="note">Could not load the records: ' + esc(e.message) + '</p>';
     }
+  })();
+
+  /* ---- Search as you type ----
+   * Suggests for the ticker being typed after the last comma, so several can
+   * be entered: "DAL, ME" suggests for "ME". Matching tickers first (exact,
+   * then covered, then shortest), then companies whose name contains the text.
+   */
+  function suggestFor(list, coveredSet, text, max) {
+    const q = String(text || "").split(",").pop().trim().toUpperCase();
+    if (!q) return [];
+    const byTicker = [];
+    const byName = [];
+    for (const [t, name] of list) {
+      if (t.startsWith(q)) byTicker.push([t, name]);
+      else if (q.length >= 2 && String(name).toUpperCase().includes(q)) byName.push([t, name]);
+    }
+    const rank = ([t]) => (t === q ? 0 : 1) * 1e6 + (coveredSet.has(t) ? 0 : 1) * 1e3 + t.length;
+    byTicker.sort((a, b) => rank(a) - rank(b) || a[0].localeCompare(b[0]));
+    byName.sort((a, b) => (coveredSet.has(a[0]) ? 0 : 1) - (coveredSet.has(b[0]) ? 0 : 1) || a[0].length - b[0].length);
+    return byTicker.concat(byName).slice(0, max || 8);
+  }
+
+  function withPicked(text, ticker) {
+    const parts = String(text || "").split(",");
+    parts[parts.length - 1] = " " + ticker;
+    return parts.map((p) => p.trim()).filter(Boolean).join(", ") + ", ";
+  }
+
+  (function () {
+    const box = document.getElementById("tickers");
+    const list = document.getElementById("suggest");
+    let all = null;
+    let loading = null;
+    let shown = [];
+    let at = -1;
+
+    const load = () => loading || (loading = fetch("/api/tickers")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d) => { all = Array.isArray(d) ? d : []; })
+      .catch(() => { all = []; }));
+
+    const close = () => {
+      list.hidden = true; shown = []; at = -1;
+      box.setAttribute("aria-expanded", "false");
+    };
+
+    const draw = () => {
+      if (!all || !shown.length) return close();
+      list.innerHTML = shown.map(([t, name], i) =>
+        '<li role="option" data-t="' + esc(t) + '" aria-selected="' + (i === at) + '">'
+        + '<b>' + esc(t) + '</b><span class="name">' + esc(name) + '</span>'
+        + (covered.has(t) ? '<span class="tag on">Covered</span>' : '<span class="tag">Not covered yet</span>')
+        + '</li>').join("");
+      list.hidden = false;
+      box.setAttribute("aria-expanded", "true");
+    };
+
+    const pickAt = (i) => {
+      const hit = shown[i];
+      if (!hit) return;
+      box.value = withPicked(box.value, hit[0]);
+      close();
+      box.focus();
+    };
+
+    box.addEventListener("focus", load);
+    box.addEventListener("input", async () => {
+      await load();
+      shown = suggestFor(all, covered, box.value, 8);
+      at = -1;
+      draw();
+    });
+    box.addEventListener("keydown", (e) => {
+      if (list.hidden) return;
+      if (e.key === "ArrowDown") { e.preventDefault(); at = Math.min(at + 1, shown.length - 1); draw(); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); at = Math.max(at - 1, 0); draw(); }
+      else if (e.key === "Enter" && at >= 0) { e.preventDefault(); pickAt(at); }
+      else if (e.key === "Escape") { close(); }
+    });
+    // pointerdown, not click: it fires before the box loses focus, so the
+    // list is still there to be picked from on a phone.
+    list.addEventListener("pointerdown", (e) => {
+      const li = e.target.closest("li");
+      if (!li) return;
+      e.preventDefault();
+      pickAt(shown.findIndex(([t]) => t === li.dataset.t));
+    });
+    box.addEventListener("blur", () => setTimeout(close, 150));
   })();
 
   document.getElementById("signup").addEventListener("submit", async (ev) => {
