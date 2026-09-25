@@ -550,6 +550,26 @@ export default {
      * nothing looks exactly like one that worked, and that question has cost
      * hours on the other product.
      */
+    /**
+     * The last backfill's summary, as plain text.
+     *
+     * Copying the job summary off a phone screen took several messages a run,
+     * and the "Copy the whole summary" button did not work there. The backfill
+     * now stores the same text in KV; this returns it, with a no-store header
+     * so nothing in between serves yesterday's run. Nothing private in it:
+     * company names, pair counts and the scored lines the emails show anyway.
+     */
+    if (url.pathname === "/api/summary") {
+      const text = await env.CACHE.get("summary:latest");
+      return new Response(text || "No summary stored yet. Run the backfill once.", {
+        status: text ? 200 : 404,
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-store",
+        },
+      });
+    }
+
     if (url.pathname === "/api/records") {
       try {
         return json(await listRecords(env));

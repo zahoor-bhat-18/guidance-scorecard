@@ -166,6 +166,14 @@ export function pairUp(guides, actuals) {
       pairs.push({ ...base, comparable: false, why: "The actual's period could not be read." });
       continue;
     }
+    if (a.period_open) {
+      pairs.push({
+        ...base,
+        comparable: false,
+        why: "The period had not ended when this release was filed, so the figure is an outlook, not a result.",
+      });
+      continue;
+    }
     if (!samePeriod(g.period, a.period)) {
       pairs.push({
         ...base,

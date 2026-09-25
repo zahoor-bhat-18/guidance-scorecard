@@ -14,7 +14,7 @@
  */
 
 import { readFiling } from "./guidance.js";
-import { resolvePeriod, periodReportedBy } from "./period.js";
+import { resolvePeriod, periodReportedBy, periodIsClosedBy } from "./period.js";
 
 const MODEL = "deepseek-chat";
 const ENDPOINT = "https://api.deepseek.com/chat/completions";
@@ -609,6 +609,20 @@ export async function actualsFrom(env, cik, release, requests, cal) {
       }
     }
 
+    /* HAD THE PERIOD ENDED WHEN THIS RELEASE WAS FILED?
+     *
+     * Coca-Cola's July 2026 release was asked for its FY2026 free cash flow
+     * and answered with $12.4bn - the raised outlook, not a result. The pair
+     * then read "guided 12.2, reported 12.4": one guide scored against the
+     * next. The same for its tax rate, capex and operating cash flow, in every
+     * run so far. periodIsClosedBy existed for exactly this and nothing called
+     * it. A figure for a period still open is an outlook, whatever the model
+     * called it. Marked here, refused in pairing with its own reason. */
+    const periodOpen = Boolean(
+      cal && resolved.period && release && release.filed
+      && !periodIsClosedBy(resolved.period, release.filed, cal)
+    );
+
     return {
       metric: req.metric,
       metric_as_written: req.metric_as_written,
@@ -625,6 +639,7 @@ export async function actualsFrom(env, cik, release, requests, cal) {
       period_text: row.period_text ?? null,
       period: resolved.period,
       period_assumed: periodAssumed,
+      period_open: periodOpen,
       period_how: resolved.how || null,
       period_why: resolved.why || null,
       value,
