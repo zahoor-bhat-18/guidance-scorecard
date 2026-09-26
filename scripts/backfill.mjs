@@ -61,6 +61,35 @@ const PAUSE_MS = 1500;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/* A company that fails is tried once more, after this pause. Long enough for
+   a busy SEC or a model hiccup to pass; short enough not to matter on a run
+   that takes minutes anyway. */
+const RETRY_PAUSE_MS = Number(process.env.RETRY_PAUSE_MS) || 2 * 60 * 1000;
+
+/**
+ * Is this failure an answer about the company, or a failure of ours?
+ *
+ *   "permanent" - the company itself is the reason: it files fewer than two
+ *                 earnings releases with the SEC, or no such company exists.
+ *                 Asking again gives the same answer, and it is true to tell
+ *                 the subscriber there is nothing to score.
+ *   "temporary" - everything else: SEC busy, the model down, a network error,
+ *                 a bug. Nothing about the company is known from it, so the
+ *                 subscriber is told nothing and the owner is told everything.
+ *
+ * Unknown failures count as temporary on purpose. Wrongly silent costs a
+ * subscriber a wait; wrongly telling them "nothing to score" is a false
+ * statement about a company. notify.mjs reads this from out/summary.json -
+ * this is the only place the rule lives.
+ */
+const PERMANENT_FAILURES = [
+  /Fewer than two earnings releases found/i,
+  /has no company registered under/i,
+];
+function failureKind(message) {
+  return PERMANENT_FAILURES.some((re) => re.test(String(message || ""))) ? "permanent" : "temporary";
+}
+
 /**
  * The env object the src modules expect.
  *
@@ -583,7 +612,7 @@ function markdownFor(records, failures) {
 
     if (r.error) {
       lines.push("");
-      lines.push("Failed: " + r.error);
+      lines.push("Failed (" + (r.kind || "temporary") + "): " + r.error);
       continue;
     }
 
@@ -699,7 +728,21 @@ async function main() {
   for (const ticker of tickers) {
     try {
       console.log("Building " + ticker + "...");
-      const record = await buildOne(ticker);
+      // One more try for a failure of ours; none for an answer about the
+      // company. Saved model answers make the second attempt free for every
+      // question the first one already asked.
+      let record;
+      for (let attempt = 1; ; attempt++) {
+        try {
+          record = await buildOne(ticker);
+          break;
+        } catch (e) {
+          if (attempt >= 2 || failureKind(e.message) === "permanent") throw e;
+          console.error("  " + ticker + " attempt 1 failed: " + e.message + " - trying again in "
+            + (RETRY_PAUSE_MS / 60000) + " minutes.");
+          await sleep(RETRY_PAUSE_MS);
+        }
+      }
       await writeFile("out/" + ticker + ".json", JSON.stringify(record, null, 2));
 
       const comparable = record.pairs.filter((p) => p.comparable);
@@ -759,7 +802,7 @@ async function main() {
     } catch (e) {
       failures += 1;
       console.error("  " + ticker + " FAILED: " + e.message);
-      summary.push({ ticker, error: e.message });
+      summary.push({ ticker, error: e.message, kind: failureKind(e.message) });
     }
 
     // After every company, not once at the end: a run that dies on the sixth
