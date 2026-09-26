@@ -154,11 +154,13 @@ jobs:
             npx --yes wrangler@4 kv key put "summary:latest" --path out/summary.md --binding CACHE --remote
           fi
 
-      # Only for a request from the site: tell everyone following each new
-      # company what the backfill found. Runs even if the build failed, so a
-      # company that could not be built gets a message rather than silence.
+      # A request from the site: tell everyone following each new company
+      # what the backfill found - unless the failure was ours, in which case
+      # only the owner is told and the followers are marked as owed a note.
+      # A hand run: only followers still owed a note, for tickers this run
+      # built. Nobody else is written to by a rebuild. See scripts/notify.mjs.
       - name: Tell who asked
-        if: always() && github.event_name == 'repository_dispatch'
+        if: always()
         env:
           REQUESTED: ${{ github.event.client_payload.tickers }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
@@ -170,4 +172,9 @@ jobs:
           EMAIL_FROM: ${{ vars.EMAIL_FROM }}
           REPLY_TO: ${{ vars.REPLY_TO }}
           POSTAL_ADDRESS: ${{ vars.POSTAL_ADDRESS }}
-        run: node scripts/notify.mjs "$REQUESTED"
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            node scripts/notify.mjs "$REQUESTED"
+          else
+            node scripts/notify.mjs --owed-only
+          fi
