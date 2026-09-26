@@ -18,10 +18,10 @@
  * sending. All three are below.
  */
 
-import { resolveCik, companyCalendar } from "../src/xbrl.js";
+import { resolveCik, companyCalendar, shareCountChanges } from "../src/xbrl.js";
 import { earningsReleases, guidanceFrom } from "../src/guidance.js";
 import { requestsFrom, actualsFrom } from "../src/actuals.js";
-import { pairUp } from "../src/pairing.js";
+import { pairUp, refuseAcrossSplit } from "../src/pairing.js";
 import { metricKey } from "../src/metrics.js";
 import { scoreAll } from "../src/score.js";
 import { revisionsBetween } from "../src/revisions.js";
@@ -207,7 +207,21 @@ async function handle(ticker) {
     actuals = result.actuals;
   }
 
-  const scored = scoreAll(pairUp(priorGuides, actuals));
+  // Share splits, as in the backfill: a per-share guide from before a split
+  // is not scored against a result after it. If the facts cannot be read the
+  // send still goes out; the refusal simply cannot be applied, and the log
+  // says so.
+  let shareChanges = [];
+  try {
+    shareChanges = await shareCountChanges(env, cik);
+  } catch (e) {
+    console.error(ticker + ": share splits cannot be checked - " + e.message);
+  }
+  const scored = scoreAll(refuseAcrossSplit(pairUp(priorGuides, actuals), {
+    changes: shareChanges,
+    guideFiled: record.releasesRead?.[0]?.filed,
+    actualFiled: current.filed,
+  }));
 
   // What they have just guided for next, and what moved.
   const nowGuiding = await guidanceFrom(env, cik, current, calendar);
