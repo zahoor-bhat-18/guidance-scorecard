@@ -158,6 +158,10 @@ export function forEmail(record) {
 
     revisions: (record.revisions || []).map((r) => ({
       metric: r.metric,
+      // The label as the company wrote it, so a new guide can be set beside
+      // the record of the same measure. metric alone is a broad class
+      // ("operating_income") that two different measures can share.
+      label: r.metric_as_written || null,
       period: r.period,
       direction: r.direction,
       // The sentence is BUILT HERE, from the untrimmed revision, and not read
@@ -217,6 +221,9 @@ function trim(p) {
     flagged: Boolean(p.score.flags && p.score.flags.length),
     summary: p.score.summary,
     quote: p.quote,
+    // Which release reported it. The email's closing section describes the
+    // figures THIS release reported, and nothing else on a pair says so.
+    answeredBy: p.answeredBy || null,
   };
 }
 
