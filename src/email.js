@@ -31,6 +31,13 @@ const MUTED = "#5b6b62";
 const RULE = "#dcd6c8";
 const MONO = "ui-monospace,SFMono-Regular,Menlo,monospace";
 
+/* The range strip, as on the site: a pale track, the guided range in green,
+   the reported figure as a dark mark. The green is the GUIDE, never a verdict
+   - the same green whether the figure landed inside, above or below. */
+const TRACK = "#e7e2d5";
+const BAND = "#a8d8bf";
+const MARK = INK;
+
 /* Ten rows, not eight. Rows that say "not guided" and "not reported" compete
  * for the same slots, and Walmart's Q2 2026 - the quarter management
  * explicitly declined to guide - was being pushed off the end by a scored
@@ -405,6 +412,211 @@ function byMetric(pairs, unanswered, limit) {
   return { metrics: earned.slice(0, limit || METRICS_SHOWN), belowBar };
 }
 
+
+/* ------------------------------------------------------------------ *
+ * The range strip
+ * ------------------------------------------------------------------ */
+
+/**
+ * One row's strip: where the reported figure sits against the guided range.
+ *
+ * BUILT FROM TABLE CELLS. The site positions a dot with CSS; mail clients
+ * strip that, Outlook above all. A single row of cells with set widths and
+ * background colours is the one layout every client draws the same way.
+ *
+ * THE SCALE IS THE SITE'S. The range sits in the middle with 1.4 range-widths
+ * of room either side, so rows compare with each other: a figure far outside
+ * its range is drawn at the edge, and the numbers beside it say how far.
+ * A single-figure guide is a narrow green tick, with room enough on the scale
+ * for the reported mark to sit clear of it.
+ */
+export function stripCells(p) {
+  const g = p.guide || {};
+  const actual = num(p.actual);
+  const lo = num(g.low) !== null ? num(g.low) : num(g.value);
+  const hi = num(g.high) !== null ? num(g.high) : num(g.value);
+  if (actual === null || lo === null || hi === null) return null;
+
+  const point = lo === hi;
+  const width = point
+    ? Math.max(Math.abs(actual - lo), Math.abs(lo) * 0.02, 0.01)
+    : (hi - lo);
+  const pad = width * 1.4;
+  const min = lo - pad, max = hi + pad;
+  const at = (x) => Math.max(0, Math.min(100, ((x - min) / (max - min)) * 100));
+
+  // Whole-percent segments. Every boundary is rounded once, here, so the
+  // cells always add to exactly 100.
+  let bandFrom = Math.round(at(lo));
+  let bandTo = Math.round(at(hi));
+  if (point || bandTo - bandFrom < 3) {
+    const c = Math.round((bandFrom + bandTo) / 2);
+    bandFrom = Math.max(0, c - 1);
+    bandTo = Math.min(100, bandFrom + 3);
+  }
+  let markFrom = Math.round(at(actual)) - 1;
+  markFrom = Math.max(0, Math.min(97, markFrom));
+  const markTo = markFrom + 3;
+
+  // Cut the 0-100 line at every boundary and colour each piece.
+  const cuts = Array.from(new Set([0, bandFrom, bandTo, markFrom, markTo, 100])).sort((a, b) => a - b);
+  const cells = [];
+  for (let i = 0; i < cuts.length - 1; i++) {
+    const a = cuts[i], b = cuts[i + 1];
+    if (b <= a) continue;
+    const mid = (a + b) / 2;
+    const colour = mid >= markFrom && mid < markTo ? MARK
+      : mid >= bandFrom && mid < bandTo ? BAND
+        : TRACK;
+    cells.push({ width: b - a, colour });
+  }
+  return cells;
+}
+
+function stripHtml(p) {
+  const cells = stripCells(p);
+  if (!cells) return "";
+  return '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"'
+    + ' style="width:100%;border-collapse:collapse;table-layout:fixed;"><tr>'
+    + cells.map((c) => '<td width="' + c.width + '%" bgcolor="' + c.colour + '" style="width:'
+      + c.width + '%;height:8px;line-height:8px;font-size:0;background-color:' + c.colour
+      + ';">&nbsp;</td>').join("")
+    + '</tr></table>';
+}
+
+/* ------------------------------------------------------------------ *
+ * Reading the record: sentences at the foot of the email
+ * ------------------------------------------------------------------ */
+
+/**
+ * Where one figure landed, against the low and the high. Never the midpoint.
+ *
+ * Within the range, both distances - "$0.46 above the low, $0.04 below the
+ * high" - because "within" alone hides whether it scraped in or cleared it.
+ * Outside, the distance from the end it passed. A single figure gets a
+ * distance and no verdict, as everywhere else in the product.
+ */
+export function landedText(p) {
+  const g = p.guide || {};
+  const actual = num(p.actual);
+  const low = num(g.low), high = num(g.high), value = num(g.value);
+  if (actual === null) return null;
+
+  const range = low !== null && high !== null ? formatFigure(g, p.unit) + " range" : null;
+  const d = (x) => formatDelta(x, p.unit, false);
+
+  if (p.position === "within" && range) {
+    const fromLow = tidy(actual - low), toHigh = tidy(high - actual);
+    const lowPart = fromLow === 0 ? "at the low" : d(fromLow) + " above the low";
+    const highPart = toHigh === 0 ? "at the high" : d(toHigh) + " below the high";
+    return "within the " + range + ", " + lowPart + ", " + highPart;
+  }
+  if (p.position === "above" && range) return "above the " + range + ", " + d(actual - high) + " above the high";
+  if (p.position === "below" && range) return "below the " + range + ", " + d(low - actual) + " below the low";
+  if (value !== null) {
+    const gap = tidy(actual - value);
+    if (gap === 0) return "at the single figure guided, " + formatValue(value, p.unit);
+    return d(gap) + (gap > 0 ? " above" : " below") + " the single figure guided, "
+      + formatValue(value, p.unit);
+  }
+  return null;
+}
+
+/** Where the guide for a period started, when it moved before the result. */
+function startedAt(p) {
+  const c = guideCell(p);
+  if (c.noted || c.text.indexOf(" → ") === -1) return null;
+  return c.text.split(" → ")[0];
+}
+
+/* A gap, printed exactly. A median of two per-share gaps can fall between
+   cents - $0.01 and $0.02 give $0.015 - and formatDelta's two decimals would
+   print that as $0.01 or $0.02, neither of which is the median. */
+function gapText(x, unit) {
+  const v = tidy(x);
+  if (unit === "USD per share" && Math.round(v * 100) !== v * 100) return "$" + v.toFixed(3);
+  return formatDelta(v, unit, false);
+}
+
+function median(xs) {
+  const v = xs.slice().sort((a, b) => a - b);
+  if (!v.length) return null;
+  const m = Math.floor(v.length / 2);
+  return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
+}
+
+/**
+ * The closing section: how the company reported against its guidance, and
+ * what it guided next - set side by side, with nothing drawn from them.
+ *
+ * WHAT IT IS FOR. A portfolio manager reading the tables wants two things
+ * put next to each other: how this management's figures have landed against
+ * its ranges, and what it has just guided. The juxtaposition is the point.
+ * The inference - is the new range conservative? - is his, and the email
+ * never writes it (see the note at the top of this file).
+ *
+ * THREE PARTS, all counted or read off the record:
+ *   1. every figure this release reported, against its low and high;
+ *   2. per measure, the count of periods above, within and below, and the
+ *      typical distance past the end when outside - a median of the gaps,
+ *      which is a statistic of results, not a midpoint of any guide;
+ *   3. per measure, what this release guided for it.
+ */
+export function readingOf(view, metrics) {
+  const latest = view.latestRelease && view.latestRelease.accession;
+  const moved = (view.revisions || []).filter((r) => latest && r.release === latest
+    && ["raised", "cut", "unchanged", "new", "narrowed", "widened"].includes(r.direction));
+
+  const reported = [];
+  const measures = [];
+
+  for (const g of metrics) {
+    const key = metricKey(g.labels[0]);
+    const real = g.rows.filter((p) => !p.notGuided && !p.unanswered);
+
+    for (const p of real) {
+      if (!latest || p.answeredBy !== latest) continue;
+      const where = landedText(p);
+      if (!where) continue;
+      const start = startedAt(p);
+      reported.push(g.metric + ", " + periodLabel(p.period) + ": "
+        + (formatValue(p.actual, p.unit) || String(p.actual)) + ", " + where + "."
+        + (start ? " The guide for this period started at " + start + "." : ""));
+    }
+
+    const parts = [];
+    const ranged = g.above + g.within + g.below;
+    if (ranged) {
+      const bits = [];
+      if (g.above) bits.push("above the range in " + g.above);
+      if (g.within) bits.push("within it in " + g.within);
+      if (g.below) bits.push("below it in " + g.below);
+      parts.push(bits.join(", ") + " of " + ranged + (ranged === 1 ? " period" : " periods"));
+
+      const aboveBy = real.filter((p) => p.position === "above")
+        .map((p) => num(p.actual) - num(p.guide.high)).filter((x) => Number.isFinite(x));
+      const belowBy = real.filter((p) => p.position === "below")
+        .map((p) => num(p.guide.low) - num(p.actual)).filter((x) => Number.isFinite(x));
+      if (aboveBy.length >= 2) parts.push("when above, a median " + gapText(median(aboveBy), g.unit) + " over the high");
+      else if (aboveBy.length === 1) parts.push("when above, " + gapText(aboveBy[0], g.unit) + " over the high");
+      if (belowBy.length >= 2) parts.push("when below, a median " + gapText(median(belowBy), g.unit) + " under the low");
+      else if (belowBy.length === 1) parts.push("when below, " + gapText(belowBy[0], g.unit) + " under the low");
+    }
+    if (g.noVerdict) {
+      parts.push(g.noVerdict + (g.noVerdict === 1 ? " period" : " periods") + " against a single figure");
+    }
+    if (!parts.length) continue;
+
+    const next = moved.filter((r) => metricKey(r.label || r.metric) === key).map((r) => r.summary);
+    measures.push({
+      line: g.metric + ": " + parts.join("; ") + ".",
+      next: next.length ? "Guided in this release: " + next.join(" ") : "Nothing new guided for it in this release.",
+    });
+  }
+
+  return { reported, measures };
+}
+
 /* "9 above, 2 within, 1 below" - counted, not characterised. */
 function countLine(g) {
   const parts = [];
@@ -641,6 +853,7 @@ export function renderEmail(view, options) {
   const alsoRows = belowBarRows(belowBar, view.annual);
   const anyNote = metrics.some((g) => g.hasNote);
   const anyFlag = metrics.some((g) => g.hasFlag);
+  const reading = readingOf(view, metrics);
 
   const subject = company + " reported - how their guidance has held up";
 
@@ -693,6 +906,22 @@ export function renderEmail(view, options) {
     t.push("");
   }
 
+  if (reading.reported.length || reading.measures.length) {
+    t.push("READING THE RECORD");
+    t.push("Counted from the tables above. Nothing here is a forecast.");
+    t.push("");
+    if (reading.reported.length) {
+      t.push("Reported in this release:");
+      for (const l of reading.reported) t.push("- " + l);
+      t.push("");
+    }
+    for (const m of reading.measures) {
+      t.push(m.line);
+      t.push("  " + m.next);
+      t.push("");
+    }
+  }
+
   t.push("Questions, or something that looks wrong: reply to this, or write to");
   t.push("hello@zahoorbhat.com.");
   t.push("");
@@ -721,8 +950,9 @@ export function renderEmail(view, options) {
     + RULE + ';font-weight:normal;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:'
     + MUTED + ';">' + esc(head) + '</th>';
 
-  const td = (cell, colour) => '<td align="left" style="padding:5px 8px 5px 0;border-bottom:1px solid '
-    + RULE + ';color:' + colour + ';white-space:nowrap;">' + esc(cell) + '</td>';
+  const td = (cell, colour, open) => '<td align="left" style="padding:5px 8px ' + (open ? '3px' : '5px')
+    + ' 0;' + (open ? '' : 'border-bottom:1px solid ' + RULE + ';') + 'color:' + colour
+    + ';white-space:nowrap;">' + esc(cell) + '</td>';
 
   for (const g of metrics) {
     h.push('<div style="margin-top:22px;padding-top:14px;border-top:1px solid ' + RULE + ';">');
@@ -737,12 +967,19 @@ export function renderEmail(view, options) {
     for (const p of g.rows) {
       const quiet = p.notGuided || p.unanswered;
       const cells = rowCells(p);
+      // The strip sits on its own line under the figures, the full width of
+      // the table: a fifth column would not fit beside them on a phone.
+      const strip = quiet ? "" : stripHtml(p);
       h.push('<tr>' + cells.map((cell, i) =>
         // A row with no outcome is muted throughout: context, not a result.
-        // Still no colour anywhere - a tax rate above guidance is bad for the
-        // company and irrelevant to a short seller, and red would decide that
-        // for the reader.
-        td(cell, quiet ? MUTED : i === 0 ? MUTED : INK)).join("") + '</tr>');
+        // Still no red or amber anywhere - a tax rate above guidance is bad
+        // for the company and irrelevant to a short seller, and colour would
+        // decide that for the reader. The strip's green marks the guide.
+        td(cell, quiet ? MUTED : i === 0 ? MUTED : INK, Boolean(strip))).join("") + '</tr>');
+      if (strip) {
+        h.push('<tr><td colspan="' + cells.length + '" style="padding:0 0 7px 0;border-bottom:1px solid '
+          + RULE + ';">' + strip + '</td></tr>');
+      }
     }
 
     h.push('</table></div>');
@@ -804,6 +1041,23 @@ export function renderEmail(view, options) {
       h.push('<p style="margin:10px 0 0;font-size:14px;color:' + MUTED + ';">and '
         + moved.more + ' further ' + (moved.more === 1 ? 'guide' : 'guides')
         + ', on the site.</p>');
+    }
+    h.push('</div>');
+  }
+
+  if (reading.reported.length || reading.measures.length) {
+    h.push('<div style="margin-top:26px;padding-top:14px;border-top:1px solid ' + RULE + ';">');
+    h.push('<div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:' + MUTED + ';">Reading the record</div>');
+    h.push('<div style="font-size:14px;color:' + MUTED + ';margin-top:2px;">Counted from the tables above. Nothing here is a forecast.</div>');
+    if (reading.reported.length) {
+      h.push('<div style="font-size:15px;color:' + GREEN + ';margin-top:14px;">Reported in this release</div>');
+      for (const l of reading.reported) {
+        h.push('<p style="margin:6px 0 0;font-size:15px;">' + esc(l) + '</p>');
+      }
+    }
+    for (const m of reading.measures) {
+      h.push('<p style="margin:16px 0 0;font-size:15px;">' + esc(m.line) + '</p>');
+      h.push('<p style="margin:4px 0 0;font-size:14px;color:' + MUTED + ';">' + esc(m.next) + '</p>');
     }
     h.push('</div>');
   }
