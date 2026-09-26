@@ -61,14 +61,52 @@ export async function proxy(request, env) {
   return new Response(upstream.body, { status: 200, headers });
 }
 
-/** Server-side fetch of an EDGAR JSON document, for use inside the Worker. */
+/**
+ * Server-side fetch of an EDGAR JSON document: a filing's file list, a
+ * company's filing history, its XBRL facts.
+ *
+ * WITH THE SAME RETRY AS fetchDoc. This had one attempt and gave up on the
+ * first error. On 25 Sep 2026 a nine-company rebuild lost Macy's and Walmart
+ * to a single "EDGAR 503" each on a filing's index.json - SEC briefly busy,
+ * nothing wrong with either company - while the documents themselves, fetched
+ * through fetchDoc, already had three attempts. The same call builds the live
+ * email on an 8-K, where one blip would mean a release that never goes out.
+ *
+ * Throttling (403, 429) and server errors (5xx) are tried again, up to three
+ * attempts, with a growing pause, and the later attempts bypass the cache so a
+ * stored failure is not served back. Anything else - a 404 above all - will not
+ * change by asking again and fails at once. The error keeps its "EDGAR <status>"
+ * start, which is what the backfill reads to tell a passing failure from a
+ * lasting one.
+ */
 export async function secJson(env, url) {
-  const r = await fetch(url, {
-    headers: { "User-Agent": env.SEC_USER_AGENT, Accept: "application/json" },
-    cf: { cacheTtl: 86400, cacheEverything: true },
-  });
-  if (!r.ok) throw new Error("EDGAR " + r.status + " for " + url);
-  return r.json();
+  let last = null;
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const bypass = attempt > 0;
+
+    let r;
+    try {
+      r = await fetch(url, {
+        headers: { "User-Agent": env.SEC_USER_AGENT, Accept: "application/json" },
+        cf: bypass ? { cacheTtl: 0, cacheEverything: false } : { cacheTtl: 86400, cacheEverything: true },
+      });
+    } catch (e) {
+      last = new Error("Could not reach EDGAR for " + url + ": " + e.message);
+      await sleep(1000 * (attempt + 1));
+      continue;
+    }
+
+    if (r.ok) return r.json();
+
+    last = new Error("EDGAR " + r.status + " for " + url + (attempt > 0 ? " (after " + (attempt + 1) + " attempts)" : ""));
+    const worthRetrying = r.status === 403 || r.status === 429 || r.status >= 500;
+    if (!worthRetrying) throw last;
+
+    await sleep(1500 * (attempt + 1));
+  }
+
+  throw last;
 }
 
 function sleep(ms) {
