@@ -782,6 +782,31 @@ export function numberInQuote(value, quote) {
   return false;
 }
 
+/**
+ * The basis for the PRIOR-YEAR amount: the guide's own, minus constant currency.
+ *
+ * Constant-currency growth is this year's figure at last year's exchange rates
+ * against LAST YEAR AS REPORTED. There is no "prior year in constant currency"
+ * - last year at last year's rates is simply last year. Asked for one, the
+ * model rightly finds nothing: on 26 Sep 2026 Walmart's full-year net sales
+ * (cc) and adjusted operating income (cc) for FY2025 and FY2026 each came back
+ * with this year's amount ($709,163m, $31,096m ...) and no prior year, and
+ * four pairs stayed empty. Adjusted stays adjusted; only the currency part goes.
+ */
+export function priorYearBasis(expectBasis) {
+  if (!expectBasis || !expectBasis.wantsCC) return expectBasis;
+  const main = String(expectBasis.describe || "")
+    .replace(/,?\s*in CONSTANT CURRENCY/gi, "")
+    .trim();
+  return {
+    ...expectBasis,
+    wantsCC: false,
+    describe: (main || "the figure as reported")
+      + ", at that year's own exchange rates - NOT constant currency, which a"
+      + " prior-year figure does not have",
+  };
+}
+
 /** The amount for a period - a level, never a change or a percentage. */
 function levelRequest(req, basisFrom, period, cal) {
   return {
@@ -839,7 +864,8 @@ function growthToBuild(requests, actuals, adjustedFor, release, cal) {
  *
  * Two questions per guide, sent together: this period's amount and the same
  * period a year earlier, on the basis the guide needs (the adjusted line, for
- * revenue that has one). Every answer runs through toActual like any other.
+ * revenue that has one) - the prior year without constant currency, see
+ * priorYearBasis. Every answer runs through toActual like any other.
  *
  * Both amounts are used only if all of these hold:
  *   - each came back with a number, in the same unit, not a percentage;
@@ -861,7 +887,8 @@ async function growthFromLevels(env, requests, actuals, adjustedFor, text, relea
   for (const i of idx) {
     const basisFrom = adjustedFor.get(i) || requests[i];
     asks.push(levelRequest(requests[i], basisFrom, requests[i].guidePeriod, cal));
-    asks.push(levelRequest(requests[i], basisFrom, priorYearPeriod(requests[i].guidePeriod), cal));
+    asks.push(levelRequest(requests[i], { expectBasis: priorYearBasis(basisFrom.expectBasis) },
+      priorYearPeriod(requests[i].guidePeriod), cal));
   }
 
   let rows;
