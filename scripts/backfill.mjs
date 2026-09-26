@@ -835,7 +835,7 @@ async function main() {
   await writeFile("out/summary.json", JSON.stringify({ builtAt: new Date().toISOString(), summary }, null, 2));
   await answers.save(ANSWERS_OUT);
   console.log(answers.line());
-  // WHAT THIS RUN ACTUALLY DID, first. Three runs in a row were meant to
+  // WHATTHIS RUN ACTUALLY DID, first. Three runs in a row were meant to
   // rebuild and merged instead, and the summary looked the same either way.
   const keptTotal = summary.reduce((n, s) => n + (s.carriedOver || 0), 0);
   const mode = (REBUILD
