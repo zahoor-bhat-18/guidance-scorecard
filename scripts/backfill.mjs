@@ -36,7 +36,7 @@ import { earningsReleases, guidanceFrom } from "../src/guidance.js";
 import { requestsFrom, actualsFrom } from "../src/actuals.js";
 import { samePeriod } from "../src/period.js";
 import { scoreAll } from "../src/score.js";
-import { pairUp } from "../src/pairing.js";
+import { pairUp, refuseAcrossSplit } from "../src/pairing.js";
 import { periodLabel } from "../src/format.js";
 import { revisionsBetween } from "../src/revisions.js";
 import { startAnswers } from "./answers.mjs";
@@ -341,6 +341,21 @@ async function buildOne(ticker) {
     }
   }
 
+  /* The company's tagged facts, fetched once and used twice: the share splits
+     below, which every per-share pair is checked against, and the annual
+     measures further down. Without them no split can be seen, so the run
+     says so rather than scoring across one silently. */
+  let tagged = null;
+  try {
+    tagged = await factsFor(env, cik, calendar);
+  } catch (e) {
+    console.error("  " + ticker + ": tagged facts unavailable, share splits cannot be checked - " + e.message);
+  }
+  const shareChanges = (tagged && tagged.shareChanges) || [];
+  for (const c of shareChanges) {
+    console.log("  " + ticker + ": share count changed x" + c.ratio + " between " + c.from + " and " + c.to);
+  }
+
   // Newest first, so releases[i + 1] is the one before releases[i].
   const allPairs = [];
   const allRevisions = [];
@@ -361,7 +376,12 @@ async function buildOne(ticker) {
       actuals = result.actuals;
     }
 
-    const scored = scoreAll(pairUp(priorGuidance.guides, actuals), originals);
+    const paired = refuseAcrossSplit(pairUp(priorGuidance.guides, actuals), {
+      changes: shareChanges,
+      guideFiled: priorGuidance.release.filed,
+      actualFiled: current.filed,
+    });
+    const scored = scoreAll(paired, originals);
     for (const p of scored.pairs) {
       allPairs.push({
         ...p,
@@ -539,7 +559,7 @@ async function buildOne(ticker) {
    */
   let annual = [];
   try {
-    const tagged = await factsFor(env, cik, calendar);
+    if (!tagged) throw new Error("tagged facts were not available");
     annual = annualRecord(guidanceByRelease, tagged.facts, scoreAll);
   } catch (e) {
     console.error("  " + ticker + ": annual measures unavailable - " + e.message);
