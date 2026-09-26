@@ -361,7 +361,76 @@ export async function factsFor(env, cik, calendar) {
     };
   }
 
-  return { facts: out, meta: cal.meta };
+  return { facts: out, meta: cal.meta, shareChanges: shareCountChangesFrom(doc) };
+}
+
+/* ------------------------------------------------------------------ *
+ * Share splits
+ * ------------------------------------------------------------------ */
+
+/* The ratios a split or a reverse split is actually declared in. A share
+   count that moves by one of these between two cover pages, to within 4%,
+   has been split; buybacks and issuance never move it that far that cleanly
+   in one quarter. */
+const SPLIT_RATIOS = [1.5, 2, 2.5, 3, 4, 5, 6, 7, 8, 10, 12, 15, 20, 25, 30, 40, 50];
+
+function cleanRatio(r) {
+  for (const k of SPLIT_RATIOS) {
+    if (Math.abs(r / k - 1) <= 0.04) return k;
+    if (Math.abs(r * k - 1) <= 0.04) return 1 / k;
+  }
+  return null;
+}
+
+/**
+ * When did the share count jump, and by how much?
+ *
+ * READ FROM THE COVER PAGE. Every 10-Q and 10-K states the shares outstanding
+ * on a recent date (dei:EntityCommonStockSharesOutstanding). Walmart's covers
+ * read about 2.7 billion through late 2023 and about 8.1 billion from early
+ * 2024: the three-for-one split of February 2024, visible in the company's own
+ * filings, for every company that files, with no list of splits to maintain.
+ *
+ * The date is known only to lie between two cover dates. Each change is
+ * returned as that window - after `from`, on or before `to` - and pairing.js
+ * decides what a guide inside the window means.
+ *
+ * `ratio` is new shares per old share: 3 for a three-for-one split, 0.1 for a
+ * one-for-ten reverse split.
+ */
+export function shareCountChangesFrom(doc) {
+  const dei = (doc && doc.facts && doc.facts.dei) || {};
+  const node = dei.EntityCommonStockSharesOutstanding;
+  if (!node || !node.units) return [];
+
+  // One figure per cover date: the earliest filing that states it.
+  const byDate = new Map();
+  for (const facts of Object.values(node.units)) {
+    for (const f of facts) {
+      if (!f.end || typeof f.val !== "number" || !(f.val > 0)) continue;
+      if (!/^10-[QK]/.test(String(f.form || ""))) continue;
+      const held = byDate.get(f.end);
+      if (!held || String(f.filed) < String(held.filed)) byDate.set(f.end, f);
+    }
+  }
+
+  const points = Array.from(byDate.values()).sort((a, b) => String(a.end).localeCompare(String(b.end)));
+  const out = [];
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1], b = points[i];
+    const r = b.val / a.val;
+    if (r < 1.4 && r > 1 / 1.4) continue;
+    const ratio = cleanRatio(r);
+    if (!ratio) continue;
+    out.push({ from: a.end, to: b.end, ratio, before: a.val, after: b.val });
+  }
+  return out;
+}
+
+/** The same, for a path that has not fetched companyfacts for anything else. */
+export async function shareCountChanges(env, cik) {
+  const doc = await secJson(env, "https://data.sec.gov/api/xbrl/companyfacts/CIK" + cik + ".json");
+  return shareCountChangesFrom(doc);
 }
 
 /** Ticker to CIK, from SEC's own list. */

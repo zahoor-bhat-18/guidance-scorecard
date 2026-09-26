@@ -83,6 +83,9 @@ function unansweredOf(record) {
       guide: p.guide,
       guidePath: p.guidePath || null,
       why: p.why || null,
+      // Refused because a share split fell between guide and result. The
+      // email says so rather than calling it a figure it could not find.
+      split: Boolean(p.split),
       unanswered: true,
     });
   }

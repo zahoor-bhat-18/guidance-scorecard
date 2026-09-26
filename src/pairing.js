@@ -230,3 +230,75 @@ export function pairUp(guides, actuals) {
 
   return pairs;
 }
+
+/* ------------------------------------------------------------------ *
+ * Per-share figures across a share split
+ * ------------------------------------------------------------------ */
+
+function ratioWords(r) {
+  if (r >= 1) return (Number.isInteger(r) ? r : r.toFixed(1)) + "-for-1 split";
+  const k = 1 / r;
+  return "1-for-" + (Number.isInteger(Math.round(k)) ? Math.round(k) : k.toFixed(1)) + " reverse split";
+}
+
+/**
+ * A per-share guide from before a split, against a result from after it.
+ *
+ * Walmart guided first-quarter fiscal 2025 EPS at $1.48 to $1.56 on 20
+ * February 2024. It split its shares three for one days later and reported
+ * $0.60 in May. The email printed "below by $0.88", with a flag, and the
+ * closing analysis counted it as a miss - when $1.48 to $1.56 is about $0.49
+ * to $0.52 on the new share count and $0.60 was above it. Not a miss: two
+ * share counts.
+ *
+ * REFUSED, NOT RESTATED. Dividing the guide by three would print a figure the
+ * company never published, and nothing in this product does that. The pair
+ * is dropped and says why.
+ *
+ * WHEN IS A GUIDE "BEFORE"? A split is known only to fall between two cover
+ * dates (see shareCountChangesFrom). A guide filed before that window and a
+ * result filed after it straddle the split for certain. When either date
+ * falls INSIDE the window, the figures decide: a result that sits far closer
+ * to the guide divided by the ratio than to the guide itself was reported on
+ * the other share count. Walmart's full-year 2024 guide of $6.40 to $6.48 and
+ * result of $6.65 were both on the old count, both dated inside the window,
+ * and are kept.
+ *
+ * Per-share figures only. A split changes nothing about revenue or margins.
+ */
+export function refuseAcrossSplit(pairs, dates) {
+  const changes = (dates && dates.changes) || [];
+  const guideFiled = dates && dates.guideFiled;
+  const actualFiled = dates && dates.actualFiled;
+  if (!changes.length || !guideFiled || !actualFiled) return pairs;
+
+  for (const p of pairs) {
+    if (!p.comparable || p.unit !== "USD per share" || typeof p.actual !== "number") continue;
+    const g = p.guide || {};
+    const level = typeof g.low === "number" ? g.low : typeof g.value === "number" ? g.value : g.high;
+    if (typeof level !== "number" || level === 0) continue;
+
+    for (const c of changes) {
+      // Entirely before the window, or entirely after it: this change is not
+      // between them.
+      if (String(actualFiled) <= String(c.from) || String(guideFiled) > String(c.to)) continue;
+
+      const certain = String(guideFiled) <= String(c.from) && String(actualFiled) > String(c.to);
+      let across = certain;
+      if (!certain && p.actual > 0 && level > 0) {
+        const same = Math.abs(Math.log(p.actual / level));
+        const moved = Math.abs(Math.log(p.actual / (level / c.ratio)));
+        across = moved < same;
+      }
+      if (!across) continue;
+
+      p.comparable = false;
+      p.split = { ratio: c.ratio, between: [c.from, c.to] };
+      p.why = "The share count changed in a " + ratioWords(c.ratio) + " between this guide and the result,"
+        + " so a per-share guide from before it cannot be compared with a result after it."
+        + " Restating the guide would print a figure the company never published.";
+      break;
+    }
+  }
+  return pairs;
+}

@@ -310,7 +310,10 @@ function byMetric(pairs, unanswered, limit) {
      * count line says how many were left out and why. */
     const g = group(key, u.unit);
     g.labels.push(u.metric);
-    if (!g.rows.some((p) => p.period === u.period)) g.unmatched = (g.unmatched || 0) + 1;
+    if (!g.rows.some((p) => p.period === u.period)) {
+      if (u.split) g.acrossSplit = (g.acrossSplit || 0) + 1;
+      else g.unmatched = (g.unmatched || 0) + 1;
+    }
   }
 
   const out = Array.from(groups.values());
@@ -629,6 +632,10 @@ function countLine(g) {
   if (g.unmatched) {
     tail.push(g.unmatched + (g.unmatched === 1 ? " guided period" : " guided periods")
       + " left out, no matching reported figure found");
+  }
+  if (g.acrossSplit) {
+    tail.push(g.acrossSplit + (g.acrossSplit === 1 ? " guided period" : " guided periods")
+      + " left out, guided before a share split and reported after it");
   }
   if (g.notGuided) tail.push(g.notGuided + " not guided");
 
