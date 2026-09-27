@@ -21,7 +21,7 @@
 import { resolveCik, companyCalendar, shareCountChanges } from "../src/xbrl.js";
 import { earningsReleases, guidanceFrom, guidanceUpdatesBetween, applyUpdates } from "../src/guidance.js";
 import { requestsFrom, actualsFrom } from "../src/actuals.js";
-import { pairUp, refuseAcrossSplit, markOpenAtAnswer } from "../src/pairing.js";
+import { pairUp, refuseAcrossSplit, markOpenAtAnswer, guidesToCarry } from "../src/pairing.js";
 import { metricKey } from "../src/metrics.js";
 import { scoreAll } from "../src/score.js";
 import { revisionsBetween } from "../src/revisions.js";
@@ -243,6 +243,25 @@ async function handle(ticker) {
     actualFiled: current.filed,
   }), current.filed, calendar));
 
+  // Guides from older releases for periods this release reports, which the
+  // last release did not restate (United's full-year EPS). Asked separately
+  // so the question above is unchanged. See guidesToCarry.
+  const openGroups = (record.openGuides || [])
+    .map((g) => ({ guides: [g], filed: g.filed_from, accession: g.carried_from }))
+    .sort((a, b) => String(b.filed).localeCompare(String(a.filed)));
+  const carried = since ? guidesToCarry(openGroups, priorGuides, current.filed, since, calendar) : [];
+  let carriedPairs = [];
+  if (carried.length) {
+    try {
+      const r = await actualsFrom(env, cik, current, requestsFrom(carried, calendar), calendar);
+      carriedPairs = scoreAll(markOpenAtAnswer(refuseAcrossSplit(pairUp(carried, r.actuals), {
+        changes: shareChanges, guideFiled: since, actualFiled: current.filed,
+      }), current.filed, calendar)).pairs;
+    } catch (e) {
+      console.error(ticker + ": carried guides could not be checked - " + e.message);
+    }
+  }
+
   // What they have just guided for next, and what moved.
   const nowGuiding = await guidanceFrom(env, cik, current, calendar);
   const moved = revisionsBetween(priorGuides, nowGuiding.guides, {
@@ -258,9 +277,9 @@ async function handle(ticker) {
     builtAt: new Date().toISOString(),
     releasesRead: [{ accession: current.accession, filed: current.filed }, ...(record.releasesRead || [])],
     pairs: mergePairs(
-      scored.pairs.map((p) => ({
+      [...scored.pairs, ...carriedPairs.map((p) => ({ ...p, carried: true }))].map((p) => ({
         ...p,
-        fromRelease: record.releasesRead?.[0]?.accession,
+        fromRelease: p.carried_from || record.releasesRead?.[0]?.accession,
         answeredBy: current.accession,
         answeredByFiled: current.filed,
         // The path, when an update replaced the guide: the release's figure,
@@ -280,6 +299,12 @@ async function handle(ticker) {
     ],
     currentGuidance: nowGuiding.guides,
     updatesRead: [...updatesRead, ...(record.updatesRead || [])],
+    // Still-running guides the new release did not restate, carried to the
+    // release that will report them.
+    openGuides: guidesToCarry(
+      [{ guides: priorGuides, filed: since, accession: record.releasesRead?.[0]?.accession }, ...openGroups],
+      nowGuiding.guides, "9999-12-31", current.filed, calendar
+    ),
   };
 
   await kvPut("record:" + ticker, JSON.stringify(updated));
