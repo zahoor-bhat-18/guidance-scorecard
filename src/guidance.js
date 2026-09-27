@@ -264,6 +264,22 @@ export async function readFiling(env, cik, accession) {
 export function refineCalendar(cal, text) {
   const learned = conventionFromText(text, cal.fye);
   if (!learned) return cal;
+
+  /* The cover page outranks the release text. Levi's 10-K states fiscal
+     year 2025 ended 30 November 2025 - labelled by the year it ENDS in - and
+     one sentence in one release, comparing a quarter of fiscal 2024 with
+     "fiscal 2023", out-voted it 1 to 0. Every Levi period then sat a year
+     late, and seventeen results read as "the period had not ended". Text
+     settles the convention only where the company's own cover page does not;
+     where they disagree, the disagreement is recorded and the cover stands. */
+  const fromCover = /Document Fiscal Year Focus/i.test(String((cal.meta && cal.meta.conventionFrom) || ""));
+  if (fromCover && learned.offset !== cal.labelOffset) {
+    return {
+      ...cal,
+      meta: { ...cal.meta, textDisagreed: { votes: learned.votes, evidence: learned.evidence } },
+    };
+  }
+
   if (learned.offset === cal.labelOffset) {
     return {
       ...cal,
