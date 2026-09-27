@@ -171,6 +171,44 @@ function flagsFor(pair, actual, low, high, value) {
  * Only a comparable pair is scored. Everything else already carries the reason
  * it was not, and attaching a number to it would invite someone to read it.
  */
+/* ------------------------------------------------------------------ *
+ * Floors and ceilings
+ * ------------------------------------------------------------------ */
+
+const CEILING_WORDS = "less than|below|under|no more than|not (?:to )?exceed|up to|at most|<|≤";
+const FLOOR_WORDS = "greater than|more than|at least|in excess of|above|over|>|≥";
+
+/**
+ * Is this guide a floor or a ceiling rather than a figure?
+ *
+ * "Greater than $7.35" (Delta's 2025 EPS) and "less than $6.5 billion"
+ * (United's capital spending) were scored as single figures: a result of
+ * $5.9bn against "less than $6.5bn" read "-$0.6bn vs single figure", when
+ * the company had simply spent within its cap.
+ *
+ * The extraction's shape says so when it can (at_least, at_most). Otherwise
+ * the guide's own sentence decides - and only when the bound word sits
+ * directly in front of THE GUIDED NUMBER, so a "less than" elsewhere in the
+ * sentence is not taken for this guide's. One number only: a range is a range.
+ */
+export function boundOf(pair) {
+  const g = pair.guide || {};
+  const nums = ["low", "high", "value"].filter((k) => typeof g[k] === "number");
+  if (nums.length !== 1) return null;
+  const x = g[nums[0]];
+
+  if (pair.shape === "at_most") return { kind: "ceiling", value: x };
+  if (pair.shape === "at_least") return { kind: "floor", value: x };
+
+  const quote = String(pair.guide_quote || "");
+  if (!quote) return null;
+  const n = String(Math.abs(x)).replace(".", "\\.") + "(?:\\.0+)?";
+  const tail = "\\s*\\(?-?\\$?\\s*" + n + "(?![\\d.])";
+  if (new RegExp("(?:" + CEILING_WORDS + ")" + tail, "i").test(quote)) return { kind: "ceiling", value: x };
+  if (new RegExp("(?:" + FLOOR_WORDS + ")" + tail, "i").test(quote)) return { kind: "floor", value: x };
+  return null;
+}
+
 export function scorePair(pair, originalGuide) {
   if (!pair || !pair.comparable) return pair;
 
@@ -180,6 +218,41 @@ export function scorePair(pair, originalGuide) {
   const value = pair.guide ? pair.guide.value : null;
 
   if (typeof actual !== "number") return pair;
+
+  /* A floor or a ceiling is a one-sided range: at or beyond the right side of
+     it is "within", the wrong side is above or below. The guide is stored in
+     that shape - a ceiling as a high with no low - so everything downstream
+     (the tables, the medians, the strips) reads it as the range it is. */
+  const bound = boundOf(pair);
+  if (bound) {
+    const places = guidePrecision({ value: bound.value }, pair.unit);
+    const compared = places > 0 ? Number(actual.toFixed(places)) : tidy(actual);
+    const x = bound.value;
+    const ceiling = bound.kind === "ceiling";
+    const inside = ceiling ? compared <= x : compared >= x;
+    const position = inside ? "within" : ceiling ? "above" : "below";
+    const words = ceiling ? "a ceiling of " + x : "a floor of " + x;
+    const summary = inside
+      ? "Within " + words + " (reported " + compared + ", " + withUnit(tidy(Math.abs(compared - x)), pair.unit)
+        + (ceiling ? " under it)." : " over it).")
+      : (ceiling ? "Above " : "Below ") + words + " by " + withUnit(tidy(Math.abs(compared - x)), pair.unit)
+        + " (reported " + compared + ").";
+    return {
+      ...pair,
+      bound: bound.kind,
+      guide: ceiling ? { low: null, high: x, value: null } : { low: x, high: null, value: null },
+      score: {
+        position,
+        comparedAt: places,
+        actualAsGuided: compared,
+        deltaToLow: ceiling ? null : tidy(compared - x),
+        deltaToHigh: ceiling ? tidy(compared - x) : null,
+        units: unitWord(pair.unit),
+        flags: [],
+        summary,
+      },
+    };
+  }
 
   // Rounding applies ONLY where the guide carried decimals.
   //

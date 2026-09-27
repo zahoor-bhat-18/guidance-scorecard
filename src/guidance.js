@@ -953,8 +953,32 @@ function matchIn(update, g) {
  *
  * `applied` lists every override in date order, for the guide path.
  */
+/* Does this guide say it is adjusted / non-GAAP? Its basis tag, or its own
+   label or sentence. */
+const ADJUSTED_WORDS = /\b(non-?gaap|adjusted|adj\.|core|underlying|excluding)\b/i;
+function saysAdjusted(g) {
+  return g.basis === "non_gaap" || ADJUSTED_WORDS.test(String(g.metric_as_written || "") + " " + String(g.quote || ""));
+}
+
+/**
+ * May this update's figure replace an ADJUSTED guide?
+ *
+ * Only if the update says it is adjusted too. Micron's 11 August 2025 update
+ * printed GAAP and non-GAAP side by side; its EPS was read as "$2.64 ± $0.07"
+ * with no label, and replaced a non-GAAP guide of $2.35-$2.65 - by all
+ * appearances with the GAAP column. An adjusted guide is replaced only by a
+ * figure the update itself marks as adjusted. Revenue has one basis and is
+ * exempt.
+ */
+function basisAllows(g, u) {
+  if (g.metric === "revenue") return true;
+  if (!saysAdjusted(g)) return true;
+  return saysAdjusted(u);
+}
+
 export function applyUpdates(guides, updates) {
   const applied = [];
+  const skipped = [];
   const effective = (guides || []).map((g) => {
     // Only a guide that had a figure is replaced. A release entry with no
     // number was never asked about when the next results came out, so an
@@ -967,6 +991,11 @@ export function applyUpdates(guides, updates) {
     for (const up of updates || []) {
       const u = matchIn(up, g);
       if (!u || !hasFigure(u)) continue;
+      if (!basisAllows(g, u)) {
+        skipped.push({ key: (g.metric_as_written || "") + "|" + g.period, filed: up.release.filed,
+          why: "the guide is adjusted and the update's figure does not say it is", quote: u.quote || null });
+        continue;
+      }
       const same = (u.low ?? null) === (current.low ?? null) && (u.high ?? null) === (current.high ?? null)
         && (u.value ?? null) === (current.value ?? null);
       if (same) continue;
@@ -993,5 +1022,5 @@ export function applyUpdates(guides, updates) {
     }
     return current;
   });
-  return { effective, applied };
+  return { effective, applied, skipped };
 }

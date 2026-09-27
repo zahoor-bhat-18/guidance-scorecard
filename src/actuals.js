@@ -752,6 +752,89 @@ function guidePeriodClosed(req, release, cal) {
 }
 
 /* ------------------------------------------------------------------ *
+ * Any adjusted guide answered with the as-reported figure
+ * ------------------------------------------------------------------ */
+
+/**
+ * Ask again, explicitly, for the adjusted line.
+ *
+ * The revenue re-check above, for every other measure. Micron prints GAAP and
+ * non-GAAP side by side - "Percent of revenue 84.6 % 74.4 % 37.7 % 84.9 % ..."
+ * is one row with the GAAP quarters first and the non-GAAP quarters after -
+ * and its gross margin guide, which is non-GAAP, was refused in every one of
+ * nine quarters because the figure taken carried no adjusted label. Three EPS
+ * quarters were lost the same way.
+ *
+ * Triggered by code, not by the model: only where this answer was already
+ * refused for exactly that reason ("the guide is on an adjusted basis and the
+ * figure taken is as reported"), for a period that has ended. A new question,
+ * paid once and saved; the original is untouched. The answer is used only if
+ * it passes the same checks as any other - including carrying an adjusted
+ * label - and is for the guided period. Otherwise the refusal stands.
+ */
+async function recheckAdjusted(env, requests, actuals, adjustedFor, text, release, cal) {
+  const idx = [];
+  requests.forEach((req, i) => {
+    const a = actuals[i];
+    if (!a || !a.basis_mismatch || !req.expectBasis.wantsAdjusted) return;
+    if (adjustedFor && adjustedFor.has(i)) return;       // revenue: asked already
+    if (!guidePeriodClosed(req, release, cal)) return;
+    idx.push(i);
+  });
+  if (!idx.length) return { asked: 0, replaced: 0 };
+
+  const again = idx.map((i) => ({
+    ...requests[i],
+    expectBasis: {
+      ...requests[i].expectBasis,
+      exempt: false,
+      describe: "the ADJUSTED / NON-GAAP figure. Where the release prints GAAP and non-GAAP figures"
+        + " side by side, or in a reconciliation, take the NON-GAAP one, and put the heading or"
+        + " column label that says it is non-GAAP (or adjusted) in section"
+        + (requests[i].expectBasis.wantsCC ? ", in CONSTANT CURRENCY" : ""),
+    },
+  }));
+
+  let rows;
+  try {
+    rows = await callModel(env, again, text);
+  } catch (e) {
+    console.log("Adjusted re-check failed for " + release.accession + ": " + e.message);
+    return { asked: idx.length, replaced: 0 };
+  }
+  const byId = new Map();
+  for (const row of rows) {
+    if (row.id !== undefined && row.id !== null && !byId.has(Number(row.id))) byId.set(Number(row.id), row);
+  }
+
+  let replaced = 0;
+  idx.forEach((i, j) => {
+    const cand = toActual(again[j], byId.get(j) || {}, release, cal);
+    const ok = cand.value !== null
+      && !cand.basis_mismatch
+      && !cand.unit_mismatch
+      && !cand.period_open
+      && Boolean(cand.period)
+      && (!requests[i].guidePeriod || cand.period === requests[i].guidePeriod);
+    const before = actuals[i];
+    console.log("Adjusted re-check " + release.accession + " " + (requests[i].guidePeriod || "?") + " "
+      + requests[i].metric_as_written + ": was " + JSON.stringify(before.found_as) + " " + before.value
+      + ", adjusted answer " + JSON.stringify(cand.found_as) + " " + cand.value
+      + (ok ? " - REPLACED" : " - kept refusal"));
+    if (!ok) return;
+    actuals[i] = {
+      ...cand,
+      basis: before.basis,
+      expected_basis: before.expected_basis,
+      adjusted_recheck: "replaced",
+      replaced_figure: { found_as: before.found_as, value: before.value, quote: before.quote },
+    };
+    replaced++;
+  });
+  return { asked: idx.length, replaced };
+}
+
+/* ------------------------------------------------------------------ *
  * Growth guides: computed from two printed amounts
  * ------------------------------------------------------------------ */
 
@@ -1028,6 +1111,10 @@ export async function actualsFrom(env, cik, release, requests, cal) {
   // Revenue only, and only where the release prints an adjusted revenue line.
   const recheck = await recheckRevenue(env, requests, actuals, filing.text, release, cal);
 
+  // Any other adjusted guide answered with the as-reported line: ask for the
+  // adjusted one explicitly (margins, EPS, operating expenses...).
+  const adjusted = await recheckAdjusted(env, requests, actuals, recheck.adjustedFor, filing.text, release, cal);
+
   // Any growth guide still without a usable answer: build it from two amounts.
   const growth = await growthFromLevels(env, requests, actuals, recheck.adjustedFor, filing.text, release, cal);
 
@@ -1047,6 +1134,8 @@ export async function actualsFrom(env, cik, release, requests, cal) {
     basisMismatches: actuals.filter((a) => a.basis_mismatch).length,
     revenueRechecked: recheck.asked,
     revenueReplaced: recheck.replaced,
+    adjustedRechecked: adjusted.asked,
+    adjustedReplaced: adjusted.replaced,
     growthAsked: growth.asked,
     growthComputed: growth.computed,
     actuals,

@@ -221,8 +221,16 @@ function scaleChanged(first, last, unit) {
  * FIRST AND LAST ONLY. The verdict still measures against the final guide -
  * what management was standing behind when the period closed.
  */
+/* A floor or a ceiling, in words: "under $6.5bn", "at least $7.35". */
+function boundText(p) {
+  if (!p || !p.bound || !p.guide) return null;
+  const x = p.bound === "ceiling" ? p.guide.high : p.guide.low;
+  if (typeof x !== "number") return null;
+  return (p.bound === "ceiling" ? "under " : "at least ") + formatValue(x, p.unit);
+}
+
 function guideCell(p) {
-  const now = formatFigure(p.guide, p.unit);
+  const now = boundText(p) || formatFigure(p.guide, p.unit);
   const path = Array.isArray(p.guidePath) ? p.guidePath
     : (p.first ? [p.first, p.guide] : null);
   if (!Array.isArray(path) || path.length < 2) return { text: now, noted: false };
@@ -447,9 +455,19 @@ function byMetric(pairs, unanswered, limit) {
 export function stripCells(p) {
   const g = p.guide || {};
   const actual = num(p.actual);
-  const lo = num(g.low) !== null ? num(g.low) : num(g.value);
-  const hi = num(g.high) !== null ? num(g.high) : num(g.value);
-  if (actual === null || lo === null || hi === null) return null;
+  let lo = num(g.low) !== null ? num(g.low) : num(g.value);
+  let hi = num(g.high) !== null ? num(g.high) : num(g.value);
+  if (actual === null) return null;
+  // A ceiling or floor: the band runs from the bound off the edge of the strip
+  // on its open side, scaled so the reported mark sits clear of the bound.
+  if (p.bound === "ceiling" && hi !== null) {
+    const span = Math.max(Math.abs(actual - hi), Math.abs(hi) * 0.05, 0.01);
+    lo = hi - span * 6;
+  } else if (p.bound === "floor" && lo !== null) {
+    const span = Math.max(Math.abs(actual - lo), Math.abs(lo) * 0.05, 0.01);
+    hi = lo + span * 6;
+  }
+  if (lo === null || hi === null) return null;
 
   const point = lo === hi;
   const width = point
@@ -518,6 +536,17 @@ export function landedText(p) {
 
   const range = low !== null && high !== null ? formatFigure(g, p.unit) + " range" : null;
   const d = (x) => formatDelta(x, p.unit, false);
+
+  const b = boundText(p);
+  if (b) {
+    const x = p.bound === "ceiling" ? high : low;
+    const gap = tidy(Math.abs(actual - x));
+    if (p.position === "within") {
+      return gap === 0 ? "exactly at the guided " + (p.bound === "ceiling" ? "ceiling" : "floor") + " (" + b + ")"
+        : "within the guide of " + b + ", " + d(gap) + (p.bound === "ceiling" ? " under it" : " over it");
+    }
+    return (p.position === "above" ? "above" : "below") + " the guide of " + b + " by " + d(gap);
+  }
 
   if (p.position === "within" && range) {
     const fromLow = tidy(actual - low), toHigh = tidy(high - actual);
@@ -761,7 +790,7 @@ function annualRows(annual) {
       // An open year is not a failure to find a figure, so it does not read
       // like one. The guide is the whole point of the row.
       const open = a.refusal === "year not ended";
-      rows.push([label, periodLabel(a.period), formatFigure(a.guide, a.unit),
+      rows.push([label, periodLabel(a.period), boundText({ ...a, guide: a.guide }) || formatFigure(a.guide, a.unit),
         open ? "year not ended" : (a.refusal || "not tagged"),
         open ? "" : "n/a"]);
       continue;
@@ -771,7 +800,7 @@ function annualRows(annual) {
     if (a.basisCaveat) caveat = true;
 
     const marks = (a.computed ? "\u00a7" : "") + (a.basisCaveat ? "\u2021" : "");
-    const guide = guideCell({ guide: a.guide, first: a.first, unit: a.unit });
+    const guide = guideCell({ guide: a.guide, first: a.first, unit: a.unit, bound: a.bound });
 
     rows.push([
       label,

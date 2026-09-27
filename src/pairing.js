@@ -123,6 +123,13 @@ export function pairUp(guides, actuals) {
       // Set when a mid-quarter 8-K replaced the release's guide. The pair is
       // scored against the guide in force; this says where it came from.
       guide_updated: g.updated || null,
+      // The guide's own sentence: score.js reads "less than" / "greater than"
+      // in it to tell a ceiling or a floor from a single figure.
+      guide_quote: g.quote || null,
+      // Set on a guide carried forward from an older release (see
+      // guidesToCarry): when it was given, and in which filing.
+      guide_filed: g.filed_from || null,
+      carried_from: g.carried_from || null,
     };
 
     if (ambiguous) {
@@ -277,7 +284,7 @@ export function refuseAcrossSplit(pairs, dates) {
   for (const p of pairs) {
     if (!p.comparable || p.unit !== "USD per share" || typeof p.actual !== "number") continue;
     // A guide replaced mid-quarter dates from the update, not the release.
-    const guideFiled = (p.guide_updated && p.guide_updated.filed) || dates.guideFiled;
+    const guideFiled = (p.guide_updated && p.guide_updated.filed) || p.guide_filed || dates.guideFiled;
     const g = p.guide || {};
     const level = typeof g.low === "number" ? g.low : typeof g.value === "number" ? g.value : g.high;
     if (typeof level !== "number" || level === 0) continue;
@@ -332,4 +339,52 @@ export function markOpenAtAnswer(pairs, answerFiled, cal) {
     p.why = "The period had not ended when the next release was filed, so there was no result to compare yet.";
   }
   return pairs;
+}
+
+/**
+ * Guides to carry forward to this release from older ones.
+ *
+ * Each release's results were compared only with the release just before it.
+ * United guides full-year EPS in January and July and usually says nothing
+ * about the year in October - so when January's release reports the year, the
+ * release before it (October) had no full-year guide, and FY2023, FY2024 and
+ * FY2025 were never scored at all.
+ *
+ * The guide in force when a period ends is the LATEST one given for it,
+ * wherever it was given. So: every guide from an older release whose period
+ * ended after the previous release and before this one - which makes this the
+ * release that reports it - and that the previous release did not restate.
+ * Newest first, so the latest version wins.
+ *
+ * `older` is [{ guides, filed, accession }] newest first, beginning with the
+ * release before the previous one. Returns copies marked with where they came
+ * from; nothing about the originals changes.
+ */
+export function guidesToCarry(older, inForce, answerFiled, priorFiled, cal) {
+  if (!cal || !answerFiled || !priorFiled) return [];
+  const has = new Set();
+  for (const g of inForce || []) {
+    if (!g.period || !hasFigure(g)) continue;
+    has.add(metricKey(g.metric_as_written || g.metric) + "|" + g.period);
+  }
+  const out = [];
+  for (const src of older || []) {
+    for (const g of src.guides || []) {
+      if (!g.period || !hasFigure(g)) continue;
+      const key = metricKey(g.metric_as_written || g.metric) + "|" + g.period;
+      if (has.has(key)) continue;
+      let endsNow = false;
+      try {
+        endsNow = periodIsClosedBy(g.period, answerFiled, cal) && !periodIsClosedBy(g.period, priorFiled, cal);
+      } catch { endsNow = false; }
+      if (!endsNow) continue;
+      has.add(key);
+      out.push({ ...g, filed_from: src.filed, carried_from: src.accession });
+    }
+  }
+  return out;
+}
+
+function hasFigure(g) {
+  return typeof g.low === "number" || typeof g.high === "number" || typeof g.value === "number";
 }

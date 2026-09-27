@@ -159,6 +159,7 @@ export function forEmail(record) {
       computed: Boolean(p.computed),
       basisCaveat: Boolean(p.basisCaveat),
       source: p.source || null,
+      bound: p.bound || null,
     })),
 
     revisions: (record.revisions || []).map((r) => ({
@@ -234,6 +235,8 @@ function trim(p) {
     // may have held that range all year or raised twice to reach it, and the
     // final range alone says "within" either way.
     guidePath: p.guidePath || null,
+    // "ceiling" or "floor" when the guide was "less than" / "greater than".
+    bound: p.bound || null,
     againstOriginalGuide: (p.score && p.score.againstOriginalGuide) || null,
     // The figure that was JUDGED, not the raw one.
     //

@@ -425,6 +425,7 @@ export function annualRecord(guidanceByRelease, facts, scoreAll) {
       // adjusted version. There is no non-GAAP capex and no non-GAAP cash
       // spend; the caveat was false wherever it appeared here.
       quote: g.quote,
+      guide_quote: g.quote,
       comparable: true,
     });
   }
