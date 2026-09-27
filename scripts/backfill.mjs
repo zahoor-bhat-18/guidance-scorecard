@@ -636,6 +636,10 @@ async function buildOne(ticker) {
     builtAt: new Date().toISOString(),
     calendar: calendar.meta,
     releasesRead: releases.map((r) => ({ accession: r.accession, filed: r.filed })),
+    // The splits seen on the cover pages, kept so the email can tell a guide
+    // path that crosses one from a real cut. Only when they could be read:
+    // an empty list would claim "no splits" when the answer is "unknown".
+    ...(tagged ? { shareChanges } : {}),
     updatesRead,
     coverage,
     landed: {
