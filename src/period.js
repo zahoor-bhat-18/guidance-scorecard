@@ -214,6 +214,11 @@ export function resolvePeriod(text, cal, opts) {
     // $2.75-$3.25 was read as a FULL-YEAR guide, scored against nothing, and
     // the email said Q3 2024 was "not guided".
     .replace(/\b(first|second|third|fourth|1st|2nd|3rd|4th)-(quarter)\b/g, "$1 $2")
+    // "Years Ended February 28, 2025" heads a table whose columns are two
+    // FULL YEARS. The plural was not recognised, so the length was unknown,
+    // and Constellation Brands lost 24 full-year results to "reported for
+    // Q4". It is the singular with more than one column.
+    .replace(/\b(fiscal )?years (ended|ending)\b/g, "$1year $2")
     .replace(/\s+/g, " ")
     .trim();
 

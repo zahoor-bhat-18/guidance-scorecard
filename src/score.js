@@ -219,6 +219,27 @@ export function scorePair(pair, originalGuide) {
 
   if (typeof actual !== "number") return pair;
 
+  /* A percentage over 100 that the guide's own sentence never prints as a
+     percentage is a misread, not a guide. Constellation Brands' "operating
+     income growth, guided 657 to 677%" was a dollar range in millions, and
+     scored "below by 665.88 percentage points" with no warning at all. A
+     real guide of that size - a company expecting to triple - prints the %
+     sign, and passes. */
+  if (pair.unit === "percent") {
+    const g = pair.guide || {};
+    const big = ["low", "high", "value"].map((k) => g[k]).filter((x) => typeof x === "number" && Math.abs(x) > 100);
+    const quote = String(pair.guide_quote || pair.quote || "").replace(/(\d),(?=\d{3}\b)/g, "$1");
+    const printed = (x) => new RegExp("(^|[^\\d.])" + String(Math.abs(x)).replace(".", "\\.") + "(\\.0+)?\\s*(%|percent)", "i").test(quote);
+    if (big.length && !big.every(printed)) {
+      return {
+        ...pair,
+        comparable: false,
+        why: "The guide reads as a percentage over 100 that its own sentence does not print as one, so it"
+          + " is taken to be a misread amount, not a guide.",
+      };
+    }
+  }
+
   /* A floor or a ceiling is a one-sided range: at or beyond the right side of
      it is "within", the wrong side is above or below. The guide is stored in
      that shape - a ceiling as a high with no low - so everything downstream
