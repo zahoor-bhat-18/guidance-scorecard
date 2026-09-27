@@ -120,6 +120,9 @@ export function pairUp(guides, actuals) {
       guide: figureOf(g),
       guide_period: g.period,
       guide_period_text: g.period_text,
+      // Set when a mid-quarter 8-K replaced the release's guide. The pair is
+      // scored against the guide in force; this says where it came from.
+      guide_updated: g.updated || null,
     };
 
     if (ambiguous) {
@@ -268,12 +271,13 @@ export function ratioWords(r) {
  */
 export function refuseAcrossSplit(pairs, dates) {
   const changes = (dates && dates.changes) || [];
-  const guideFiled = dates && dates.guideFiled;
   const actualFiled = dates && dates.actualFiled;
-  if (!changes.length || !guideFiled || !actualFiled) return pairs;
+  if (!changes.length || !dates || !dates.guideFiled || !actualFiled) return pairs;
 
   for (const p of pairs) {
     if (!p.comparable || p.unit !== "USD per share" || typeof p.actual !== "number") continue;
+    // A guide replaced mid-quarter dates from the update, not the release.
+    const guideFiled = (p.guide_updated && p.guide_updated.filed) || dates.guideFiled;
     const g = p.guide || {};
     const level = typeof g.low === "number" ? g.low : typeof g.value === "number" ? g.value : g.high;
     if (typeof level !== "number" || level === 0) continue;
