@@ -503,7 +503,7 @@ function toActual(req, row, release, cal) {
 
   let basisMismatch = null;
   if (value !== null && row.found_as) {
-    if (req.expectBasis.wantsAdjusted && !found.adjusted) {
+    if (req.expectBasis.wantsAdjusted && !found.adjusted && !needsNoLabel(req)) {
       basisMismatch = "The guide is on an adjusted basis and the figure taken is as reported.";
     } else if (!req.expectBasis.wantsAdjusted && !req.expectBasis.exempt && found.adjusted) {
       basisMismatch = "The guide is on a GAAP basis and the figure taken is adjusted.";
@@ -605,6 +605,24 @@ function toActual(req, row, release, cal) {
     basis_mismatch: basisMismatch,
     quote: row.quote ?? null,
   };
+}
+
+/**
+ * Measures that never carry an "adjusted" label, because they have no GAAP
+ * version to distinguish them from - or no basis at all.
+ *
+ * Free cash flow, organic sales, segment margin, EBITDA and comparable sales
+ * are non-GAAP by definition; a release prints "Free cash flow", not
+ * "Adjusted free cash flow". Fuel price per gallon, capacity and a tax rate
+ * are simply facts. Honeywell's free cash flow, organic growth and segment
+ * margin, and United's fuel price, were refused quarter after quarter as
+ * "the figure taken is as reported" when there was no other figure to take.
+ *
+ * Read from the guide's own label only, so the question sent is unchanged.
+ */
+const NO_LABEL_NEEDED = /free cash flow|\bfcf\b|organic|segment (margin|profit)|ebitda|comparable (store )?sales|same[- ]store|comps\b|per gallon|fuel price|capacity|\basms?\b|tax rate|share count|shares outstanding/i;
+function needsNoLabel(req) {
+  return NO_LABEL_NEEDED.test(String(req.metric_as_written || "") + " " + String(req.query || ""));
 }
 
 /* ------------------------------------------------------------------ *

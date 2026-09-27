@@ -581,6 +581,16 @@ function gapText(x, unit) {
   return formatDelta(v, unit, false);
 }
 
+/* Dollars per unit of a money unit, so gaps in $m and $bn can be compared.
+   Anything else (%, per share) is already one unit and scales by 1. */
+function unitScale(unit) {
+  const u = String(unit || "").toLowerCase();
+  if (/billion/.test(u)) return 1e9;
+  if (/million/.test(u)) return 1e6;
+  if (/thousand/.test(u)) return 1e3;
+  return 1;
+}
+
 function median(xs) {
   const v = xs.slice().sort((a, b) => a - b);
   if (!v.length) return null;
@@ -636,10 +646,14 @@ export function readingOf(view, metrics) {
       if (g.below) bits.push("below it in " + g.below);
       parts.push(bits.join(", ") + " of " + ranged + (ranged === 1 ? " period" : " periods"));
 
+      // Gaps in the measure's own unit. Micron guided operating expenses in
+      // $m some quarters and $bn others; the median of 0.039 ($bn) and 23 ($m)
+      // printed as "$11.5195bn". Every gap is converted before it is compared.
+      const inUnit = (x, p) => x * unitScale(p.unit) / unitScale(g.unit);
       const aboveBy = real.filter((p) => p.position === "above")
-        .map((p) => num(p.actual) - num(p.guide.high)).filter((x) => Number.isFinite(x));
+        .map((p) => inUnit(num(p.actual) - num(p.guide.high), p)).filter((x) => Number.isFinite(x));
       const belowBy = real.filter((p) => p.position === "below")
-        .map((p) => num(p.guide.low) - num(p.actual)).filter((x) => Number.isFinite(x));
+        .map((p) => inUnit(num(p.guide.low) - num(p.actual), p)).filter((x) => Number.isFinite(x));
       if (aboveBy.length >= 2) parts.push("when above, a median " + gapText(median(aboveBy), g.unit) + " over the high");
       else if (aboveBy.length === 1) parts.push("when above, " + gapText(aboveBy[0], g.unit) + " over the high");
       if (belowBy.length >= 2) parts.push("when below, a median " + gapText(median(belowBy), g.unit) + " under the low");

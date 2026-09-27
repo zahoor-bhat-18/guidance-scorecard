@@ -362,17 +362,24 @@ export function markOpenAtAnswer(pairs, answerFiled, cal) {
  */
 export function guidesToCarry(older, inForce, answerFiled, priorFiled, cal) {
   if (!cal || !answerFiled || !priorFiled) return [];
+  /* A mention WITHOUT a number blocks too. GE guided 2025 adjusted revenue
+     growth at a figure in April and then as "mid-teens" in July and October;
+     the April number was carried past both and scored as the guide in force.
+     A later release that restates the guide in words has replaced it, even
+     though there is no figure left to score. So every key a newer release
+     mentions is blocked, whether or not it carries a number. */
   const has = new Set();
   for (const g of inForce || []) {
-    if (!g.period || !hasFigure(g)) continue;
+    if (!g.period) continue;
     has.add(metricKey(g.metric_as_written || g.metric) + "|" + g.period);
   }
   const out = [];
   for (const src of older || []) {
     for (const g of src.guides || []) {
-      if (!g.period || !hasFigure(g)) continue;
+      if (!g.period) continue;
       const key = metricKey(g.metric_as_written || g.metric) + "|" + g.period;
       if (has.has(key)) continue;
+      if (!hasFigure(g)) { has.add(key); continue; }
       let endsNow = false;
       try {
         endsNow = periodIsClosedBy(g.period, answerFiled, cal) && !periodIsClosedBy(g.period, priorFiled, cal);

@@ -232,6 +232,10 @@ export function scorePair(pair, originalGuide) {
     const inside = ceiling ? compared <= x : compared >= x;
     const position = inside ? "within" : ceiling ? "above" : "below";
     const words = ceiling ? "a ceiling of " + x : "a floor of " + x;
+    // The same size check as any figure: a result many times its bound is a
+    // wrong row, not a result. GE's "costs" ceiling of 1 was matched to total
+    // costs of $34.6bn and scored "above by $33.6bn" with no warning.
+    const flags = inside ? [] : flagsFor(pair, compared, null, null, x);
     const summary = inside
       ? "Within " + words + " (reported " + compared + ", " + withUnit(tidy(Math.abs(compared - x)), pair.unit)
         + (ceiling ? " under it)." : " over it).")
@@ -248,8 +252,8 @@ export function scorePair(pair, originalGuide) {
         deltaToLow: ceiling ? null : tidy(compared - x),
         deltaToHigh: ceiling ? tidy(compared - x) : null,
         units: unitWord(pair.unit),
-        flags: [],
-        summary,
+        flags,
+        summary: summary + (flags.length ? " " + flags.join(" ") : ""),
       },
     };
   }
