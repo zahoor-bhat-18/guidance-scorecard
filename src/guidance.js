@@ -10,7 +10,8 @@
  */
 
 import { secJson, fetchDoc } from "./sec.js";
-import { resolvePeriod, conventionFromText } from "./period.js";
+import { resolvePeriod, conventionFromText, periodIsClosedBy } from "./period.js";
+import { metricKey } from "./metrics.js";
 
 const MODEL = "deepseek-chat";
 const ENDPOINT = "https://api.deepseek.com/chat/completions";
@@ -760,8 +761,11 @@ async function callModel(env, text) {
  * Guidance looks FORWARD, so a period named without a year resolves to the
  * next one, not the last.
  */
-export async function guidanceFrom(env, cik, release, cal) {
-  const filing = await readFiling(env, cik, release.accession);
+export async function guidanceFrom(env, cik, release, cal, readAlready) {
+  // readAlready: the filing, when the caller has already read it (the
+  // update search below reads every candidate to filter it, and fetching it
+  // twice would double the SEC calls for nothing).
+  const filing = readAlready || await readFiling(env, cik, release.accession);
   const calendar = cal ? refineCalendar(cal, filing.text) : null;
 
   const raw = await callModel(env, filing.text);
@@ -800,4 +804,187 @@ export async function guidanceFrom(env, cik, release, cal) {
     effects,
     asExtracted,
   };
+}
+
+/* ------------------------------------------------------------------ *
+ * Guidance updated between earnings releases
+ * ------------------------------------------------------------------ */
+
+/**
+ * WHY THIS EXISTS.
+ *
+ * On 10 March 2025 Delta cut its first-quarter guide - revenue growth from
+ * 7-9% to 3-4%, operating margin from 6-8% to 4-5%, EPS from $0.70-$1.00 to
+ * $0.30-$0.50 - in an 8-K filed ahead of an investor conference. It then
+ * reported 3.3%, 4.6% and $0.46: inside all three cut ranges. The record
+ * scored them against January's guide and called all three misses, because
+ * only earnings releases were read, and a second item 2.02 filing inside 45
+ * days was merged away as the same event.
+ *
+ * The guide a result is measured against is the one in force when the
+ * period ended. So every 8-K between two earnings releases that could carry
+ * guidance is looked at, and any it carries overrides the earlier guide for
+ * the same measure and period.
+ */
+
+const UPDATE_ITEMS = /(^|[^0-9.])(2\.02|7\.01|8\.01)([^0-9]|$)/;
+const MAX_UPDATES_PER_GAP = 6;
+
+/**
+ * Does this filing talk about guidance WITH numbers?
+ *
+ * The only free step: most 8-Ks between releases are debt deals, board
+ * changes and conference notices, and each would cost a paid question to
+ * learn it has no guide. A filing passes when "guidance", "outlook" or
+ * "forecast" sits within a few hundred characters of a percentage or a
+ * dollar figure - and not inside the forward-looking-statements boilerplate,
+ * which uses those words in every filing and never with a figure that is a
+ * guide.
+ */
+export function looksLikeGuidance(text) {
+  const t = String(text || "");
+  const word = /\b(guidance|outlook|forecast)\b/gi;
+  const figure = /(\d[\d,]*(\.\d+)?\s?(%|percent\b)|\$\s?\d)/i;
+  let m;
+  while ((m = word.exec(t))) {
+    const around = t.slice(Math.max(0, m.index - 300), m.index + 300);
+    if (/forward[-\s]looking/i.test(around)) continue;
+    if (figure.test(around)) return true;
+  }
+  return false;
+}
+
+/** Every 8-K that could carry a guidance update, oldest first. */
+export async function updateCandidates(env, cik) {
+  const subs = await secJson(env, "https://data.sec.gov/submissions/CIK" + cik + ".json");
+  const r = (subs.filings && subs.filings.recent) || {};
+  const out = [];
+  for (let i = 0; i < (r.form || []).length; i++) {
+    if (!/^8-K/.test(String(r.form[i]))) continue;
+    const items = String((r.items || [])[i] || "");
+    if (!UPDATE_ITEMS.test(items)) continue;
+    out.push({ accession: r.accessionNumber[i], filed: r.filingDate[i], items });
+  }
+  out.sort((a, b) => (a.filed < b.filed ? -1 : 1));
+  return out;
+}
+
+/**
+ * The guidance updates filed strictly between two dates, oldest first.
+ *
+ * `exclude` holds the earnings releases themselves, which are read already.
+ * `candidates` can be passed in so a backfill lists the filings once.
+ * Returns [{ release, guides }] for each filing that carried at least one
+ * guide, and a log of what was skipped and why.
+ */
+export async function guidanceUpdatesBetween(env, cik, after, before, cal, opts) {
+  const o = opts || {};
+  const exclude = new Set(o.exclude || []);
+  const all = o.candidates || await updateCandidates(env, cik);
+  const inGap = all.filter((f) => String(f.filed) > String(after) && String(f.filed) < String(before)
+    && !exclude.has(f.accession));
+
+  const updates = [];
+  const log = [];
+  for (const f of inGap.slice(-MAX_UPDATES_PER_GAP)) {
+    let filing;
+    try {
+      filing = await readFiling(env, cik, f.accession);
+    } catch (e) {
+      log.push(f.filed + " " + f.accession + ": could not be read (" + e.message + ")");
+      continue;
+    }
+    if (!looksLikeGuidance(filing.text)) {
+      log.push(f.filed + " " + f.accession + " (items " + f.items + "): no guidance language near a figure, not read further");
+      continue;
+    }
+    let g;
+    try {
+      g = await guidanceFrom(env, cik, f, cal, filing);
+    } catch (e) {
+      log.push(f.filed + " " + f.accession + ": guidance could not be read (" + e.message + ")");
+      continue;
+    }
+    // A figure for a period that had already ENDED when the 8-K was filed is
+    // a pre-announcement of a result, not a guide: scoring the result against
+    // it would put every one of them "within". Only open periods count.
+    const guides = (g.guides || []).filter((x) => x.period && hasFigure(x)
+      && !(cal && periodIsClosedBy(x.period, f.filed, g.calendar || cal)));
+    log.push(f.filed + " " + f.accession + " (items " + f.items + "): " + guides.length + " guides");
+    if (guides.length) updates.push({ release: { accession: f.accession, filed: f.filed, items: f.items }, guides });
+  }
+  return { updates, log };
+}
+
+function hasFigure(g) {
+  return typeof g.low === "number" || typeof g.high === "number" || typeof g.value === "number";
+}
+
+/**
+ * The update, if any, that replaces this guide.
+ *
+ * Same period, same unit, same measure. "Same measure" is the label with
+ * dates, "adjusted", "total" and the like stripped (metricKey) - Delta's
+ * release says "Earnings Per Share" and its update "EPS", both the same key.
+ * If the key does not match, the broad metric class is tried, but only when
+ * the update has exactly one guide of that class for the period: two EPS
+ * guides in one update (GAAP and adjusted) must not be guessed between.
+ */
+function matchIn(update, g) {
+  const key = metricKey(g.metric_as_written || g.metric);
+  const same = update.guides.filter((u) => u.period === g.period && u.unit === g.unit);
+  const byKey = same.filter((u) => metricKey(u.metric_as_written || u.metric) === key);
+  if (byKey.length === 1) return byKey[0];
+  if (byKey.length > 1) {
+    const exact = byKey.filter((u) => String(u.metric_as_written) === String(g.metric_as_written));
+    return exact.length === 1 ? exact[0] : null;
+  }
+  const byClass = same.filter((u) => u.metric && u.metric === g.metric);
+  return byClass.length === 1 ? byClass[0] : null;
+}
+
+/**
+ * The guides in force, after any updates.
+ *
+ * Each guide keeps its own label, so the question asked of the next release
+ * is unchanged and its saved answer reused; only the figures move to the
+ * latest update's. A guide that appears only in an update is not added -
+ * nothing was asked about it, and adding it would change the questions.
+ *
+ * `applied` lists every override in date order, for the guide path.
+ */
+export function applyUpdates(guides, updates) {
+  const applied = [];
+  const effective = (guides || []).map((g) => {
+    let current = g;
+    for (const up of updates || []) {
+      const u = matchIn(up, g);
+      if (!u || !hasFigure(u)) continue;
+      const same = (u.low ?? null) === (current.low ?? null) && (u.high ?? null) === (current.high ?? null)
+        && (u.value ?? null) === (current.value ?? null);
+      if (same) continue;
+      current = {
+        ...current,
+        low: u.low ?? null,
+        high: u.high ?? null,
+        value: u.value ?? null,
+        shape: u.shape || current.shape,
+        quote: u.quote || current.quote,
+        updated: {
+          accession: up.release.accession,
+          filed: up.release.filed,
+          was: { low: g.low ?? null, high: g.high ?? null, value: g.value ?? null },
+          quote: u.quote || null,
+          label: u.metric_as_written || null,
+        },
+      };
+      applied.push({
+        key: (g.metric_as_written || "") + "|" + g.period,
+        figure: { low: current.low, high: current.high, value: current.value },
+        filed: up.release.filed,
+      });
+    }
+    return current;
+  });
+  return { effective, applied };
 }
