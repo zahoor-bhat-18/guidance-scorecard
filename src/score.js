@@ -230,7 +230,10 @@ export function scorePair(pair, originalGuide) {
     const big = ["low", "high", "value"].map((k) => g[k]).filter((x) => typeof x === "number" && Math.abs(x) > 100);
     const quote = String(pair.guide_quote || pair.quote || "").replace(/(\d),(?=\d{3}\b)/g, "$1");
     const printed = (x) => new RegExp("(^|[^\\d.])" + String(Math.abs(x)).replace(".", "\\.") + "(\\.0+)?\\s*(%|percent)", "i").test(quote);
-    if (big.length && !big.every(printed)) {
+    // Printed or not, a guide in the hundreds of percent against a result
+    // a fifth its size is the same misread seen from the other side.
+    const dwarfs = big.length && Math.abs(actual) < Math.min(...big.map(Math.abs)) / 5;
+    if (big.length && (!big.every(printed) || dwarfs)) {
       return {
         ...pair,
         comparable: false,
