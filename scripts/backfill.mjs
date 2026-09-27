@@ -223,13 +223,27 @@ function coverageOf(scoredPairs) {
 
   const qualifying = metrics.filter((m) => m.qualifies);
 
+  /* PUBLISHABLE: the company guides with numbers, and at least three guided
+     figures were matched to what it then reported - across any measures.
+
+     The old rule wanted two measures with three matched periods EACH. A
+     company that guides only its full year - PepsiCo, Constellation Brands,
+     most of consumer staples - produces one result per measure per year, so
+     it could never get there inside the releases we read. Both were told
+     "not enough guidance to score" while guiding in numbers every quarter.
+     What makes a record worth sending is that there is something to compare,
+     not how many times one measure repeats. */
+  const matched = metrics.reduce((n, m) => n + m.matchedPairs, 0);
+  const publishable = matched >= 3;
+
   return {
     metrics,
     qualifyingMetrics: qualifying.length,
-    publishable: qualifying.length >= 2,
-    reason: qualifying.length >= 2
+    matchedFigures: matched,
+    publishable,
+    reason: publishable
       ? null
-      : "Fewer than two metrics have three matched pairs, so there is not enough here to publish.",
+      : "Fewer than three guided figures could be matched to a reported result, so there is not enough here to publish.",
   };
 }
 
