@@ -135,7 +135,7 @@ export function forEmail(record) {
     coverage: record.coverage,
     landed: tallyOf(clean),
     withheldForReview: withheld,
-    pairs: clean.map(trim),
+    pairs: clean.map((p) => ({ ...trim(p), pathAcrossSplit: pathAcrossSplit(p, record.shareChanges) })),
     unanswered: unansweredOf(record),
 
     /* The annual measures, built from tagged facts rather than from a release.
@@ -197,6 +197,27 @@ function latestRelease(record) {
     if (!best || String(r.filed) > String(best.filed)) best = r;
   }
   return best;
+}
+
+/**
+ * Does this pair's guide path cross a share split?
+ *
+ * true / false when the record knows the company's splits (the backfill
+ * stores them since the split fix), null when it does not - an older record,
+ * or facts that could not be read - and the email then falls back to its
+ * ratio test. Per-share guides only; nothing else is changed by a split.
+ *
+ * The same window test as everywhere else: a split between the first guide's
+ * filing and the last one's.
+ */
+function pathAcrossSplit(p, changes) {
+  if (p.unit !== "USD per share") return null;
+  if (!Array.isArray(changes)) return null;
+  const path = Array.isArray(p.guidePath) ? p.guidePath : null;
+  if (!path || path.length < 2) return false;
+  const first = path[0].filed, last = path[path.length - 1].filed;
+  if (!first || !last) return null;
+  return changes.some((c) => String(last) > String(c.from) && String(first) <= String(c.to));
 }
 
 function trim(p) {
