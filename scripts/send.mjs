@@ -227,6 +227,9 @@ async function handle(ticker) {
   const nowGuiding = await guidanceFrom(env, cik, current, calendar);
   const moved = revisionsBetween(priorGuides, nowGuiding.guides, {
     reportedPeriods: actuals.map((a) => a.period).filter(Boolean),
+    shareChanges,
+    beforeFiled: record.releasesRead?.[0]?.filed,
+    afterFiled: current.filed,
   });
 
   const updated = {
