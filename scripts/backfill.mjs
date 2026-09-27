@@ -36,7 +36,7 @@ import { earningsReleases, guidanceFrom, updateCandidates, guidanceUpdatesBetwee
 import { requestsFrom, actualsFrom } from "../src/actuals.js";
 import { samePeriod } from "../src/period.js";
 import { scoreAll } from "../src/score.js";
-import { pairUp, refuseAcrossSplit, markOpenAtAnswer } from "../src/pairing.js";
+import { pairUp, refuseAcrossSplit, markOpenAtAnswer, guidesToCarry } from "../src/pairing.js";
 import { periodLabel } from "../src/format.js";
 import { revisionsBetween } from "../src/revisions.js";
 import { startAnswers } from "./answers.mjs";
@@ -328,9 +328,13 @@ async function buildOne(ticker) {
         if (!/not read further/.test(line)) console.log("  " + ticker + " update " + line);
       }
     }
-    const { effective, applied } = applyUpdates(prior.guides, updates);
+    const { effective, applied, skipped } = applyUpdates(prior.guides, updates);
     effectiveByGap[i] = effective;
     appliedByGap[i] = applied;
+    for (const k of skipped) {
+      console.log("  " + ticker + " update " + k.filed + ": NOT applied to " + k.key + " - " + k.why
+        + (k.quote ? " (" + JSON.stringify(String(k.quote).slice(0, 120)) + ")" : ""));
+    }
     for (const up of updates) {
       const used = applied.filter((a) => a.filed === up.release.filed).length;
       updatesRead.push({ accession: up.release.accession, filed: up.release.filed, guides: up.guides.length, applied: used });
@@ -446,6 +450,41 @@ async function buildOne(ticker) {
         answeredByFiled: current.filed,
         guidePath: guidePaths[(p.metric_as_written || "") + "|" + (p.guide_period || "")] || null,
       });
+    }
+
+    /* Guides from OLDER releases whose period this release reports and the
+       release before it did not restate - see guidesToCarry. Asked in a
+       question of their own, so the question above, and its saved answer,
+       are exactly as before. */
+    const older = [];
+    for (let j = i + 2; j < guidanceByRelease.length; j++) {
+      older.push({
+        guides: effectiveByGap[j - 1] || guidanceByRelease[j].guides,
+        filed: guidanceByRelease[j].release.filed,
+        accession: guidanceByRelease[j].release.accession,
+      });
+    }
+    const carried = guidesToCarry(older, inForce, current.filed, priorGuidance.release.filed, calendar);
+    if (carried.length) {
+      const carriedResult = await actualsFrom(env, cik, current, requestsFrom(carried, calendar), calendar);
+      const carriedPairs = refuseAcrossSplit(pairUp(carried, carriedResult.actuals), {
+        changes: shareChanges,
+        guideFiled: priorGuidance.release.filed,
+        actualFiled: current.filed,
+      });
+      const carriedScored = scoreAll(markOpenAtAnswer(carriedPairs, current.filed, calendar), originals);
+      for (const p of carriedScored.pairs) {
+        console.log("  " + ticker + " carried " + p.metric_as_written + " " + p.guide_period + " from "
+          + p.guide_filed + " to the release of " + current.filed + ": "
+          + (p.comparable && p.score ? p.score.summary : "not scored - " + p.why));
+        allPairs.push({
+          ...p,
+          fromRelease: p.carried_from,
+          answeredBy: current.accession,
+          answeredByFiled: current.filed,
+          guidePath: guidePaths[(p.metric_as_written || "") + "|" + (p.guide_period || "")] || null,
+        });
+      }
     }
 
     // Against the guide in force too: a cut made mid-quarter was not made by
@@ -659,6 +698,20 @@ async function buildOne(ticker) {
     annual,
     revisions,
     currentGuidance: guidanceByRelease[0].guides,
+    // Guides from older releases for periods still running at the latest
+    // release, which it did not restate - so a live send can carry them to
+    // the release that reports them, as the backfill does above.
+    openGuides: guidesToCarry(
+      guidanceByRelease.slice(1).map((g, k) => ({
+        guides: effectiveByGap[k] || g.guides,
+        filed: g.release.filed,
+        accession: g.release.accession,
+      })),
+      guidanceByRelease[0].guides,
+      "9999-12-31",
+      guidanceByRelease[0].release.filed,
+      calendar
+    ),
   };
 }
 
