@@ -394,6 +394,9 @@ async function buildOne(ticker) {
 
     const moved = revisionsBetween(priorGuidance.guides, currentGuidance.guides, {
       reportedPeriods: actuals.map((a) => a.period).filter(Boolean),
+      shareChanges,
+      beforeFiled: priorGuidance.release.filed,
+      afterFiled: current.filed,
     });
     for (const r of moved.revisions) {
       allRevisions.push({ ...r, release: current.accession, filed: current.filed });
