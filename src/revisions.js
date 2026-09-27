@@ -230,6 +230,49 @@ function isClosed(period, reportedPeriods, afterGuides) {
  * such rather than as a change: a company that simply did not repeat a figure
  * has not withdrawn it, and saying it did would be an accusation.
  */
+/**
+ * Was this per-share guide revised across a share split?
+ *
+ * Honeywell guided full-year 2026 adjusted EPS at $10.35 to $10.65 in April
+ * and at $8.05 to $8.35 in July. Between the two it spun off Aerospace AND
+ * combined every two shares into one. The record read "cut" - but the second
+ * figure is on half the share count, so the two are not the same measure and
+ * neither "cut" nor "raised" is true. A plain two-for-one split, a move of
+ * exactly half, was not caught at all: the scale check only fires on larger
+ * moves.
+ *
+ * The split windows are the ones pairing.js uses (from the cover pages, see
+ * shareCountChangesFrom). Two guides from releases filed on either side of a
+ * window straddle the split for certain. When either release falls inside
+ * the window, a move of under 10% is taken as a real revision on one share
+ * count - Walmart's full-year 2024 guide, revised in the release filed days
+ * before its split, was a genuine raise - and anything larger is not called
+ * a raise or a cut. That can withhold the word from a real large cut in the
+ * one release that shares its quarter with a split; the sentence says why,
+ * and a wrong direction is the worse error.
+ *
+ * Returns the split, or null.
+ */
+function acrossSplit(b, n, unit, options) {
+  if (unit !== "USD per share") return null;
+  const changes = options.shareChanges || [];
+  const beforeFiled = options.beforeFiled, afterFiled = options.afterFiled;
+  if (!changes.length || !beforeFiled || !afterFiled) return null;
+
+  const was = b.low !== null ? b.low : b.value !== null ? b.value : b.high;
+  const now = n.low !== null ? n.low : n.value !== null ? n.value : n.high;
+  if (typeof was !== "number" || typeof now !== "number") return null;
+  if (was === now && b.high === n.high) return null;
+
+  for (const c of changes) {
+    if (String(afterFiled) <= String(c.from) || String(beforeFiled) > String(c.to)) continue;
+    const certain = String(beforeFiled) <= String(c.from) && String(afterFiled) > String(c.to);
+    const small = was !== 0 && Math.abs(now - was) / Math.abs(was) < 0.10;
+    if (certain || !small) return { ratio: c.ratio, between: [c.from, c.to] };
+  }
+  return null;
+}
+
 export function revisionsBetween(rawBefore, rawAfter, opts) {
   const options = opts || {};
   const reportedPeriods = options.reportedPeriods || [];
@@ -317,8 +360,9 @@ export function revisionsBetween(rawBefore, rawAfter, opts) {
 
     seen.add(key);
     const b = numbersOf(before);
-    const scope = looksLikeScopeChange(b, n, g.unit, g.metric_as_written);
-    const dir = scope ? "scope change" : direction(b, n);
+    const split = acrossSplit(b, n, g.unit, options);
+    const scope = !split && looksLikeScopeChange(b, n, g.unit, g.metric_as_written);
+    const dir = split ? "share split" : scope ? "scope change" : direction(b, n);
 
     const row = {
       metric: g.metric,
@@ -340,6 +384,7 @@ export function revisionsBetween(rawBefore, rawAfter, opts) {
       })(),
       quote: g.quote,
     };
+    if (split) row.split = split;
     row.summary = revisionSentence(row);
     out.push(row);
   }
@@ -380,7 +425,7 @@ export function revisionsBetween(rawBefore, rawAfter, opts) {
   const scoped = out.some((r) => r.direction === "scope change");
   if (scoped) {
     for (const r of out) {
-      if (r.direction === "scope change") continue;
+      if (r.direction === "scope change" || r.direction === "share split") continue;
       if (typeof r.relativeMove === "number" && r.relativeMove > 0.15) {
         r.possibleScopeChange = true;
         r.summary = revisionSentence(r) || r.summary;

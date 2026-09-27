@@ -235,7 +235,7 @@ export function pairUp(guides, actuals) {
  * Per-share figures across a share split
  * ------------------------------------------------------------------ */
 
-function ratioWords(r) {
+export function ratioWords(r) {
   if (r >= 1) return (Number.isInteger(r) ? r : r.toFixed(1)) + "-for-1 split";
   const k = 1 / r;
   return "1-for-" + (Number.isInteger(Math.round(k)) ? Math.round(k) : k.toFixed(1)) + " reverse split";

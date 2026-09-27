@@ -568,7 +568,7 @@ function median(xs) {
 export function readingOf(view, metrics) {
   const latest = view.latestRelease && view.latestRelease.accession;
   const moved = (view.revisions || []).filter((r) => latest && r.release === latest
-    && ["raised", "cut", "unchanged", "new", "narrowed", "widened"].includes(r.direction));
+    && ["raised", "cut", "unchanged", "new", "narrowed", "widened", "share split"].includes(r.direction));
 
   const reported = [];
   const measures = [];
@@ -799,7 +799,7 @@ function annualRows(annual) {
  * compares figures and skips anything qualitative.
  */
 function movedInThisRelease(revisions, latest, limit) {
-  const wanted = new Set(["raised", "cut", "unchanged", "new", "narrowed", "widened", "scope change"]);
+  const wanted = new Set(["raised", "cut", "unchanged", "new", "narrowed", "widened", "scope change", "share split"]);
   const accession = latest && latest.accession;
   const cap = limit || 20;
 

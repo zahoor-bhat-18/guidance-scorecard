@@ -25,6 +25,7 @@
  * caller falls back to it when this returns null.
  */
 
+import { ratioWords } from "./pairing.js";
 import { formatFigure, periodLabel } from "./format.js";
 import { displayLabel } from "./metrics.js";
 
@@ -83,7 +84,13 @@ export function revisionSentence(r) {
 
   let sentence;
 
-  if (dir === "scope change") {
+  if (dir === "share split") {
+    const words = r.split && typeof r.split.ratio === "number" ? "a " + ratioWords(r.split.ratio) : "a share split";
+    sentence = label + " for " + when + ": was " + formatFigure(r.before, unit) + ", now "
+      + formatFigure(r.after, unit) + ". The share count changed in " + words
+      + " between these two guides, so they are on different share counts and the move"
+      + " is not reported as a raise or a cut.";
+  } else if (dir === "scope change") {
     sentence = label + " for " + when + " changed scale. Was "
       + formatFigure(r.before, unit) + ", now " + formatFigure(r.after, unit)
       + ". A move that large is not a revision - it usually means a spin-off, a"
