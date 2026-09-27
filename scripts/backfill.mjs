@@ -32,7 +32,7 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { resolveCik, companyCalendar, factsFor } from "../src/xbrl.js";
 import { annualRecord } from "../src/annual.js";
-import { earningsReleases, guidanceFrom } from "../src/guidance.js";
+import { earningsReleases, guidanceFrom, updateCandidates, guidanceUpdatesBetween, applyUpdates } from "../src/guidance.js";
 import { requestsFrom, actualsFrom } from "../src/actuals.js";
 import { samePeriod } from "../src/period.js";
 import { scoreAll } from "../src/score.js";
@@ -297,6 +297,49 @@ async function buildOne(ticker) {
   }
 
   /**
+   * Guidance updated BETWEEN releases, and the guides in force as a result.
+   *
+   * Gap i lies between releases[i + 1] (older) and releases[i]. Every 8-K in
+   * it that could carry guidance is filtered for free and read only if it
+   * talks about guidance with figures; what it guides replaces the older
+   * release's figure for the same measure and period. See applyUpdates.
+   * effectiveByGap[i] is what releases[i]'s results are scored against.
+   */
+  let updateFilings = [];
+  try {
+    updateFilings = await updateCandidates(env, cik);
+  } catch (e) {
+    console.error("  " + ticker + ": other 8-Ks could not be listed, mid-quarter updates not checked - " + e.message);
+  }
+  const keptAccessions = releases.map((r) => r.accession);
+  const effectiveByGap = [];
+  const appliedByGap = [];
+  const updatesRead = [];
+  for (let i = 0; i < releases.length - 1; i++) {
+    const prior = guidanceByRelease[i + 1];
+    let updates = [];
+    if (updateFilings.length) {
+      const found = await guidanceUpdatesBetween(env, cik, prior.release.filed, releases[i].filed, calendar, {
+        exclude: keptAccessions,
+        candidates: updateFilings,
+      });
+      updates = found.updates;
+      for (const line of found.log) {
+        if (!/not read further/.test(line)) console.log("  " + ticker + " update " + line);
+      }
+    }
+    const { effective, applied } = applyUpdates(prior.guides, updates);
+    effectiveByGap[i] = effective;
+    appliedByGap[i] = applied;
+    for (const up of updates) {
+      const used = applied.filter((a) => a.filed === up.release.filed).length;
+      updatesRead.push({ accession: up.release.accession, filed: up.release.filed, guides: up.guides.length, applied: used });
+      console.log("  " + ticker + " update " + up.release.filed + ": " + up.guides.length + " guides read, "
+        + used + " replaced an earlier guide");
+    }
+  }
+
+  /**
    * The FIRST guide for each period, and the whole path of guides to it.
    *
    * A company can land inside its final full-year guide two very different
@@ -339,6 +382,16 @@ async function buildOne(ticker) {
         && last.high === figure.high && last.value === figure.value;
       if (!same) path.push({ ...figure, filed: g.release.filed });
     }
+
+    // Then any mid-quarter updates filed after this release and before the
+    // next one, in date order - "$0.70 to $1.00 -> $0.30 to $0.50".
+    for (const a of (i > 0 ? appliedByGap[i - 1] : []) || []) {
+      const path = guidePaths[a.key] || (guidePaths[a.key] = []);
+      const last = path[path.length - 1];
+      const same = last && last.low === a.figure.low
+        && last.high === a.figure.high && last.value === a.figure.value;
+      if (!same) path.push({ ...a.figure, filed: a.filed });
+    }
   }
 
   /* The company's tagged facts, fetched once and used twice: the share splits
@@ -376,7 +429,10 @@ async function buildOne(ticker) {
       actuals = result.actuals;
     }
 
-    const paired = refuseAcrossSplit(pairUp(priorGuidance.guides, actuals), {
+    // The guides in force when the period ended: the older release's, with
+    // any mid-quarter update applied. Same labels, so same questions above.
+    const inForce = effectiveByGap[i] || priorGuidance.guides;
+    const paired = refuseAcrossSplit(pairUp(inForce, actuals), {
       changes: shareChanges,
       guideFiled: priorGuidance.release.filed,
       actualFiled: current.filed,
@@ -392,7 +448,9 @@ async function buildOne(ticker) {
       });
     }
 
-    const moved = revisionsBetween(priorGuidance.guides, currentGuidance.guides, {
+    // Against the guide in force too: a cut made mid-quarter was not made by
+    // this release, and must not be reported as if it were.
+    const moved = revisionsBetween(inForce, currentGuidance.guides, {
       reportedPeriods: actuals.map((a) => a.period).filter(Boolean),
       shareChanges,
       beforeFiled: priorGuidance.release.filed,
@@ -578,6 +636,7 @@ async function buildOne(ticker) {
     builtAt: new Date().toISOString(),
     calendar: calendar.meta,
     releasesRead: releases.map((r) => ({ accession: r.accession, filed: r.filed })),
+    updatesRead,
     coverage,
     landed: {
       above: comparable.filter((p) => p.score && p.score.position === "above").length,
