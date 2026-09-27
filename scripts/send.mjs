@@ -19,7 +19,7 @@
  */
 
 import { resolveCik, companyCalendar, shareCountChanges } from "../src/xbrl.js";
-import { earningsReleases, guidanceFrom } from "../src/guidance.js";
+import { earningsReleases, guidanceFrom, guidanceUpdatesBetween, applyUpdates } from "../src/guidance.js";
 import { requestsFrom, actualsFrom } from "../src/actuals.js";
 import { pairUp, refuseAcrossSplit } from "../src/pairing.js";
 import { metricKey } from "../src/metrics.js";
@@ -192,7 +192,27 @@ async function handle(ticker) {
 
   // The guides this release answers were extracted when the previous release
   // was read. Re-reading it would double the bill for a known answer.
-  const priorGuides = record.currentGuidance || [];
+  const storedGuides = record.currentGuidance || [];
+
+  // Any guidance update filed since the last release replaces the stored
+  // guide for its measure and period, as in the backfill. If the other 8-Ks
+  // cannot be read, the stored guides stand and the log says so.
+  let priorGuides = storedGuides;
+  let updatesRead = [];
+  const since = record.releasesRead?.[0]?.filed;
+  if (since) {
+    try {
+      const found = await guidanceUpdatesBetween(env, cik, since, current.filed, calendar, {
+        exclude: [current.accession, ...(record.releasesRead || []).map((r) => r.accession)],
+      });
+      for (const line of found.log) console.log(ticker + " update " + line);
+      const { effective } = applyUpdates(storedGuides, found.updates);
+      priorGuides = effective;
+      updatesRead = found.updates.map((u) => ({ accession: u.release.accession, filed: u.release.filed, guides: u.guides.length }));
+    } catch (e) {
+      console.error(ticker + ": mid-quarter updates could not be checked - " + e.message);
+    }
+  }
 
   // THE CALENDAR GOES WITH THEM. Without it the model is asked for "the second
   // quarter of the fiscal year the company labels 2026" against a Delta
@@ -243,6 +263,14 @@ async function handle(ticker) {
         fromRelease: record.releasesRead?.[0]?.accession,
         answeredBy: current.accession,
         answeredByFiled: current.filed,
+        // The path, when an update replaced the guide: the release's figure,
+        // then the update's. The email draws it as "was -> now".
+        ...(p.guide_updated ? {
+          guidePath: [
+            { ...p.guide_updated.was, filed: record.releasesRead?.[0]?.filed || null },
+            { ...p.guide, filed: p.guide_updated.filed },
+          ],
+        } : {}),
       })),
       record.pairs || []
     ),
@@ -251,6 +279,7 @@ async function handle(ticker) {
       ...(record.revisions || []),
     ],
     currentGuidance: nowGuiding.guides,
+    updatesRead: [...updatesRead, ...(record.updatesRead || [])],
   };
 
   await kvPut("record:" + ticker, JSON.stringify(updated));
