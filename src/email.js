@@ -229,7 +229,16 @@ function guideCell(p) {
   const firstText = formatFigure(first, p.unit);
   if (firstText === now) return { text: now, noted: false };
 
-  if (scaleChanged(first, p.guide, p.unit)) return { text: now, noted: true };
+  // Per-share guides: the record says whether a real split lies between the
+  // first guide and the last. Delta cut its first-quarter 2025 EPS guide from
+  // $0.70-$1.00 to $0.30-$0.50 mid-quarter - more than half - and the ratio
+  // test hid that path behind a footnote about splits, when there was none.
+  // The ratio test is kept only where the record does not know (older records)
+  // and for level measures, where a spin-off is the thing it catches.
+  const crossed = p.pathAcrossSplit === true || p.pathAcrossSplit === false
+    ? p.pathAcrossSplit
+    : scaleChanged(first, p.guide, p.unit);
+  if (crossed) return { text: now, noted: true };
 
   return { text: firstText + " → " + now, noted: false };
 }
