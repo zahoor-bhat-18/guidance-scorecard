@@ -110,3 +110,27 @@ export function periodSortKey(period) {
   const slot = m[2] === "FY" ? 4 : parseInt(m[3], 10);
   return year * 10 + slot;
 }
+
+/* Words that stay in capitals when an all-capitals SEC name is set in normal
+   case. Everything else becomes Title Case. */
+const KEEP_UPPER = new Set(["LLC", "PLC", "LP", "NV", "SA", "AG", "SE", "ASA", "USA", "US", "UK", "AB", "BV", "II", "III", "IV"]);
+
+/**
+ * A company name as a reader expects it.
+ *
+ * SEC's own list spells many names in capitals - "DELTA AIR LINES, INC.",
+ * "COCA COLA CO" - which in an email reads as shouting. A name that already
+ * has lower-case letters is the company's own styling and is left alone.
+ */
+export function displayName(name) {
+  // SEC appends the state of incorporation to some names: "BERKSHIRE
+  // HATHAWAY INC /DE/". A reader does not need it.
+  const s = String(name || "").replace(/\s*\/[A-Za-z]{2}\/\s*$/, "").trim();
+  if (!s || /[a-z]/.test(s)) return s;
+  return s.split(/(\s+|-)/).map((w) => {
+    const bare = w.replace(/[^A-Za-z]/g, "");
+    if (!bare) return w;
+    if (KEEP_UPPER.has(bare)) return w;
+    return w.charAt(0) + w.slice(1).toLowerCase();
+  }).join("");
+}

@@ -209,6 +209,11 @@ export function resolvePeriod(text, cal, opts) {
   const t = text
     .toLowerCase()
     .replace(/[\u2010-\u2015\u2212]/g, "-")
+    // "third-quarter 2024" is "third quarter 2024". United's investor updates
+    // hyphenate it, and the hyphen hid the quarter: the Q3 2024 EPS guide of
+    // $2.75-$3.25 was read as a FULL-YEAR guide, scored against nothing, and
+    // the email said Q3 2024 was "not guided".
+    .replace(/\b(first|second|third|fourth|1st|2nd|3rd|4th)-(quarter)\b/g, "$1 $2")
     .replace(/\s+/g, " ")
     .trim();
 

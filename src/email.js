@@ -22,7 +22,7 @@
  */
 
 import { metricKey, displayLabel } from "./metrics.js";
-import { formatFigure, formatValue, periodLabel, periodSortKey } from "./format.js";
+import { formatFigure, formatValue, periodLabel, periodSortKey, displayName } from "./format.js";
 
 const CREAM = "#faf7f0";
 const INK = "#1a2b23";
@@ -170,6 +170,8 @@ function outcomeCell(p) {
     return "below by " + formatDelta(actual - low, p.unit, false);
   }
   if (value !== null) {
+    // "$0bn vs single figure" read like a typo. Exactly on it says so.
+    if (tidy(actual - value) === 0) return "at the single figure";
     return formatDelta(actual - value, p.unit, true) + " vs single figure";
   }
   return p.position || "";
@@ -860,9 +862,28 @@ function belowBarRows(belowBar, annual) {
   return out;
 }
 
+
+/**
+ * The headline, saying how far back it counts.
+ *
+ * "16 matched pairs: 5 above, 8 within, 1 below" counts every pair on record,
+ * back to 2023, while the tables show the last ten periods of each measure.
+ * United's email announced "1 below" with no below row anywhere in sight.
+ * "Since Q2 2023" makes the headline and the tables agree about what they
+ * cover.
+ */
+function headlineSince(headline, pairs) {
+  const h = String(headline || "");
+  const periods = (pairs || []).map((p) => p.period).filter(Boolean);
+  if (!periods.length || !/ matched pairs?:/.test(h)) return h;
+  const first = periods.reduce((a, b) => (periodSortKey(a) <= periodSortKey(b) ? a : b));
+  return h.replace(/ matched (pairs?):/, " matched $1 since " + periodLabel(first) + ":");
+}
+
 export function renderEmail(view, options) {
   const opts = options || {};
-  const company = view.company || view.ticker;
+  const company = displayName(view.company || view.ticker);
+  const lead = headlineSince(view.headline, view.pairs);
   const { metrics, belowBar } = byMetric(view.pairs || [], view.unanswered || [], METRICS_SHOWN);
   const moved = movedInThisRelease(view.revisions, view.latestRelease, 20);
   const annual = annualRows(view.annual);
@@ -879,7 +900,7 @@ export function renderEmail(view, options) {
   t.push(company + " (" + view.ticker + ")");
   t.push("");
   t.push("THE RECORD");
-  t.push(view.headline || "");
+  t.push(lead);
   t.push("");
 
   for (const g of metrics) {
@@ -938,6 +959,9 @@ export function renderEmail(view, options) {
     }
   }
 
+  t.push("Thanks,");
+  t.push("Zahoor · Guidance Scorecard · hello@zahoorbhat.com");
+  t.push("");
   t.push("Questions, or something that looks wrong: reply to this, or write to");
   t.push("hello@zahoorbhat.com.");
   t.push("");
@@ -960,7 +984,7 @@ export function renderEmail(view, options) {
   h.push('<h1 style="margin:6px 0 2px;font-size:24px;font-weight:normal;color:' + GREEN + ';">' + esc(company) + '</h1>');
   h.push('<div style="font-size:14px;color:' + MUTED + ';">' + esc(view.ticker) + '</div>');
 
-  h.push('<p style="margin:20px 0 0;font-size:17px;">' + esc(view.headline || "") + '</p>');
+  h.push('<p style="margin:20px 0 0;font-size:17px;">' + esc(lead) + '</p>');
 
   const th = (head) => '<th align="left" style="padding:0 8px 5px 0;border-bottom:1px solid '
     + RULE + ';font-weight:normal;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:'
@@ -1078,6 +1102,7 @@ export function renderEmail(view, options) {
     h.push('</div>');
   }
 
+  h.push('<p style="margin-top:26px;font-size:15px;line-height:1.6;">Thanks,<br>Zahoor · Guidance Scorecard · hello@zahoorbhat.com</p>');
   h.push('<p style="margin-top:26px;padding-top:14px;border-top:1px solid ' + RULE + ';font-size:13px;color:' + MUTED + ';line-height:1.6;">'
     + 'Questions, or something that looks wrong: reply to this, or write to '
     + '<a href="mailto:hello@zahoorbhat.com" style="color:' + MUTED + ';">hello@zahoorbhat.com</a>. '

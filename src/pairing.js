@@ -22,7 +22,7 @@
  */
 
 import { metricKey } from "./metrics.js";
-import { samePeriod } from "./period.js";
+import { samePeriod, periodIsClosedBy } from "./period.js";
 
 /**
  * A RANGE WHOSE ENDS ARE EQUAL IS A POINT.
@@ -303,6 +303,33 @@ export function refuseAcrossSplit(pairs, dates) {
         + " Restating the guide would print a figure the company never published.";
       break;
     }
+  }
+  return pairs;
+}
+
+/**
+ * A guide whose period had not ended when the next release was filed.
+ *
+ * Every full-year guide is carried to the next quarter's release and asked
+ * about there, where the year is still running. The answer is nothing - or a
+ * year-to-date figure the model cannot tell apart from others - and the pair
+ * was refused as "the release does not report this figure" or "more than one
+ * reported figure could be this measure". Both are wrong about what happened,
+ * and the email counted each as "a guided period left out, no matching
+ * reported figure found". United's showed three.
+ *
+ * Marked, not dropped: the record keeps it, the reason says what is true, and
+ * the email does not count it as a gap.
+ */
+export function markOpenAtAnswer(pairs, answerFiled, cal) {
+  if (!answerFiled || !cal) return pairs;
+  for (const p of pairs) {
+    if (p.comparable || !p.guide_period) continue;
+    let closed = true;
+    try { closed = periodIsClosedBy(p.guide_period, answerFiled, cal); } catch { closed = true; }
+    if (closed) continue;
+    p.open_at_answer = true;
+    p.why = "The period had not ended when the next release was filed, so there was no result to compare yet.";
   }
   return pairs;
 }

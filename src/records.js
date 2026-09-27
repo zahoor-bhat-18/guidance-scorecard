@@ -58,6 +58,8 @@ function unansweredOf(record) {
   for (const p of record.pairs || []) {
     if (p.comparable) continue;
     if (!p.guide_period) continue;
+    // Not a gap: the period was still running when the next release came.
+    if (p.open_at_answer) continue;
 
     /* EVERY GUIDE, whatever the reason it could not be answered.
      *

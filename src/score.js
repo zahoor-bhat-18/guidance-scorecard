@@ -92,9 +92,16 @@ function guidePrecision(guide, unit) {
  * Growth guides are exempt. A percentage change is volatile by nature and a
  * large gap there is ordinary.
  */
+/* Leveraged measures: earnings, and everything that sits below revenue the way
+   earnings do. Cash flow and operating profit move several times as far as
+   revenue for the same surprise - GE carried four "check this" flags on
+   ordinary free-cash-flow and profit beats of 5-6% because they were held to
+   revenue's 5%. */
 function looksLikeEarnings(pair) {
-  return /eps|earnings per share|earnings/i.test(String(pair.metric_as_written || ""))
-    || pair.metric === "eps";
+  const label = String(pair.metric_as_written || "");
+  return /eps|earnings per share|earnings/i.test(label)
+    || /cash flow|\bfcf\b|operating (profit|income)|ebitda|ebit\b|net income|pre-?tax/i.test(label)
+    || ["eps", "free_cash_flow", "operating_cash_flow", "operating_income", "ebitda", "net_income"].includes(pair.metric);
 }
 
 function flagsFor(pair, actual, low, high, value) {
