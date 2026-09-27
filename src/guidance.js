@@ -956,6 +956,13 @@ function matchIn(update, g) {
 export function applyUpdates(guides, updates) {
   const applied = [];
   const effective = (guides || []).map((g) => {
+    // Only a guide that had a figure is replaced. A release entry with no
+    // number was never asked about when the next results came out, so an
+    // update filling one in (Delta's September 2025 update gave third-quarter
+    // revenue "2 to 4 percent" for a July entry with no figure) produced a
+    // pair that could not be scored and an email line "guided period left
+    // out". Updates correct guides; they do not create them.
+    if (!hasFigure(g)) return g;
     let current = g;
     for (const up of updates || []) {
       const u = matchIn(up, g);
