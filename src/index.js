@@ -256,6 +256,36 @@ async function poll(env) {
  * ------------------------------------------------------------------ */
 
 const MAX_TICKERS_PER_SIGNUP = 5;
+
+/**
+ * Cloudflare Turnstile: is this a person?
+ *
+ * Every signup sends an email to the address typed in, so an unprotected form
+ * is a way for a bot to make this domain send mail to anyone - which ruins
+ * the sending reputation the product depends on, and costs a backfill per
+ * made-up request.
+ *
+ * Until TURNSTILE_SECRET is set the check is skipped, so deploying this
+ * before the keys exist does not lock everyone out. Once it is set, a signup
+ * without a valid token is refused, and so is one Cloudflare cannot verify -
+ * failing closed, because failing open is exactly what a bot would exploit.
+ */
+async function passedTurnstile(env, token, ip) {
+  if (!env.TURNSTILE_SECRET) return { ok: true, skipped: true };
+  if (!token) return { ok: false, error: "Please complete the check above the button, then try again." };
+  try {
+    const form = new FormData();
+    form.append("secret", env.TURNSTILE_SECRET);
+    form.append("response", String(token));
+    if (ip) form.append("remoteip", ip);
+    const r = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", { method: "POST", body: form });
+    const d = await r.json();
+    if (d.success) return { ok: true };
+    return { ok: false, error: "The check did not go through. Please try it again." };
+  } catch {
+    return { ok: false, error: "The check could not be confirmed just now. Please try again in a moment." };
+  }
+}
 const NEW_COMPANIES_PER_DAY = 10;
 // How long a request blocks another for the same ticker. Long enough to
 // cover a backfill that is queued or running; a finished one leaves a record,
@@ -621,6 +651,15 @@ export default {
      * signup form. Read once per visitor and filtered in the browser, so typing
      * costs nothing. Written monthly by scripts/tickers.mjs.
      */
+    /*
+     * The public half of the human check. The site key is not a secret - it
+     * is meant to sit in the page - but keeping it in the Worker's settings
+     * means the page never has to be edited to change it.
+     */
+    if (url.pathname === "/api/turnstile") {
+      return json({ siteKey: env.TURNSTILE_SITE_KEY || null });
+    }
+
     if (url.pathname === "/api/tickers") {
       const list = await env.CACHE.get("tickers:names", { cacheTtl: 3600 });
       return new Response(list || "[]", {
@@ -745,6 +784,12 @@ export default {
 
       try {
         const body = await request.json().catch(() => ({}));
+
+        // Human check first, before anything is read or sent: a bot that can
+        // post this form can make the site email any address it likes.
+        const human = await passedTurnstile(env, body.turnstile, request.headers.get("CF-Connecting-IP"));
+        if (!human.ok) return json({ error: human.error }, 403);
+
         const email = cleanEmail(body.email);
         if (!email) return json({ error: "That does not look like an email address." }, 400);
 
