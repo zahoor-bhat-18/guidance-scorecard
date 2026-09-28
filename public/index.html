@@ -117,6 +117,7 @@
   ol.picked .nm{font:400 15px/1.5 "Inter",sans-serif;color:#16281F;flex:1}
   ol.picked button{background:none;border:0;color:#5B7166;font-size:20px;line-height:1;cursor:pointer;padding:0 4px}
   ol.picked button:hover{color:#A33B2E}
+  .human{margin:4px 0 10px;min-height:0}
   button.submit{width:100%;font:500 16px/1 "Inter",sans-serif;color:#fff;background-color:#16281F;border:0;border-radius:7px;padding:16px;cursor:pointer;margin-top:4px;transition:background-color .2s}
   button.submit:hover:not(:disabled){background-color:#1F8A5C}
   button.submit:disabled{background-color:#9BA79F;cursor:not-allowed}
@@ -277,6 +278,7 @@
         </div>
         <ol class="picked" id="picked"></ol>
       </div>
+      <div id="human" class="human"></div>
       <button class="submit" id="go" type="button">Get the scorecards</button>
       <div class="signnote" id="says" role="status" aria-live="polite"></div>
       <p class="fineprint">Free while in test. One email per company each quarter, nothing else. Unsubscribe any time.</p>
@@ -515,6 +517,28 @@
       if (!e.target.closest(".combo")) closeResults();
     });
 
+    /* Cloudflare Turnstile. The site key comes from the Worker; if none is
+       set yet, no widget is drawn and the form works as before. */
+    let humanToken = "";
+    let humanWidget = null;
+    let humanNeeded = false;
+    fetch("/api/turnstile").then((r) => r.json()).then((d) => {
+      if (!d || !d.siteKey) return;
+      humanNeeded = true;
+      const s = document.createElement("script");
+      s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+      s.async = true;
+      s.onload = () => {
+        humanWidget = window.turnstile.render("#human", {
+          sitekey: d.siteKey,
+          callback: (t) => { humanToken = t; },
+          "expired-callback": () => { humanToken = ""; },
+          "error-callback": () => { humanToken = ""; },
+        });
+      };
+      document.head.appendChild(s);
+    }).catch(() => {});
+
     goEl.addEventListener("click", async () => {
       const email = emailEl.value.trim();
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
@@ -528,13 +552,18 @@
         return;
       }
 
+      if (humanNeeded && !humanToken) {
+        say("Please complete the check above the button.", "err");
+        return;
+      }
+
       goEl.disabled = true;
       say("Sending…", "ok");
       try {
         const r = await fetch("/api/signup", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, tickers: picked.map(([t]) => t).join(",") }),
+          body: JSON.stringify({ email, tickers: picked.map(([t]) => t).join(","), turnstile: humanToken }),
         });
         const d = await r.json();
         if (!r.ok || d.error) throw new Error(d.error || "Something went wrong.");
@@ -547,6 +576,11 @@
         say(e.message || "That did not go through. Try again in a moment.", "err");
       } finally {
         goEl.disabled = false;
+        // A token is good for one use: draw a fresh check for the next signup.
+        if (humanWidget !== null && window.turnstile) {
+          humanToken = "";
+          window.turnstile.reset(humanWidget);
+        }
       }
     });
   })();
