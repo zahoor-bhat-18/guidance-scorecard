@@ -235,20 +235,20 @@ async function poll(env) {
     headers: { "User-Agent": env.SEC_USER_AGENT, Accept: "application/atom+xml" },
     cf: { cacheTtl: 0 },
   });
-  if (!r.ok) return;
+  if (!r.ok) return pollProblem(env, "EDGAR feed answered " + r.status);
 
   const xml = await r.text();
 
   // Map the tickers being watched to the CIKs the feed carries.
   const ciks = await watchedCiks(env, watching);
-  if (!ciks) return;
+  if (!ciks) return pollProblem(env, "tickers:cik is missing from KV - run the tickers workflow");
 
   const wanted = new Map();
   for (const t of watching) if (ciks[t]) wanted.set(String(Number(ciks[t])), t);
 
   const hits = new Set();
-  for (const m of xml.matchAll(/CIK=(\d+)/g)) {
-    const t = wanted.get(String(Number(m[1])));
+  for (const cik of feedCiks(xml)) {
+    const t = wanted.get(cik);
     if (t) hits.add(t);
   }
   if (!hits.size) return;
@@ -257,12 +257,14 @@ async function poll(env) {
   for (const ticker of hits) {
     const seen = await env.CACHE.get("dispatched:" + ticker);
     if (seen) continue;
-    await env.CACHE.put("dispatched:" + ticker, "1", { expirationTtl: 3600 });
     fresh.push(ticker);
   }
   if (!fresh.length) return;
 
-  await fetch("https://api.github.com/repos/" + env.GITHUB_REPO + "/dispatches", {
+  // Marked as sent only once GitHub has ACCEPTED the dispatch. It used to be
+  // marked first and the answer never read, so a refused dispatch left the
+  // ticker silenced for an hour with nothing anywhere saying why.
+  const d = await fetch("https://api.github.com/repos/" + env.GITHUB_REPO + "/dispatches", {
     method: "POST",
     headers: {
       Authorization: "Bearer " + env.GITHUB_TOKEN,
@@ -272,8 +274,50 @@ async function poll(env) {
     },
     body: JSON.stringify({ event_type: "earnings-release", client_payload: { tickers: fresh.join(",") } }),
   });
+  if (!d.ok) {
+    return pollProblem(env, "GitHub refused the dispatch for " + fresh.join(",") + ": " + d.status + " "
+      + (await d.text().catch(() => "")).slice(0, 200));
+  }
+  for (const ticker of fresh) {
+    await env.CACHE.put("dispatched:" + ticker, "1", { expirationTtl: 3600 });
+  }
 
   await env.CACHE.put("poll:last", new Date().toISOString() + " dispatched " + fresh.join(","));
+}
+
+/**
+ * Every CIK in EDGAR's current-filings feed.
+ *
+ * THE BUG THIS REPLACES. The poller looked for "CIK=1234" - the form the
+ * feed's HTML page uses in its links. The Atom version this Worker asks for
+ * never writes that: it names the filer as "Carnival Corp Ltd. (0000815097)"
+ * in each title and links to ".../edgar/data/815097/...". So no filing ever
+ * matched, nothing was ever dispatched - poll:last was still empty when
+ * Carnival filed its results on 29 September 2026 - and no email went out.
+ * All three forms are read now, so a change in the feed's layout in one place
+ * does not silence it again.
+ */
+export function feedCiks(xml) {
+  const out = new Set();
+  const text = String(xml || "");
+  for (const m of text.matchAll(/CIK=(\d+)/gi)) out.add(String(Number(m[1])));
+  for (const m of text.matchAll(/\((\d{10})\)/g)) out.add(String(Number(m[1])));
+  for (const m of text.matchAll(/\/edgar\/data\/(\d+)\//g)) out.add(String(Number(m[1])));
+  return out;
+}
+
+/**
+ * A poll that could not do its job, written where /__health shows it.
+ *
+ * At most one write an hour per problem: the poll runs every minute, and the
+ * free plan allows a thousand KV writes a day.
+ */
+async function pollProblem(env, message) {
+  try {
+    const held = await env.CACHE.get("poll:problem");
+    if (held && held.indexOf(message) !== -1) return;
+    await env.CACHE.put("poll:problem", new Date().toISOString() + " " + message, { expirationTtl: 3600 });
+  } catch { /* the health page will simply show nothing */ }
 }
 
 /* ------------------------------------------------------------------
@@ -1002,6 +1046,11 @@ export default {
         subscribers,
         watching,
         lastDispatch: await env.CACHE.get("poll:last"),
+        // The last thing that stopped a poll, if any in the past hour.
+        pollProblem: await env.CACHE.get("poll:problem"),
+        // Whether the ticker-to-CIK map the poller depends on is there at all.
+        cikMap: Boolean(await env.CACHE.get("tickers:cik")),
+        SEC_USER_AGENT: Boolean(env.SEC_USER_AGENT),
       });
     }
 
