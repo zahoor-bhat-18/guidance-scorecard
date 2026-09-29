@@ -426,6 +426,10 @@ export function revisionsBetween(rawBefore, rawAfter, opts) {
   if (scoped) {
     for (const r of out) {
       if (r.direction === "scope change" || r.direction === "share split") continue;
+      // A rate is not moved by a change in what is being counted: Carnival's
+      // net yields - a percentage - carried the scale warning because a dollar
+      // guide elsewhere in the release had changed scale.
+      if (r.unit === "percent") continue;
       if (typeof r.relativeMove === "number" && r.relativeMove > 0.15) {
         r.possibleScopeChange = true;
         r.summary = revisionSentence(r) || r.summary;
