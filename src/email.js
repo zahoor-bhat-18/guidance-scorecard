@@ -278,8 +278,12 @@ function byMetric(pairs, unanswered, limit) {
     // Grouped on the shared metric identity, NOT on the label as the company
     // wrote it. Broadcom names the quarter inside its labels, so grouping by
     // label split one measure into four and dropped three of them.
-    const key = metricKey(p.metric);
+    // Measure AND kind of unit: Carnival's "adjusted net income" is guided
+    // both in dollars and as a growth rate, and one table held $1.86bn and
+    // "at least 60%" in adjacent rows. Each kind gets its own table.
+    const key = metricKey(p.metric) + "|" + unitClass(p.unit);
     const g = group(key, p.unit);
+    g.key = key;
     g.labels.push(p.metric);
     g.rows.push(p);
     if (p.position === "above") g.above += 1;
@@ -317,7 +321,7 @@ function byMetric(pairs, unanswered, limit) {
     if (!u.metric || !u.period) continue;
     if (newestScored && periodSortKey(u.period) > newestScored) continue;
 
-    const key = metricKey(u.metric);
+    const key = metricKey(u.metric) + "|" + unitClass(u.unit);
     unansweredByKey.set(key + "|" + u.period, u);
 
     /* NO ROW FOR A GUIDE WE COULD NOT MATCH.
@@ -336,8 +340,20 @@ function byMetric(pairs, unanswered, limit) {
   }
 
   const out = Array.from(groups.values());
-  for (const g of out) {
+  const baseCount = new Map();
+  for (const [key] of groups) {
+    const base = key.split("|")[0];
+    baseCount.set(base, (baseCount.get(base) || 0) + 1);
+  }
+  for (const [key, g] of groups) {
+    g.key = key;
     g.metric = displayLabel(g.labels);
+    // Two tables for one measure: say which is the rate.
+    if (baseCount.get(key.split("|")[0]) > 1 && unitClass(g.unit) === "rate" && !/%|growth|margin|yield|rate/i.test(g.metric)) {
+      g.metric += " (%)";
+    }
+  }
+  for (const g of out) {
     // Newest first, in TIME order. This compared the stored strings, which is
     // alphabetical: "2026FY" sorted before "2026Q1" because F precedes Q.
     g.rows.sort((a, b) => periodSortKey(b.period) - periodSortKey(a.period));
@@ -380,7 +396,7 @@ function byMetric(pairs, unanswered, limit) {
   for (const g of earned) {
     g.allPeriods = g.rows.length;
 
-    const key = metricKey(g.labels[0]);
+    const key = g.key || (metricKey(g.labels[0]) + "|" + unitClass(g.unit));
     const have = new Set(g.rows.map((p) => p.period));
 
     /* Slots already taken, by position rather than by name. FY2025 and Q4
@@ -674,6 +690,167 @@ export function readingOf(view, metrics) {
   return { reported, measures };
 }
 
+
+/* ------------------------------------------------------------------ *
+ * The brief: what a PM reads first
+ * ------------------------------------------------------------------ */
+
+/* Kinds of unit, for keeping each table to one kind. */
+function unitClass(unit) {
+  const u = String(unit || "").toLowerCase();
+  if (u === "percent" || /percent|%|points/.test(u)) return "rate";
+  if (/per share/.test(u)) return "per-share";
+  if (/usd|eur|gbp|jpy|\$|dollar/.test(u)) return "money";
+  return "other";
+}
+
+/**
+ * Which measures a portfolio manager reads first.
+ *
+ * Carnival's email ran to ten phone screens because every guided line got a
+ * table - share counts, depreciation, fuel per metric ton - with the same
+ * weight as EPS. The email now shows the measures that decide a quarter, in
+ * this order, and puts the rest on the site: earnings per share; revenue and
+ * its stand-ins (sales, net yields, comparable sales, organic growth);
+ * profit - operating income or margin, EBITDA, net income, gross margin; free
+ * cash flow. At most five. A company that guides none of these still gets its
+ * three best-recorded measures, so no email is empty.
+ */
+const KEY_ORDER = [
+  /\beps\b|earnings per share/i,
+  /revenue|sales|net yield|comparable|organic/i,
+  /operating (income|profit|margin)|ebitda|\bebit\b|net income|gross margin|segment margin/i,
+  /free cash flow|\bfcf\b/i,
+];
+const KEY_LIMIT = 5;
+
+function keyRank(g) {
+  const label = (g.labels || []).join(" ") + " " + (g.metric || "");
+  for (let i = 0; i < KEY_ORDER.length; i++) if (KEY_ORDER[i].test(label)) return i;
+  return 99;
+}
+
+export function keyMeasures(metrics) {
+  const scored = metrics.filter((g) => g.rows.some((p) => !p.notGuided && !p.unanswered));
+  const ranked = scored
+    .map((g) => ({ g, rank: keyRank(g) }))
+    .sort((a, b) => a.rank - b.rank || b.g.total - a.g.total);
+  // One table per measure among the key ones: where a measure is guided both
+  // as an amount and as a growth rate, the amount leads and the rate goes to
+  // the site with the rest.
+  const seenBase = new Set();
+  const single = ranked.filter((x) => {
+    const base = String(x.g.key || "").split("|")[0];
+    if (seenBase.has(base)) return false;
+    seenBase.add(base);
+    return true;
+  });
+  let keys = single.filter((x) => x.rank < 99).slice(0, KEY_LIMIT).map((x) => x.g);
+  if (keys.length < 2) keys = single.slice(0, 3).map((x) => x.g);
+  const others = metrics.filter((g) => !keys.includes(g));
+  return { keys, others };
+}
+
+/* Where a result landed against its guide, as one word and a distance.
+   A single figure gets "above" or "below" it - a direction, counted, never
+   called a beat or a miss. */
+function landing(p) {
+  const g = p.guide || {};
+  const a = num(p.actual);
+  if (a === null) return null;
+  if (p.position) {
+    const edge = p.position === "above" ? num(g.high) : p.position === "below" ? num(g.low) : null;
+    return { word: p.position, gap: edge === null ? null : Math.abs(a - edge) };
+  }
+  const v = num(g.value);
+  if (v === null) return null;
+  const d = tidy(a - v);
+  return { word: d > 0 ? "above" : d < 0 ? "below" : "at", gap: Math.abs(d) };
+}
+
+function guideWords(p) {
+  return boundText(p) || formatFigure(p.guide, p.unit);
+}
+
+/**
+ * The three short blocks at the top of the email.
+ *
+ *   reported - what this release reported against the guide in force, for
+ *              the key measures only;
+ *   record   - per key measure, how often results have landed above, within
+ *              or below the guide, and by how much;
+ *   guiding  - what this release guided for the key measures.
+ *
+ * Rows marked with the caution (†) are left out of all three and counted as
+ * left out: a wrong row must not become the headline or move a median.
+ */
+export function briefOf(view, keys) {
+  const latest = view.latestRelease && view.latestRelease.accession;
+  const reported = [];
+  const record = [];
+  const guiding = [];
+  const keySet = new Set(keys.map((g) => g.key.split("|")[0]));
+
+  for (const g of keys) {
+    const real = g.rows.filter((p) => !p.notGuided && !p.unanswered);
+    const clean = real.filter((p) => !p.flagged);
+
+    for (const p of clean) {
+      if (!latest || p.answeredBy !== latest) continue;
+      const l = landing(p);
+      if (!l) continue;
+      reported.push(g.metric + ", " + periodLabel(p.period) + ": " + formatValue(p.actual, p.unit)
+        + " vs " + guideWords(p) + " guided - " + l.word
+        + (l.gap ? ", " + gapText(l.gap, p.unit) : "") + ".");
+    }
+
+    const counts = { above: 0, within: 0, below: 0, at: 0 };
+    const aboveBy = [], belowBy = [];
+    for (const p of clean) {
+      const l = landing(p);
+      if (!l) continue;
+      counts[l.word] = (counts[l.word] || 0) + 1;
+      const inUnit = (x) => x * unitScale(p.unit) / unitScale(g.unit);
+      if (l.word === "above" && l.gap) aboveBy.push(inUnit(l.gap));
+      if (l.word === "below" && l.gap) belowBy.push(inUnit(l.gap));
+    }
+    const n = counts.above + counts.within + counts.below + counts.at;
+    if (n) {
+      const bits = [];
+      if (counts.above) bits.push("above in " + counts.above);
+      if (counts.within) bits.push("within in " + counts.within);
+      if (counts.at) bits.push("exactly on it in " + counts.at);
+      if (counts.below) bits.push("below in " + counts.below);
+      let line = g.metric + ": " + bits.join(", ") + " of " + n + (n === 1 ? " period" : " periods");
+      if (aboveBy.length) line += "; median " + gapText(median(aboveBy), g.unit) + " above";
+      if (belowBy.length) line += "; median " + gapText(median(belowBy), g.unit) + " below";
+      const left = real.length - clean.length;
+      if (left) line += " (" + left + " flagged " + (left === 1 ? "row" : "rows") + " left out)";
+      record.push(line + ".");
+    }
+  }
+
+  const moved = (view.revisions || []).filter((r) => latest && r.release === latest
+    && ["raised", "cut", "unchanged", "new", "narrowed", "widened", "share split", "scope change"].includes(r.direction));
+  let otherMoves = 0;
+  const perKey = new Map();
+  for (const r of moved) {
+    const k = metricKey(r.label || r.metric);
+    if (!keySet.has(k)) { otherMoves++; continue; }
+    const list = perKey.get(k) || [];
+    if (list.length < 3) list.push(r.summary);
+    else otherMoves++;
+    perKey.set(k, list);
+  }
+  for (const g of keys) {
+    for (const line of perKey.get(g.key.split("|")[0]) || []) {
+      if (!guiding.includes(line)) guiding.push(line);
+    }
+  }
+
+  return { reported, record, guiding, otherMoves };
+}
+
 /* "9 above, 2 within, 1 below" - counted, not characterised. */
 function countLine(g) {
   const parts = [];
@@ -915,6 +1092,22 @@ function belowBarRows(belowBar, annual) {
  * "Since Q2 2023" makes the headline and the tables agree about what they
  * cover.
  */
+/* "59 against a single figure" says nothing. Which side of it they landed
+   on does - counted, excluding rows marked with the caution. */
+function singlesLine(headline, pairs) {
+  let above = 0, below = 0;
+  for (const p of pairs || []) {
+    if (p.position || p.flagged) continue;
+    const l = landing(p);
+    if (!l) continue;
+    if (l.word === "above") above++;
+    else if (l.word === "below") below++;
+  }
+  if (!above && !below) return headline;
+  return String(headline).replace(/against a single figure rather than a range/,
+    "against a single figure (" + above + " above it, " + below + " below)");
+}
+
 function headlineSince(headline, pairs) {
   const h = String(headline || "");
   const periods = (pairs || []).map((p) => p.period).filter(Boolean);
@@ -926,14 +1119,21 @@ function headlineSince(headline, pairs) {
 export function renderEmail(view, options) {
   const opts = options || {};
   const company = displayName(view.company || view.ticker);
-  const lead = headlineSince(view.headline, view.pairs);
-  const { metrics, belowBar } = byMetric(view.pairs || [], view.unanswered || [], METRICS_SHOWN);
-  const moved = movedInThisRelease(view.revisions, view.latestRelease, 20);
+  const lead = singlesLine(headlineSince(view.headline, view.pairs), view.pairs);
+  const { metrics: allMetrics, belowBar } = byMetric(view.pairs || [], view.unanswered || [], 99);
+  const { keys: metrics, others } = keyMeasures(allMetrics);
+  const brief = briefOf(view, metrics);
   const annual = annualRows(view.annual);
   const alsoRows = belowBarRows(belowBar, view.annual);
   const anyNote = metrics.some((g) => g.hasNote);
   const anyFlag = metrics.some((g) => g.hasFlag);
-  const reading = readingOf(view, metrics);
+  const site = opts.siteUrl || "https://guidance.zahoorbhat.com";
+  const moreLine = others.length || brief.otherMoves
+    ? (others.length ? others.length + " more guided " + (others.length === 1 ? "measure" : "measures") : "")
+      + (others.length && brief.otherMoves ? " and " : "")
+      + (brief.otherMoves ? brief.otherMoves + " more " + (brief.otherMoves === 1 ? "guide" : "guides") + " in this release" : "")
+      + " - on the site: " + site
+    : "";
 
   const subject = company + " reported - how their guidance has held up";
 
@@ -942,8 +1142,24 @@ export function renderEmail(view, options) {
   const t = [];
   t.push(company + " (" + view.ticker + ")");
   t.push("");
-  t.push("THE RECORD");
   t.push(lead);
+  t.push("");
+  if (brief.reported.length) {
+    t.push("THIS RELEASE, AGAINST THE COMPANY'S OWN GUIDE");
+    for (const l of brief.reported) t.push("- " + l);
+    t.push("");
+  }
+  if (brief.record.length) {
+    t.push("THE RECORD");
+    for (const l of brief.record) t.push("- " + l);
+    t.push("");
+  }
+  if (brief.guiding.length) {
+    t.push("GUIDED IN THIS RELEASE");
+    for (const l of brief.guiding) t.push("- " + l);
+    t.push("");
+  }
+  t.push("Counted from the company's own releases. Nothing here is a forecast.");
   t.push("");
 
   for (const g of metrics) {
@@ -976,30 +1192,9 @@ export function renderEmail(view, options) {
     t.push("");
   }
 
-  if (moved.rows.length) {
-    t.push("WHAT MOVED IN THIS RELEASE");
-    for (const r of moved.rows) t.push("- " + r.summary);
-    if (moved.more) {
-      t.push("- and " + moved.more + " further "
-        + (moved.more === 1 ? "guide" : "guides") + ", on the site.");
-    }
+  if (moreLine) {
+    t.push(moreLine.charAt(0).toUpperCase() + moreLine.slice(1));
     t.push("");
-  }
-
-  if (reading.reported.length || reading.measures.length) {
-    t.push("READING THE RECORD");
-    t.push("Counted from the tables above. Nothing here is a forecast.");
-    t.push("");
-    if (reading.reported.length) {
-      t.push("Reported in this release:");
-      for (const l of reading.reported) t.push("- " + l);
-      t.push("");
-    }
-    for (const m of reading.measures) {
-      t.push(m.line);
-      t.push("  " + m.next);
-      t.push("");
-    }
   }
 
   t.push("Thanks,");
@@ -1028,6 +1223,20 @@ export function renderEmail(view, options) {
   h.push('<div style="font-size:14px;color:' + MUTED + ';">' + esc(view.ticker) + '</div>');
 
   h.push('<p style="margin:20px 0 0;font-size:17px;">' + esc(lead) + '</p>');
+
+  const block = (title, lines, strong) => {
+    if (!lines.length) return;
+    h.push('<div style="margin-top:20px;">');
+    h.push('<div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:' + MUTED + ';">' + esc(title) + '</div>');
+    for (const l of lines) {
+      h.push('<p style="margin:7px 0 0;font-size:' + (strong ? '16px' : '15px') + ';">' + esc(l) + '</p>');
+    }
+    h.push('</div>');
+  };
+  block("This release, against the company's own guide", brief.reported, true);
+  block("The record", brief.record, false);
+  block("Guided in this release", brief.guiding, false);
+  h.push('<p style="margin:14px 0 0;font-size:13px;color:' + MUTED + ';">Counted from the company\'s own releases. Nothing here is a forecast.</p>');
 
   const th = (head) => '<th align="left" style="padding:0 8px 5px 0;border-bottom:1px solid '
     + RULE + ';font-weight:normal;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:'
@@ -1114,35 +1323,9 @@ export function renderEmail(view, options) {
     h.push('</table></div>');
   }
 
-  if (moved.rows.length) {
-    h.push('<div style="margin-top:26px;padding-top:14px;border-top:1px solid ' + RULE + ';">');
-    h.push('<div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:' + MUTED + ';">What moved in this release</div>');
-    for (const r of moved.rows) {
-      h.push('<p style="margin:10px 0 0;font-size:15px;">' + esc(r.summary) + '</p>');
-    }
-    if (moved.more) {
-      h.push('<p style="margin:10px 0 0;font-size:14px;color:' + MUTED + ';">and '
-        + moved.more + ' further ' + (moved.more === 1 ? 'guide' : 'guides')
-        + ', on the site.</p>');
-    }
-    h.push('</div>');
-  }
-
-  if (reading.reported.length || reading.measures.length) {
-    h.push('<div style="margin-top:26px;padding-top:14px;border-top:1px solid ' + RULE + ';">');
-    h.push('<div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:' + MUTED + ';">Reading the record</div>');
-    h.push('<div style="font-size:14px;color:' + MUTED + ';margin-top:2px;">Counted from the tables above. Nothing here is a forecast.</div>');
-    if (reading.reported.length) {
-      h.push('<div style="font-size:15px;color:' + GREEN + ';margin-top:14px;">Reported in this release</div>');
-      for (const l of reading.reported) {
-        h.push('<p style="margin:6px 0 0;font-size:15px;">' + esc(l) + '</p>');
-      }
-    }
-    for (const m of reading.measures) {
-      h.push('<p style="margin:16px 0 0;font-size:15px;">' + esc(m.line) + '</p>');
-      h.push('<p style="margin:4px 0 0;font-size:14px;color:' + MUTED + ';">' + esc(m.next) + '</p>');
-    }
-    h.push('</div>');
+  if (moreLine) {
+    h.push('<p style="margin-top:22px;font-size:14px;color:' + MUTED + ';">'
+      + esc(moreLine.charAt(0).toUpperCase() + moreLine.slice(1)) + '</p>');
   }
 
   h.push('<p style="margin-top:26px;font-size:15px;line-height:1.6;">Thanks,<br>Zahoor · Guidance Scorecard · hello@zahoorbhat.com</p>');
