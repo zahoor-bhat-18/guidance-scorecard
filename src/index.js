@@ -176,6 +176,40 @@ async function checkOne(env, ticker, full) {
 }
 
 /**
+ * Ticker -> CIK for just the tickers being watched, remembered in KV.
+ *
+ * WHY: the poll used to read and parse the whole "tickers:cik" table - every
+ * listed US company - on every run, once a minute, to look up the handful of
+ * tickers anyone follows. On the free plan a Worker run gets about 10ms of
+ * CPU, and parsing that table is most of it; Cloudflare was sending a daily
+ * warning that the account's Workers were running over.
+ *
+ * The answer only changes when the watch list does, so it is worked out once
+ * and kept under "watch:ciks", with the list it was built for. Any change to
+ * the list (a confirm, an unsubscribe) rebuilds it on the next poll. It also
+ * expires after a week, which picks up refreshes of the full table.
+ */
+const WATCH_CIKS_KEY = "watch:ciks";
+const WATCH_CIKS_TTL = 7 * 24 * 60 * 60;
+
+async function watchedCiks(env, watching) {
+  const sig = [...watching].sort().join(",");
+  try {
+    const cached = await env.CACHE.get(WATCH_CIKS_KEY, "json");
+    if (cached && cached.sig === sig && cached.map) return cached.map;
+  } catch { /* rebuild below */ }
+
+  const all = await env.CACHE.get("tickers:cik", "json");
+  if (!all) return null;
+  const map = {};
+  for (const t of watching) if (all[t]) map[t] = all[t];
+  try {
+    await env.CACHE.put(WATCH_CIKS_KEY, JSON.stringify({ sig, map }), { expirationTtl: WATCH_CIKS_TTL });
+  } catch { /* an optimisation, never a requirement */ }
+  return map;
+}
+
+/**
  * The poll.
  *
  * EDGAR's "current filings" feed, every minute, filtered to 8-Ks. Anything
@@ -206,11 +240,11 @@ async function poll(env) {
   const xml = await r.text();
 
   // Map the tickers being watched to the CIKs the feed carries.
-  const tickers = await env.CACHE.get("tickers:cik", "json");
-  if (!tickers) return;
+  const ciks = await watchedCiks(env, watching);
+  if (!ciks) return;
 
   const wanted = new Map();
-  for (const t of watching) if (tickers[t]) wanted.set(String(Number(tickers[t])), t);
+  for (const t of watching) if (ciks[t]) wanted.set(String(Number(ciks[t])), t);
 
   const hits = new Set();
   for (const m of xml.matchAll(/CIK=(\d+)/g)) {
