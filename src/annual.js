@@ -430,6 +430,21 @@ export function annualRecord(guidanceByRelease, facts, scoreAll) {
     });
   }
 
+  /* A guide for PART of a line cannot be scored against the whole line.
+     Carnival guides "non-newbuild capital expenditures" - capex excluding new
+     ships - and the tagged filing reports total capital expenditures, new
+     ships included: "$1.2bn guided, $3.6bn reported" was two different
+     things. Any guide whose name narrows the measure is refused here; the
+     tagged total is never the same measure. */
+  const NARROWED = /\bnon-|\bexcluding\b|\bex[- ]|\bmaintenance\b|newbuild|\borganic\b|\bcore\b|\bgrowth capex\b/i;
+  for (const p of pairs) {
+    if (!p.comparable) continue;
+    if (NARROWED.test(String(p.metric_as_written || ""))) {
+      p.comparable = false;
+      p.why = "The guide covers part of the measure and the tagged filing reports the whole of it, so the two are not the same figure.";
+    }
+  }
+
   const scored = scoreAll(pairs).pairs;
 
   /* Grouped by measure, then newest year first. Read down a column rather than
