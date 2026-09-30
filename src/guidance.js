@@ -99,8 +99,31 @@ async function collectExhibits(env, cik, accession) {
   const noDash = accession.replace(/-/g, "");
   const base = "https://www.sec.gov/Archives/edgar/data/" + Number(cik) + "/" + noDash;
   const dir = await secJson(env, base + "/index.json");
-  const items = ((dir.directory && dir.directory.item) || [])
+  let items = ((dir.directory && dir.directory.item) || [])
     .filter((f) => /\.html?$/i.test(f.name) && !/-index/i.test(f.name));
+
+  /* The JSON listing is sometimes incomplete. On 30 Sep 2026 EDGAR's
+     index.json for PepsiCo's October 2025 release listed only the headers,
+     the .txt and the XBRL zip - no documents - while the filing's own index
+     page listed the release (q320258-kxexhibit991.htm) as it always had. A
+     rebuild failed on it. The index page is read as a second source; sizes
+     are unknown there, so the 99-series naming decides, as it does anyway. */
+  if (!items.length) {
+    try {
+      const page = await fetchDoc(env, base + "/" + accession + "-index.html");
+      const seen = new Set();
+      const re = /href="(?:\/ix\?doc=)?\/Archives\/edgar\/data\/\d+\/\d+\/([^"\/]+\.html?)"/gi;
+      let m;
+      while ((m = re.exec(page))) {
+        const name = m[1];
+        if (/-index/i.test(name) || seen.has(name)) continue;
+        seen.add(name);
+        items.push({ name, size: 0 });
+      }
+    } catch (e) {
+      // Fall through to the error below, which names the filing.
+    }
+  }
 
   if (!items.length) throw new Error("No HTML document in filing " + accession + ".");
 
