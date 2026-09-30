@@ -474,10 +474,21 @@ function byMetric(pairs, unanswered, limit) {
        Delta's operating margin table - a measure Delta has never guided
        annually - carried two of them. */
     const scoredRows = g.rows.filter((p) => !p.unanswered);
+    /* Gaps are only filled for a kind of period the company guides this
+       measure in regularly. General Electric guides the full year; one early
+       quarterly EPS guide (Q1 2024) was enough to open a quarterly slot, and
+       the table printed "Q1 2025 not guided" between two full years - true,
+       and noise. Two guides of a kind make it a habit worth showing gaps in. */
+    const kindCount = { Q: 0, FY: 0 };
+    for (const p of g.rows) {
+      if (p.notGuided || p.unanswered || !p.period) continue;
+      kindCount[/FY$/.test(p.period) ? "FY" : "Q"] += 1;
+    }
     const extra = [];
     for (const period of periodsInSpan(scoredRows.length ? scoredRows : g.rows)) {
       if (have.has(period)) continue;
       if (!scoredRows.length) continue;
+      if (kindCount[/FY$/.test(period) ? "FY" : "Q"] < 2) continue;
       if (slotsTaken.has(periodSortKey(period))) continue;
       if (guidedAnyUnit.has(key.split("|")[0] + "|" + period)) continue;
 
