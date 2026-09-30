@@ -853,6 +853,83 @@ async function recheckAdjusted(env, requests, actuals, adjustedFor, text, releas
 }
 
 /* ------------------------------------------------------------------ *
+ * A second look at figures that came back empty
+ * ------------------------------------------------------------------ */
+
+/* The figure, or the same figure a thousand times larger or smaller, printed
+   in the quote: $1.963bn is printed "$1,963 million". */
+function valueInQuoteAnyScale(value, quote) {
+  if (typeof value !== "number") return false;
+  return [value, value * 1000, value / 1000].some((v) => numberInQuote(Number(v.toFixed(6)), quote));
+}
+
+const SECOND_LOOK_LIMIT = 30;
+
+/**
+ * Ask once more, and only, for the figures that came back empty.
+ *
+ * Carnival's June 2026 release was asked for 32 figures at once and the saved
+ * answer came back empty for nearly all of them - EPS, EBITDA and net income
+ * printed plainly in the release among them. A fresh run of the same question
+ * found EPS ($0.41) and net income ($569m). A long list makes the model skip
+ * figures; a short one, of only what it missed, is an easier question.
+ *
+ * Triggered by code: only for answers with no figure, for a period that has
+ * ended by the release. A NEW question, paid once and saved; the original is
+ * untouched, so every saved answer stays valid. The answer is used only if it
+ * passes every check any other answer passes, is for the guided period, and
+ * the figure is actually printed in the line it quotes. Otherwise the empty
+ * answer stands.
+ */
+async function secondLook(env, requests, actuals, text, release, cal) {
+  const idx = [];
+  requests.forEach((req, i) => {
+    const a = actuals[i];
+    if (!a || a.value !== null || a.period_open) return;
+    if (!req.guidePeriod || !guidePeriodClosed(req, release, cal)) return;
+    // Growth guides have their own, better second step: the change is built
+    // from two printed amounts (growthFromLevels, next).
+    const isGrowth = (req.shape === "growth_range" || req.shape === "growth_point") && req.unit === "percent";
+    if (isGrowth && priorYearPeriod(req.guidePeriod)) return;
+    idx.push(i);
+  });
+  if (!idx.length) return { asked: 0, found: 0 };
+  const ask = idx.slice(0, SECOND_LOOK_LIMIT);
+  const again = ask.map((i) => requests[i]);
+
+  let rows;
+  try {
+    rows = await callModel(env, again, text);
+  } catch (e) {
+    console.log("Second look failed for " + release.accession + ": " + e.message);
+    return { asked: ask.length, found: 0 };
+  }
+  const byId = new Map();
+  for (const row of rows) {
+    if (row.id !== undefined && row.id !== null && !byId.has(Number(row.id))) byId.set(Number(row.id), row);
+  }
+
+  let found = 0;
+  ask.forEach((i, j) => {
+    const cand = toActual(again[j], byId.get(j) || {}, release, cal);
+    const ok = cand.value !== null
+      && !cand.basis_mismatch
+      && !cand.unit_mismatch
+      && !cand.period_open
+      && Boolean(cand.period)
+      && cand.period === requests[i].guidePeriod
+      && valueInQuoteAnyScale(cand.value, cand.quote);
+    console.log("Second look " + release.accession + " " + requests[i].guidePeriod + " "
+      + requests[i].metric_as_written + ": " + JSON.stringify(cand.found_as) + " " + cand.value
+      + (ok ? " - USED" : " - left empty"));
+    if (!ok) return;
+    actuals[i] = { ...cand, second_look: "found" };
+    found++;
+  });
+  return { asked: ask.length, found };
+}
+
+/* ------------------------------------------------------------------ *
  * Growth guides: computed from two printed amounts
  * ------------------------------------------------------------------ */
 
@@ -1133,6 +1210,9 @@ export async function actualsFrom(env, cik, release, requests, cal) {
   // adjusted one explicitly (margins, EPS, operating expenses...).
   const adjusted = await recheckAdjusted(env, requests, actuals, recheck.adjustedFor, filing.text, release, cal);
 
+  // Anything still empty for a period that has ended: one more, shorter ask.
+  const second = await secondLook(env, requests, actuals, filing.text, release, cal);
+
   // Any growth guide still without a usable answer: build it from two amounts.
   const growth = await growthFromLevels(env, requests, actuals, recheck.adjustedFor, filing.text, release, cal);
 
@@ -1154,6 +1234,8 @@ export async function actualsFrom(env, cik, release, requests, cal) {
     revenueReplaced: recheck.replaced,
     adjustedRechecked: adjusted.asked,
     adjustedReplaced: adjusted.replaced,
+    secondLookAsked: second.asked,
+    secondLookFound: second.found,
     growthAsked: growth.asked,
     growthComputed: growth.computed,
     actuals,
