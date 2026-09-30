@@ -48,6 +48,39 @@ function labelKey(guide) {
     .trim();
 }
 
+/**
+ * The earlier guide's numbers, in the later guide's unit.
+ *
+ * Carnival guided 2026 adjusted net income at "$3.07" (in billions) in June
+ * and "$3,080" (in millions) in September. Compared as bare numbers, that was
+ * a thousandfold move, reported as "changed scale ... not a raise or a cut",
+ * when it was a $10m raise. Money is converted between $m and $bn before
+ * anything is compared; a guide in a different KIND of unit (a rate against
+ * an amount) cannot be compared and returns null.
+ */
+function moneyScale(unit) {
+  const u = String(unit || "").toLowerCase();
+  if (!/usd|\$|dollar|eur|gbp/.test(u)) return null;
+  if (/per share/.test(u)) return null;
+  if (/billion/.test(u)) return 1e9;
+  if (/million/.test(u)) return 1e6;
+  if (/thousand/.test(u)) return 1e3;
+  return 1;
+}
+
+function inUnitOf(numbers, fromUnit, toUnit) {
+  if (!fromUnit || !toUnit || fromUnit === toUnit) return numbers;
+  const a = moneyScale(fromUnit), b = moneyScale(toUnit);
+  if (a !== null && b !== null) {
+    const k = a / b;
+    const f = (x) => (typeof x === "number" ? Math.round(x * k * 1e6) / 1e6 : x);
+    return { low: f(numbers.low), high: f(numbers.high), value: f(numbers.value) };
+  }
+  const rate = (u) => /percent|%|points/i.test(String(u));
+  if (rate(fromUnit) !== rate(toUnit)) return null;
+  return numbers;
+}
+
 function numbersOf(g) {
   const low = typeof g.low === "number" ? g.low : null;
   const high = typeof g.high === "number" ? g.high : null;
@@ -359,7 +392,16 @@ export function revisionsBetween(rawBefore, rawAfter, opts) {
     }
 
     seen.add(key);
-    const b = numbersOf(before);
+    const b = inUnitOf(numbersOf(before), before.unit, g.unit);
+    // A guide restated in another kind of unit - a growth rate after a
+    // dollar figure - is not a revision of it: there is nothing to compare.
+    if (b === null) {
+      const row = { metric: g.metric, metric_as_written: g.metric_as_written, period: g.period, unit: g.unit,
+        direction: "new", after: n, quote: g.quote };
+      row.summary = revisionSentence(row);
+      out.push(row);
+      continue;
+    }
     const split = acrossSplit(b, n, g.unit, options);
     const scope = !split && looksLikeScopeChange(b, n, g.unit, g.metric_as_written);
     const dir = split ? "share split" : scope ? "scope change" : direction(b, n);

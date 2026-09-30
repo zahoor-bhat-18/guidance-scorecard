@@ -171,8 +171,9 @@ function outcomeCell(p) {
   }
   if (value !== null) {
     // "$0bn vs single figure" read like a typo. Exactly on it says so.
-    if (tidy(actual - value) === 0) return "at the single figure";
-    return formatDelta(actual - value, p.unit, true) + " vs single figure";
+    if (tidy(actual - value) === 0) return "on the guide";
+    const d = tidy(actual - value);
+    return formatDelta(Math.abs(d), p.unit, false) + (d > 0 ? " above" : " below");
   }
   return p.position || "";
 }
@@ -859,10 +860,27 @@ export function briefOf(view, keys) {
     else otherMoves++;
     perKey.set(k, list);
   }
+  /* One line per key measure: "EPS: Q4 2026 $0.20; FY2026 raised to $2.24
+     (was $2.22)". Constant-currency twins of a figure already listed for the
+     same period are dropped - one number per period is enough to read. */
+  const phrase = (r) => {
+    const when = periodLabel(r.period);
+    const now = r.after ? formatFigure(r.after, r.unit) : "";
+    const was = r.before ? formatFigure(r.before, r.unit) : "";
+    if (r.direction === "raised" || r.direction === "cut") return when + " " + r.direction + " to " + now + " (was " + was + ")";
+    if (r.direction === "unchanged") return when + " held at " + now;
+    if (r.direction === "narrowed" || r.direction === "widened") return when + " " + r.direction + " to " + now;
+    if (r.direction === "new") return when + " " + now;
+    return when + ": " + r.direction;
+  };
   for (const g of keys) {
-    for (const line of perKey.get(g.key.split("|")[0]) || []) {
-      if (!guiding.includes(line)) guiding.push(line);
-    }
+    const base = g.key.split("|")[0];
+    const rs = moved.filter((r) => metricKey(r.label || r.metric) === base);
+    const plainPeriods = new Set(rs.filter((r) => !/constant currency/i.test(r.label || "")).map((r) => r.period));
+    const kept = rs.filter((r) => !(/constant currency/i.test(r.label || "") && plainPeriods.has(r.period)));
+    // The next quarter first, then the year.
+    kept.sort((a, b) => (/FY/.test(a.period) - /FY/.test(b.period)) || (periodSortKey(a.period) - periodSortKey(b.period)));
+    if (kept.length) guiding.push(g.metric + ": " + kept.map(phrase).join("; ") + ".");
   }
 
   return { reported, record, guiding, otherMoves };
@@ -997,10 +1015,8 @@ function annualRows(annual) {
       // rule that breaks the moment someone rewords one.
       // An open year is not a failure to find a figure, so it does not read
       // like one. The guide is the whole point of the row.
-      const open = a.refusal === "year not ended";
-      rows.push([label, periodLabel(a.period), boundText({ ...a, guide: a.guide }) || formatFigure(a.guide, a.unit),
-        open ? "year not ended" : (a.refusal || "not tagged"),
-        open ? "" : "n/a"]);
+      // Rows with no result to show are left out of the email: "not tagged,
+      // n/a" told a reader nothing and took a line each. The site keeps them.
       continue;
     }
 
@@ -1111,6 +1127,29 @@ function belowBarRows(belowBar, annual) {
  */
 /* "59 against a single figure" says nothing. Which side of it they landed
    on does - counted, excluding rows marked with the caution. */
+/* "71 guided figures since Q3 2023: 53 above the guide, 5 within, 10 below."
+   Ranges and single figures counted together - above is above - with rows
+   marked with the caution left out of the count. */
+function plainHeadline(pairs) {
+  const c = { above: 0, within: 0, below: 0, at: 0 };
+  let first = null;
+  for (const p of pairs || []) {
+    if (p.flagged) continue;
+    const l = landing(p);
+    if (!l) continue;
+    c[l.word] = (c[l.word] || 0) + 1;
+    if (p.period && (!first || periodSortKey(p.period) < periodSortKey(first))) first = p.period;
+  }
+  const n = c.above + c.within + c.below + c.at;
+  if (!n) return null;
+  const bits = [c.above + " above the guide"];
+  if (c.within) bits.push(c.within + " within the range");
+  if (c.at) bits.push(c.at + " on it");
+  bits.push(c.below + " below");
+  return n + " guided " + (n === 1 ? "figure" : "figures") + (first ? " since " + periodLabel(first) : "")
+    + ": " + bits.join(", ") + ".";
+}
+
 function singlesLine(headline, pairs) {
   let above = 0, below = 0;
   for (const p of pairs || []) {
@@ -1136,7 +1175,7 @@ function headlineSince(headline, pairs) {
 export function renderEmail(view, options) {
   const opts = options || {};
   const company = displayName(view.company || view.ticker);
-  const lead = singlesLine(headlineSince(view.headline, view.pairs), view.pairs);
+  const lead = plainHeadline(view.pairs) || singlesLine(headlineSince(view.headline, view.pairs), view.pairs);
   const { metrics: allMetrics, belowBar } = byMetric(view.pairs || [], view.unanswered || [], 99);
   const { keys: metrics, others } = keyMeasures(allMetrics);
   const brief = briefOf(view, metrics);
@@ -1180,7 +1219,7 @@ export function renderEmail(view, options) {
   t.push("");
 
   for (const g of metrics) {
-    t.push(g.metric + " - " + countLine(g));
+    t.push(g.metric);
     for (const line of textTable(HEADINGS, g.rows.map(rowCells))) t.push("   " + line);
     t.push("");
   }
@@ -1266,7 +1305,7 @@ export function renderEmail(view, options) {
   for (const g of metrics) {
     h.push('<div style="margin-top:22px;padding-top:14px;border-top:1px solid ' + RULE + ';">');
     h.push('<div style="font-size:16px;color:' + GREEN + ';">' + esc(g.metric) + '</div>');
-    h.push('<div style="font-size:14px;color:' + MUTED + ';margin-top:2px;">' + esc(countLine(g)) + '</div>');
+
 
     h.push('<table role="presentation" cellpadding="0" cellspacing="0" border="0"'
       + ' style="width:100%;margin-top:10px;border-collapse:collapse;font-family:' + MONO

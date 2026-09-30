@@ -170,6 +170,11 @@ export function forEmail(record) {
       label: r.metric_as_written || null,
       period: r.period,
       direction: r.direction,
+      // The figures themselves, for the one-line "Guided in this release"
+      // summary at the top of the email.
+      unit: r.unit || null,
+      before: r.before || null,
+      after: r.after || null,
       // The sentence is BUILT HERE, from the untrimmed revision, and not read
       // off the record.
       //
