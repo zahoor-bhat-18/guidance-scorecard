@@ -1032,7 +1032,7 @@ export function applyUpdates(guides, updates) {
       };
       applied.push({
         key: (g.metric_as_written || "") + "|" + g.period,
-        figure: { low: current.low, high: current.high, value: current.value },
+        figure: { low: current.low, high: current.high, value: current.value, unit: current.unit || null },
         filed: up.release.filed,
       });
     }

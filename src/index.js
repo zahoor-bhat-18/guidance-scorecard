@@ -954,7 +954,8 @@ export default {
           + (thin.length
               ? para(names(thin) + ": on your list, but "
                 + (thin.length > 1 ? "their" : "its") + " earnings releases carry too little numeric guidance to"
-                + " score. You will only hear from us if that changes.")
+                + " score. When " + (thin.length > 1 ? "each reports" : "it reports") + " you will get a short note"
+                + " saying so, and the full scorecard once there is something to score.")
               : "")
           + (req.overLimit.length
               ? para(names(req.overLimit) + ": today's limit for new companies is reached. Sign up for "

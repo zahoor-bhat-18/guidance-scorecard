@@ -229,9 +229,26 @@ function boundText(p) {
   return (p.bound === "ceiling" ? "under " : "at least ") + formatValue(x, p.unit);
 }
 
+/* A guide path in the pair's own unit: money rescaled ($m <-> $bn), anything
+   in a different kind of unit dropped. An entry with no unit (records built
+   before units were kept) is left as it is. */
+function pathInUnit(path, unit) {
+  if (!Array.isArray(path)) return path;
+  const want = unitClass(unit);
+  const out = [];
+  for (const e of path) {
+    if (!e || !e.unit) { out.push(e); continue; }
+    if (unitClass(e.unit) !== want) continue;
+    const k = want === "money" ? unitScale(e.unit) / unitScale(unit) : 1;
+    const f = (x) => (typeof x === "number" ? tidy(x * k) : x);
+    out.push({ ...e, low: f(e.low), high: f(e.high), value: f(e.value), unit });
+  }
+  return out;
+}
+
 function guideCell(p) {
   const now = boundText(p) || formatFigure(p.guide, p.unit);
-  const path = Array.isArray(p.guidePath) ? p.guidePath
+  const path = Array.isArray(p.guidePath) ? pathInUnit(p.guidePath, p.unit)
     : (p.first ? [p.first, p.guide] : null);
   if (!Array.isArray(path) || path.length < 2) return { text: now, noted: false };
 
@@ -1346,4 +1363,83 @@ export function renderEmail(view, options) {
   h.push('</div></div>');
 
   return { subject, html: h.join("\n"), text: t.join("\n") };
+}
+
+
+/* ------------------------------------------------------------------ *
+ * The honest short note: reported, but nothing to score
+ * ------------------------------------------------------------------ */
+
+/**
+ * The email a follower gets when a company they follow reports and there is
+ * nothing to score.
+ *
+ * Silence looked like the product had failed: CarMax filed its results and
+ * its follower heard nothing, exactly as if the poller had missed it. So the
+ * follower is told plainly, on the day, that the release came in, what (if
+ * anything) it guided in numbers, and why there is no scorecard - with a link
+ * to the release itself.
+ *
+ * input: { company, ticker, cik, filed, accession, guided: [sentences],
+ *          matched: number, releasesRead: number }
+ */
+export function renderNothingToScore(input, options) {
+  const o = options || {};
+  const company = displayName(input.company || input.ticker);
+  const guided = (input.guided || []).slice(0, 6);
+  const moreGuided = Math.max(0, (input.guided || []).length - guided.length);
+  const acc = String(input.accession || "");
+  const link = input.cik && acc
+    ? "https://www.sec.gov/Archives/edgar/data/" + Number(input.cik) + "/" + acc.replace(/-/g, "") + "/"
+    : null;
+  const when = input.filed ? " on " + input.filed : "";
+
+  const lines = [];
+  lines.push(company + " (" + input.ticker + ") filed its earnings release" + when + ".");
+  if (guided.length) {
+    lines.push("It guided in numbers, but none of these has a result on record to compare yet:");
+  } else {
+    lines.push("The release carries no numeric guidance, so there is nothing to compare it with.");
+  }
+  const why = "Across its last " + (input.releasesRead || "few") + " releases we have matched "
+    + (input.matched || 0) + " guided " + ((input.matched || 0) === 1 ? "figure" : "figures")
+    + " to a reported result - fewer than the three a scorecard needs. You will get a note like"
+    + " this each time it reports, and the full scorecard once there is something to score.";
+
+  const subject = company + " reported - no guidance to score this time";
+
+  const t = [];
+  t.push(lines[0]);
+  t.push("");
+  t.push(lines[1]);
+  for (const g of guided) t.push("- " + g);
+  if (moreGuided) t.push("- and " + moreGuided + " more");
+  t.push("");
+  t.push(why);
+  if (link) { t.push(""); t.push("The release on EDGAR: " + link); }
+  t.push("");
+  t.push("Thanks,");
+  t.push("Zahoor · Guidance Scorecard · hello@zahoorbhat.com");
+  if (o.unsubscribeUrl) { t.push(""); t.push("Unsubscribe: " + o.unsubscribeUrl); }
+
+  const h = [];
+  h.push('<div style="margin:0;padding:24px 0;background:' + CREAM + ';">');
+  h.push('<div style="max-width:560px;margin:0 auto;padding:0 20px;font-family:Georgia,\'Times New Roman\',serif;color:' + INK + ';font-size:16px;line-height:1.5;">');
+  h.push('<div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:' + MUTED + ';">Guidance record</div>');
+  h.push('<h1 style="margin:6px 0 2px;font-size:24px;font-weight:normal;color:' + GREEN + ';">' + esc(company) + '</h1>');
+  h.push('<div style="font-size:14px;color:' + MUTED + ';">' + esc(input.ticker) + '</div>');
+  h.push('<p style="margin:20px 0 0;font-size:17px;">' + esc(lines[0]) + '</p>');
+  h.push('<p style="margin:12px 0 0;">' + esc(lines[1]) + '</p>');
+  for (const g of guided) h.push('<p style="margin:6px 0 0;font-size:15px;">' + esc(g) + '</p>');
+  if (moreGuided) h.push('<p style="margin:6px 0 0;font-size:14px;color:' + MUTED + ';">and ' + moreGuided + ' more</p>');
+  h.push('<p style="margin:16px 0 0;font-size:14px;color:' + MUTED + ';">' + esc(why) + '</p>');
+  if (link) h.push('<p style="margin:12px 0 0;font-size:14px;"><a href="' + esc(link) + '" style="color:' + GREEN + ';">The release on EDGAR</a></p>');
+  h.push('<p style="margin-top:26px;font-size:15px;line-height:1.6;">Thanks,<br>Zahoor · Guidance Scorecard · hello@zahoorbhat.com</p>');
+  if (o.unsubscribeUrl) {
+    h.push('<p style="margin-top:14px;font-size:12px;color:' + MUTED + ';"><a href="' + esc(o.unsubscribeUrl)
+      + '" style="color:' + MUTED + ';">Unsubscribe</a>' + (o.postalAddress ? ' · ' + esc(o.postalAddress) : '') + '</p>');
+  }
+  h.push('</div></div>');
+
+  return { subject, text: t.join("\n"), html: h.join("") };
 }

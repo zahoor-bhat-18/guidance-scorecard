@@ -104,8 +104,21 @@ function looksLikeEarnings(pair) {
     || ["eps", "free_cash_flow", "operating_cash_flow", "operating_income", "ebitda", "net_income"].includes(pair.metric);
 }
 
+/**
+ * Did the release itself state the gap against guidance?
+ *
+ * Carnival guided first-quarter 2025 adjusted net income at "approx. $1"
+ * million and reported $174 million, and its release said so in words: it
+ * "outperformed December guidance by $173 million". The size check saw a gap
+ * of 17,300% and marked it as a probable wrong row - and the email then left
+ * a real result out of its summary. When the company's own sentence measures
+ * the result against its guidance, the pairing is confirmed by the company.
+ */
+const STATED_AGAINST_GUIDE = /\b(outperform\w*|better than|exceed\w*|ahead of|above|beat|below|short of|missed|in line with|consistent with)\b[^.]{0,80}\b(guidance|outlook|forecast)\b/i;
+
 function flagsFor(pair, actual, low, high, value) {
   const flags = [];
+  if (STATED_AGAINST_GUIDE.test(String(pair.quote || ""))) return flags;
   const isGrowth = pair.shape === "growth_range" || pair.shape === "growth_point";
 
   const bound = typeof low === "number" && typeof high === "number"
@@ -114,6 +127,12 @@ function flagsFor(pair, actual, low, high, value) {
 
   if (bound === null) return flags;
   const gap = Math.abs(actual - bound);
+
+  /* A guide of about nothing - "approximately breakeven", "$0.00 a share" -
+     makes any real result an enormous percentage of it. A percentage of
+     nearly zero says nothing about whether the row is right, so the size
+     check is not applied when the guide is under 2% of the result. */
+  const nearZero = Math.abs(bound) < Math.abs(actual) * 0.02;
 
   /* A growth guide answered with a level.
      Honeywell guided adjusted earnings growth of 3% and the release reported
@@ -146,7 +165,7 @@ function flagsFor(pair, actual, low, high, value) {
      that read as a 57% gap. */
   const scale = Math.abs(bound);
   const spansZero = typeof low === "number" && typeof high === "number" && low * high <= 0;
-  if (!scale || spansZero || scale < 0.5) return flags;
+  if (!scale || spansZero || scale < 0.5 || nearZero) return flags;
 
   /* The threshold has to differ by what is being measured, which the first
      version ignored and so flagged every ordinary beat.
