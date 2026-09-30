@@ -32,7 +32,7 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { resolveCik, companyCalendar, factsFor } from "../src/xbrl.js";
 import { annualRecord } from "../src/annual.js";
-import { earningsReleases, guidanceFrom, updateCandidates, guidanceUpdatesBetween, applyUpdates } from "../src/guidance.js";
+import { earningsReleases, guidanceFrom, updateCandidates, guidanceUpdatesBetween, applyUpdates, completedDeals } from "../src/guidance.js";
 import { requestsFrom, actualsFrom } from "../src/actuals.js";
 import { samePeriod } from "../src/period.js";
 import { scoreAll } from "../src/score.js";
@@ -431,6 +431,16 @@ async function buildOne(ticker) {
     console.log("  " + ticker + ": share count changed x" + c.ratio + " between " + c.from + " and " + c.to);
   }
 
+  // Completed acquisitions and disposals (8-K item 2.01): a pair with one
+  // between its guide and its result is cautioned (see markAcrossDeals).
+  let deals = [];
+  try {
+    deals = await completedDeals(env, cik);
+  } catch (e) {
+    console.error("  " + ticker + ": completed deals cannot be checked - " + e.message);
+  }
+  for (const d of deals) console.log("  " + ticker + ": completed deal filed " + d.filed + " (" + d.accession + ")");
+
   // Newest first, so releases[i + 1] is the one before releases[i].
   const allPairs = [];
   const allRevisions = [];
@@ -456,6 +466,7 @@ async function buildOne(ticker) {
     const inForce = effectiveByGap[i] || priorGuidance.guides;
     const paired = refuseAcrossSplit(pairUp(inForce, actuals), {
       changes: shareChanges,
+      deals,
       guideFiled: priorGuidance.release.filed,
       actualFiled: current.filed,
     });
@@ -487,6 +498,7 @@ async function buildOne(ticker) {
       const carriedResult = await actualsFrom(env, cik, current, requestsFrom(carried, calendar), calendar);
       const carriedPairs = refuseAcrossSplit(pairUp(carried, carriedResult.actuals), {
         changes: shareChanges,
+        deals,
         guideFiled: priorGuidance.release.filed,
         actualFiled: current.filed,
       });
