@@ -388,6 +388,10 @@ async function buildOne(ticker) {
         low: guide.low ?? null,
         high: guide.high ?? null,
         value: guide.value ?? null,
+        // Kept so a path never runs from a growth rate into dollars, or from
+        // $bn into $m unconverted - Carnival's 2026 net income read
+        // "12 -> 3.07 -> 3,080". The email converts or drops by unit.
+        unit: guide.unit || null,
       };
 
       if (!(key in originals)) originals[key] = figure;
