@@ -21,7 +21,27 @@
  * today's share count - the comparison is dropped and said to be dropped.
  */
 
-import { metricKey, displayLabel } from "./metrics.js";
+import { metricKey as exactKey, displayLabel } from "./metrics.js";
+
+/**
+ * The measure's identity FOR READING, a little looser than the one pairing
+ * uses.
+ *
+ * Conagra wrote the same guide three ways in three years - "organic net
+ * sales", "organic net sales growth", "organic net sales change" - and the
+ * email printed three one-row tables, one of them repeating FY2026 twice.
+ * "Growth", "change", "diluted", "common" and the "U.S." of "U.S. GAAP" do not
+ * change which measure is meant. Only the email's grouping uses this; pairing
+ * a guide with a result still uses the exact key (metrics.js).
+ */
+function metricKey(x) {
+  return exactKey(x)
+    .replace(/\bu s\b/g, " ")
+    .replace(/\b(growth|change|diluted|common)\b/g, " ")
+    .replace(/\bper share(\s+per share)+\b/g, "per share")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 import { formatFigure, formatValue, formatGap, periodLabel, periodSortKey, displayName } from "./format.js";
 
 const CREAM = "#faf7f0";
@@ -360,6 +380,27 @@ function byMetric(pairs, unanswered, limit) {
   for (const u of unanswered || []) if (u.metric && u.period) guidedAnyUnit.add(metricKey(u.metric) + "|" + u.period);
 
   const out = Array.from(groups.values());
+
+  /* One row per period. With labels merged above, two answers for the same
+     guide under two names - Conagra's FY2026 as both "organic net sales
+     change" and "organic net sales growth" - would print the same period
+     twice. The first is kept and the duplicate's count taken back. */
+  for (const g of out) {
+    const seen = new Set();
+    g.rows = g.rows.filter((p) => {
+      const k = String(p.period) + "|" + JSON.stringify(p.guide || null) + "|" + String(p.actual);
+      if (seen.has(k)) {
+        if (p.position === "above") g.above -= 1;
+        else if (p.position === "within") g.within -= 1;
+        else if (p.position === "below") g.below -= 1;
+        else g.noVerdict -= 1;
+        return false;
+      }
+      seen.add(k);
+      return true;
+    });
+  }
+
   const baseCount = new Map();
   for (const [key] of groups) {
     const base = key.split("|")[0];
@@ -1075,15 +1116,19 @@ function annualRows(annual) {
       periodLabel(a.period),
       guide.text,
       (formatValue(a.actual, a.unit) || String(a.actual)) + marks,
-      outcomeCell(a),
+      /* No verdict across bases. Conagra guides an ADJUSTED tax rate of about
+         23%; the tagged GAAP rate swung from 43% to -42% with impairments,
+         and the email printed "65.4pp below". That is not a result against
+         the guide, it is two different measures subtracted. */
+      a.basisCaveat ? "not comparable" : outcomeCell(a),
     ]);
   }
 
   const notes = [];
   if (caveat) {
-    notes.push("‡ The company's own label calls this an adjusted figure. The tagged"
-      + " result is the GAAP one, so the two are not the same measure and the gap is not"
-      + " only performance. Nothing here is restated to bridge them.");
+    notes.push("‡ The company guided an adjusted figure; the only tagged result is the GAAP"
+      + " one. The two are different measures, so no verdict is given - the GAAP figure is"
+      + " shown for reference only.");
   }
   if (computed) {
     notes.push("\u00a7 Capital expenditure over revenue, both as the company tagged them for"
