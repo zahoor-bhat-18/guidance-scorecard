@@ -396,7 +396,6 @@
    * a button to remove it. No commas to type. The list of every SEC company
    * loads on first focus; matching tickers come first, then names.
    */
-  const MAX_COMPANIES = 5;   // the Worker takes five per signup
 
   function searchCompanies(list, taken, text) {
     const q = String(text || "").trim().toUpperCase();
@@ -466,10 +465,6 @@
 
     function add(co) {
       if (!co) return;
-      if (picked.length >= MAX_COMPANIES) {
-        say("Five at a time. Sign up again for more; they are added to the same list.", "err");
-        return;
-      }
       if (picked.some(([t]) => t === co[0])) return;
       picked.push(co);
       renderPicked();
