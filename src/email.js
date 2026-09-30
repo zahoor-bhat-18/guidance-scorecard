@@ -22,7 +22,7 @@
  */
 
 import { metricKey, displayLabel } from "./metrics.js";
-import { formatFigure, formatValue, periodLabel, periodSortKey, displayName } from "./format.js";
+import { formatFigure, formatValue, formatGap, periodLabel, periodSortKey, displayName } from "./format.js";
 
 const CREAM = "#faf7f0";
 const INK = "#1a2b23";
@@ -133,18 +133,9 @@ function tidy(n) {
  * wrong number.
  */
 function formatDelta(d, unit, signed) {
-  const sign = signed ? (d > 0 ? "+" : d < 0 ? "-" : "") : "";
-  const size = Math.abs(tidy(d));
-  switch (unit) {
-    case "percent": return sign + size + "pp";
-    case "USD billions": return sign + "$" + size + "bn";
-    case "USD millions": return sign + "$" + size + "m";
-    // Two decimals, matching formatValue. "above by $0.1" beside a guide of
-    // "$1.00 to $2.00" is the same number written two ways in one row.
-    case "USD per share": return sign + "$" + size.toFixed(2);
-    case "multiple": return sign + size + "x";
-    default: return sign + size;
-  }
+  // One definition with the rest of the product (format.js), so a gap of
+  // 1,182 ($m) prints as $1.182bn exactly as the figure beside it does.
+  return formatGap(d, unit, signed);
 }
 
 /**
@@ -357,6 +348,17 @@ function byMetric(pairs, unanswered, limit) {
     }
   }
 
+  /* Every period each measure was guided for, IN ANY UNIT.
+   *
+   * Carnival guided its fiscal 2025 adjusted net income as a growth rate
+   * ("up nearly 55 percent"), and the dollar table for the same measure
+   * printed "FY2025 not guided" - false: it was guided, in the other table.
+   * A blank row is only made up for a period the company said nothing about
+   * this measure in any unit. */
+  const guidedAnyUnit = new Set();
+  for (const p of pairs) if (p.period) guidedAnyUnit.add(metricKey(p.metric) + "|" + p.period);
+  for (const u of unanswered || []) if (u.metric && u.period) guidedAnyUnit.add(metricKey(u.metric) + "|" + u.period);
+
   const out = Array.from(groups.values());
   const baseCount = new Map();
   for (const [key] of groups) {
@@ -436,6 +438,7 @@ function byMetric(pairs, unanswered, limit) {
       if (have.has(period)) continue;
       if (!scoredRows.length) continue;
       if (slotsTaken.has(periodSortKey(period))) continue;
+      if (guidedAnyUnit.has(key.split("|")[0] + "|" + period)) continue;
 
       const u = unansweredByKey.get(key + "|" + period);
       if (u) {
@@ -611,7 +614,15 @@ function startedAt(p) {
    print that as $0.01 or $0.02, neither of which is the median. */
 function gapText(x, unit) {
   const v = tidy(x);
-  if (unit === "USD per share" && Math.round(v * 100) !== v * 100) return "$" + v.toFixed(3);
+  /* Whole cents compared with a tolerance. 0.28 * 100 is 28.000000000000004
+     in floating point, so FactSet's $0.28 gap printed as "$0.280". */
+  const cents = v * 100;
+  if (unit === "USD per share" && Math.abs(cents - Math.round(cents)) > 1e-6) return "$" + v.toFixed(3);
+  // A median of gaps some in $m and some in $bn lands between the two:
+  // "$0.1505bn" is $150.5m, and is written that way.
+  if (unit === "USD billions" && Math.abs(v) < 1 && Math.abs(cents - Math.round(cents)) > 1e-6) {
+    return formatDelta(tidy(v * 1000), "USD millions", false);
+  }
   return formatDelta(v, unit, false);
 }
 
@@ -735,12 +746,17 @@ function unitClass(unit) {
  * three best-recorded measures, so no email is empty.
  */
 const KEY_ORDER = [
-  /\beps\b|earnings per share/i,
+  // "per common share" too: FactSet writes "Adjusted diluted earnings per
+  // common share", and its FY2027 EPS guide was left out of the outlook.
+  /\beps\b|earnings per (\w+ )?share/i,
   /revenue|sales|net yield|comparable|organic/i,
   /operating (income|profit|margin)|ebitda|\bebit\b|net income|gross margin|segment margin/i,
   /free cash flow|\bfcf\b/i,
 ];
 const KEY_LIMIT = 5;
+/* Measures in the outlook: the key measures plus any renamed or new one of
+   the same kinds, so a little more room than the tables. */
+const OUTLOOK_LIMIT = 6;
 
 function keyRank(g) {
   const label = (g.labels || []).join(" ") + " " + (g.metric || "");
@@ -985,6 +1001,33 @@ function textTable(headings, rows) {
  *   ‡  the company guided an adjusted figure and the tag is GAAP. They are not
  *      the same number, and the row says so rather than quietly comparing them.
  */
+/* Names for the broad classes, for a row whose own label names nothing. */
+const FAMILY_NAMES = {
+  revenue: "Revenue",
+  eps: "Earnings per share",
+  operating_income: "Operating income",
+  capex: "Capital expenditures",
+  operating_cash_flow: "Operating cash flow",
+  free_cash_flow: "Free cash flow",
+  tax_rate: "Tax rate",
+};
+
+/**
+ * The name to print for an annual row.
+ *
+ * Carnival's outlook table has a row labelled only "Total (a)" under its
+ * capital expenditure lines, and the email printed a measure called "Total".
+ * A label that is nothing but scaffolding - "Total", "Consolidated", a
+ * footnote - leaves an empty measure key, and those rows take the name of
+ * the class they were filed under instead. A class with no name of its own
+ * ("other") keeps the company's label: better an odd word than an invented one.
+ */
+function annualName(a) {
+  const written = String(a.metric || "");
+  if (metricKey(written)) return written;
+  return FAMILY_NAMES[a.family] || written;
+}
+
 function annualRows(annual) {
   const rows = [];
   let computed = false;
@@ -999,13 +1042,13 @@ function annualRows(annual) {
    * variants; it was just never being given the variants. */
   const labels = new Map();
   for (const a of annual || []) {
-    const k = metricKey(a.metric);
+    const k = metricKey(annualName(a));
     if (!labels.has(k)) labels.set(k, []);
-    labels.get(k).push(a.metric);
+    labels.get(k).push(annualName(a));
   }
 
   for (const a of annual || []) {
-    const label = displayLabel(labels.get(metricKey(a.metric)) || a.metric);
+    const label = displayLabel(labels.get(metricKey(annualName(a))) || annualName(a));
 
     if (!a.comparable) {
       // The reason arrives as a short code rather than being read back out of
@@ -1172,22 +1215,238 @@ function headlineSince(headline, pairs) {
   return h.replace(/ matched (pairs?):/, " matched $1 since " + periodLabel(first) + ":");
 }
 
+/* ------------------------------------------------------------------ *
+ * The three sections at the top (stage two, 30 Sep 2026)
+ * ------------------------------------------------------------------ */
+
+/* The symbols. One colour, the house green, whatever the direction: above is
+   not good and below is not bad - a cost measure above its guide is the
+   opposite of a beat, and colour would decide that for the reader. The
+   variation selector keeps phones from drawing them as coloured emoji. */
+const SYM = { above: "\u25B2\uFE0E", within: "\u25CF\uFE0E", at: "\u25CF\uFE0E", below: "\u25BC\uFE0E" };
+const SHADE = "#f0ebdf";
+
+/* "▲ +$0.08", "● within", "▼ −$0.05": where it landed and by how much, from
+   the end of the range it passed or from the single figure guided. */
+function resultCell(p) {
+  const l = landing(p);
+  if (!l) return "";
+  if (l.word === "within") return SYM.within + " within";
+  if (l.word === "at") return SYM.at + " on it";
+  const gap = l.gap ? formatGap(l.word === "above" ? l.gap : -l.gap, p.unit, true) : "";
+  return SYM[l.word] + (gap ? " " + gap : " " + l.word);
+}
+
+/* "raised from $2.22", "held", "new": what happened to the guide for this
+   period in this release. */
+function changeWords(r) {
+  const was = r.before ? formatFigure(r.before, r.unit) : "";
+  switch (r.direction) {
+    case "raised": return "raised from " + was;
+    case "cut": return "cut from " + was;
+    case "unchanged": return "held";
+    case "narrowed": return "narrowed from " + was;
+    case "widened": return "widened from " + was;
+    case "new": return "new";
+    default: return r.direction;
+  }
+}
+
+/**
+ * Everything the three sections print, worked out once for both the HTML and
+ * the plain text.
+ *
+ *   quarter - the key measures this release reported, against the guide in
+ *             force, and a one-line count of how they landed;
+ *   outlook - what this release guided for the key measures, and how each
+ *             guide moved;
+ *   record  - per key measure, the last ten results as symbols (oldest
+ *             first), the count, and the typical gap.
+ *
+ * Rows carrying the caution (†) stay out of all three and are counted as left
+ * out, as before: a doubtful row must not become the headline or move a median.
+ */
+export function sectionsOf(view, keys) {
+  const latest = view.latestRelease && view.latestRelease.accession;
+
+  const quarter = [];
+  let quarterFlagged = 0;
+  for (const g of keys) {
+    for (const p of g.rows) {
+      if (p.notGuided || p.unanswered) continue;
+      if (!latest || p.answeredBy !== latest) continue;
+      if (!landing(p)) continue;
+      /* A flagged figure is SHOWN, marked, and left out of the count. Micron's
+         June 2026 quarter came in far above every guide it gave, all three
+         key figures carried the caution, and leaving them out made the box
+         say nothing had been guided - which was false. */
+      if (p.flagged) quarterFlagged++;
+      quarter.push({
+        flagged: Boolean(p.flagged),
+        measure: g.metric,
+        period: periodLabel(p.period),
+        sort: periodSortKey(p.period),
+        guided: guideWords(p),
+        reported: (formatValue(p.actual, p.unit) || String(p.actual)) + (p.flagged ? "\u2020" : ""),
+        result: resultCell(p),
+        word: landing(p).word,
+      });
+    }
+  }
+
+  let quarterLine = null;
+  const counted = quarter.filter((q) => !q.flagged);
+  if (quarter.length) {
+    const c = { above: 0, within: 0, at: 0, below: 0 };
+    for (const q of counted) c[q.word] += 1;
+    const measures = new Set(quarter.map((q) => q.measure)).size;
+    const noun = (n) => "key " + (measures === quarter.length
+      ? (n === 1 ? "measure" : "measures")
+      : (n === 1 ? "figure" : "figures"));
+    const n = counted.length;
+    const only = Object.keys(c).filter((k) => c[k]);
+    if (!n) {
+      quarterLine = quarter.length === 1
+        ? "The one key figure carries the \u2020 caution, so it is not counted."
+        : "All " + quarter.length + " key figures carry the \u2020 caution, so none is counted.";
+    } else if (only.length === 1) {
+      const w = only[0];
+      const phrase = w === "above" ? "above the company's own guide"
+        : w === "below" ? "below the company's own guide"
+        : w === "within" ? "within the company's own range"
+        : "exactly on the company's own guide";
+      const who = n === 1 ? "The one " + noun(1) : n === 2 ? "Both " + noun(2) : "All " + n + " " + noun(n);
+      quarterLine = who + " came in " + phrase + ".";
+    } else {
+      const bits = [];
+      if (c.above) bits.push(c.above + " above the company's own guide");
+      if (c.within) bits.push(c.within + " within the range");
+      if (c.at) bits.push(c.at + " exactly on it");
+      if (c.below) bits.push(c.below + " below");
+      quarterLine = "Of " + n + " " + noun(n) + ": " + bits.join(", ") + ".";
+    }
+    if (quarterFlagged && n) {
+      quarterLine += " " + quarterFlagged + " more marked \u2020 and not counted.";
+    }
+  }
+
+  // The outlook: the same revisions the brief used, one row per guide.
+  const moved = (view.revisions || []).filter((r) => latest && r.release === latest
+    && ["raised", "cut", "unchanged", "new", "narrowed", "widened", "share split", "scope change"].includes(r.direction));
+  /* WHICH GUIDES GO IN THE OUTLOOK: the key measures, judged on the new
+   * guide's OWN label as well as on the tables above.
+   *
+   * FactSet's September 2026 release guided FY2027 revenue and both EPS
+   * figures, and the outlook showed only operating margin: the new guides
+   * were labelled "Revenues" and "Diluted earnings per share per common
+   * share", the record's tables "GAAP revenues" and "GAAP diluted EPS", and a
+   * guide that did not match a table's name was not shown. A company renaming
+   * a line is not a reason to hide what it just guided. */
+  const keyBases = new Set(keys.map((g) => String(g.key).split("|")[0]));
+  const nameOf = new Map(keys.map((g) => [String(g.key).split("|")[0], g.metric]));
+  const byBase = new Map();
+  for (const r of moved) {
+    const base = metricKey(r.label || r.metric);
+    // Ordered by kind (EPS, revenue, profit, cash flow) like the tables,
+    // then by the tables' own order within a kind.
+    const table = keys.findIndex((g) => String(g.key).split("|")[0] === base);
+    const kind = table >= 0 ? keyRank(keys[table]) : keyRank({ labels: [r.label || r.metric || ""] });
+    const rank = kind === 99 && table < 0 ? 99 : kind * 100 + (table >= 0 ? table : 50);
+    if (!byBase.has(base)) byBase.set(base, { base, rank, rows: [] });
+    byBase.get(base).rows.push(r);
+  }
+  const groupsOut = Array.from(byBase.values()).filter((x) => x.rank !== 99).sort((a, b) => a.rank - b.rank);
+  const shownGroups = groupsOut.slice(0, OUTLOOK_LIMIT);
+  let otherMoves = moved.length - shownGroups.reduce((n, x) => n + x.rows.length, 0);
+
+  const outlook = [];
+  for (const x of shownGroups) {
+    const rs = x.rows;
+    const measure = nameOf.get(x.base) || displayLabel(rs.map((r) => r.label || r.metric));
+    // Constant-currency twins of a figure already listed for the same period
+    // are dropped - one number per period is enough to read.
+    const plainPeriods = new Set(rs.filter((r) => !/constant currency/i.test(r.label || "")).map((r) => r.period));
+    const kept = rs.filter((r) => !(/constant currency/i.test(r.label || "") && plainPeriods.has(r.period)));
+    // The next quarter first, then the year.
+    kept.sort((a, b) => (/FY/.test(a.period) - /FY/.test(b.period)) || (periodSortKey(a.period) - periodSortKey(b.period)));
+    kept.slice(0, 3).forEach((r, i) => {
+      outlook.push({
+        measure,
+        first: i === 0,
+        period: periodLabel(r.period),
+        guide: r.after ? formatFigure(r.after, r.unit) : "",
+        change: changeWords(r),
+      });
+    });
+    otherMoves += Math.max(0, kept.length - 3);
+  }
+
+  // The record, per key measure.
+  const record = [];
+  for (const g of keys) {
+    const real = g.rows.filter((p) => !p.notGuided && !p.unanswered);
+    const clean = real.filter((p) => !p.flagged && landing(p));
+    if (!clean.length) continue;
+    const ordered = clean.slice().sort((a, b) => periodSortKey(a.period) - periodSortKey(b.period)).slice(-10);
+
+    const counts = { above: 0, within: 0, at: 0, below: 0 };
+    const aboveBy = [], belowBy = [];
+    for (const p of ordered) {
+      const l = landing(p);
+      counts[l.word] += 1;
+      const inUnit = (x) => x * unitScale(p.unit) / unitScale(g.unit);
+      if (l.word === "above" && l.gap) aboveBy.push(inUnit(l.gap));
+      if (l.word === "below" && l.gap) belowBy.push(inUnit(l.gap));
+    }
+    const n = ordered.length;
+    /* "6/7 above (typically $0.17)": the count, and beside it the typical
+       distance - a median, so "typically" only when there is more than one
+       gap to take it from. */
+    const gapOf = (xs) => !xs.length ? ""
+      : " (" + (xs.length > 1 ? "typically " : "") + gapText(xs.length > 1 ? median(xs) : xs[0], g.unit) + ")";
+    const bits = [];
+    if (counts.above) bits.push(counts.above + "/" + n + " above" + gapOf(aboveBy));
+    if (counts.within) bits.push(counts.within + "/" + n + " within");
+    if (counts.at) bits.push(counts.at + "/" + n + " on it");
+    if (counts.below) bits.push(counts.below + "/" + n + " below" + gapOf(belowBy));
+    const left = real.length - clean.length;
+
+    record.push({
+      measure: g.metric,
+      symbols: ordered.map((p) => SYM[landing(p).word]).join(" "),
+      span: ordered.length > 1
+        ? periodLabel(ordered[0].period) + " \u2192 " + periodLabel(ordered[ordered.length - 1].period)
+        : periodLabel(ordered[0].period),
+      line: bits.join(", ")
+        + (left ? " \u00b7 " + left + " flagged " + (left === 1 ? "row" : "rows") + " left out" : ""),
+    });
+  }
+
+  return { quarter, quarterLine, outlook, record, otherMoves };
+}
+
+/* The plain-text version has no emoji problem to guard against, and the
+   invisible selector would throw the column padding off by one. */
+function bare(x) {
+  return String(x || "").replace(/\uFE0E/g, "");
+}
+
 export function renderEmail(view, options) {
   const opts = options || {};
   const company = displayName(view.company || view.ticker);
   const lead = plainHeadline(view.pairs) || singlesLine(headlineSince(view.headline, view.pairs), view.pairs);
   const { metrics: allMetrics, belowBar } = byMetric(view.pairs || [], view.unanswered || [], 99);
   const { keys: metrics, others } = keyMeasures(allMetrics);
-  const brief = briefOf(view, metrics);
+  const sec = sectionsOf(view, metrics);
   const annual = annualRows(view.annual);
   const alsoRows = belowBarRows(belowBar, view.annual);
   const anyNote = metrics.some((g) => g.hasNote);
   const anyFlag = metrics.some((g) => g.hasFlag);
   const site = opts.siteUrl || "https://guidance.zahoorbhat.com";
-  const moreLine = others.length || brief.otherMoves
+  const moreLine = others.length || sec.otherMoves
     ? (others.length ? others.length + " more guided " + (others.length === 1 ? "measure" : "measures") : "")
-      + (others.length && brief.otherMoves ? " and " : "")
-      + (brief.otherMoves ? brief.otherMoves + " more " + (brief.otherMoves === 1 ? "guide" : "guides") + " in this release" : "")
+      + (others.length && sec.otherMoves ? " and " : "")
+      + (sec.otherMoves ? sec.otherMoves + " more " + (sec.otherMoves === 1 ? "guide" : "guides") + " in this release" : "")
       + " - on the site: " + site
     : "";
 
@@ -1198,24 +1457,39 @@ export function renderEmail(view, options) {
   const t = [];
   t.push(company + " (" + view.ticker + ")");
   t.push("");
-  t.push(lead);
+  // 1. This quarter against its guide.
+  t.push("THIS QUARTER VS GUIDANCE");
+  if (sec.quarter.length) {
+    t.push(sec.quarterLine);
+    const rows = sec.quarter.map((q) => [q.measure + ", " + q.period, q.guided, q.reported, bare(q.result)]);
+    for (const line of textTable(["Measure", "Guided", "Reported", "Result"], rows)) t.push("   " + line);
+  } else {
+    t.push("No key measure was guided for the period this release reports.");
+  }
   t.push("");
-  if (brief.reported.length) {
-    t.push("THIS RELEASE, AGAINST THE COMPANY'S OWN GUIDE");
-    for (const l of brief.reported) t.push("- " + l);
-    t.push("");
+
+  // 2. What they guide now.
+  t.push("OUTLOOK: WHAT THEY GUIDE NOW");
+  if (sec.outlook.length) {
+    const rows = sec.outlook.map((o) => [o.first ? o.measure : "", o.period, o.guide, o.change]);
+    for (const line of textTable(["Measure", "Period", "New guide", "Change"], rows)) t.push("   " + line);
+  } else {
+    t.push("No new figure for a key measure in this release.");
   }
-  if (brief.record.length) {
-    t.push("THE RECORD");
-    for (const l of brief.record) t.push("- " + l);
-    t.push("");
+  t.push("");
+
+  // 3. The record.
+  t.push("TRACK RECORD");
+  t.push(lead);
+  for (const r of sec.record) {
+    t.push("- " + r.measure + " (" + r.span + "): " + bare(r.symbols));
+    t.push("  " + r.line);
   }
-  if (brief.guiding.length) {
-    t.push("GUIDED IN THIS RELEASE");
-    for (const l of brief.guiding) t.push("- " + l);
-    t.push("");
-  }
+  t.push("  \u25B2 above the guide   \u25CF within the range or on it   \u25BC below. Oldest first.");
+  t.push("");
   t.push("Counted from the company's own releases. Nothing here is a forecast.");
+  t.push("");
+  t.push("DETAILED HISTORY");
   t.push("");
 
   for (const g of metrics) {
@@ -1278,21 +1552,75 @@ export function renderEmail(view, options) {
   h.push('<h1 style="margin:6px 0 2px;font-size:24px;font-weight:normal;color:' + GREEN + ';">' + esc(company) + '</h1>');
   h.push('<div style="font-size:14px;color:' + MUTED + ';">' + esc(view.ticker) + '</div>');
 
-  h.push('<p style="margin:20px 0 0;font-size:17px;">' + esc(lead) + '</p>');
+  const label = (text) => '<div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:'
+    + MUTED + ';">' + esc(text) + '</div>';
+  const small = (text) => '<div style="font-size:12px;color:' + MUTED + ';">' + esc(text) + '</div>';
+  const cellStyle = 'padding:6px 8px 6px 0;border-bottom:1px solid ' + RULE + ';vertical-align:top;';
+  const numStyle = cellStyle + 'font-family:' + MONO + ';font-size:13px;white-space:nowrap;';
+  /* A guided range may break at "to" - "$32.75bn to $34.25bn" does not fit
+     beside three other columns on a phone, and the table ran off the right
+     edge. A single figure never breaks: it has no space in it. */
+  const wrapStyle = cellStyle + 'font-family:' + MONO + ';font-size:13px;line-height:1.35;';
+  const headRow = (heads) => '<tr>' + heads.map((x) => '<th align="left" style="padding:0 8px 5px 0;border-bottom:1px solid '
+    + RULE + ';font-weight:normal;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:'
+    + MUTED + ';">' + esc(x) + '</th>').join("") + '</tr>';
+  const tableOpen = '<table role="presentation" cellpadding="0" cellspacing="0" border="0"'
+    + ' style="width:100%;margin-top:8px;border-collapse:collapse;">';
 
-  const block = (title, lines, strong) => {
-    if (!lines.length) return;
-    h.push('<div style="margin-top:20px;">');
-    h.push('<div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:' + MUTED + ';">' + esc(title) + '</div>');
-    for (const l of lines) {
-      h.push('<p style="margin:7px 0 0;font-size:' + (strong ? '16px' : '15px') + ';">' + esc(l) + '</p>');
+  // 1. This quarter vs guidance - a shaded box.
+  h.push('<div style="margin-top:22px;padding:14px 16px 16px;background:' + SHADE + ';border:1px solid ' + RULE + ';">');
+  h.push(label("This quarter vs guidance"));
+  if (sec.quarter.length) {
+    h.push('<p style="margin:6px 0 0;font-size:17px;color:' + GREEN + ';">' + esc(sec.quarterLine) + '</p>');
+    h.push(tableOpen + headRow(["Measure", "Guided", "Reported", "Result"]));
+    for (const q of sec.quarter) {
+      h.push('<tr>'
+        + '<td style="' + cellStyle + 'font-size:14px;line-height:1.3;">' + esc(q.measure) + small(q.period) + '</td>'
+        + '<td style="' + wrapStyle + 'color:' + MUTED + ';">' + esc(q.guided) + '</td>'
+        + '<td style="' + numStyle + 'color:' + INK + ';">' + esc(q.reported) + '</td>'
+        + '<td style="' + numStyle + 'color:' + GREEN + ';">' + esc(q.result) + '</td>'
+        + '</tr>');
     }
+    h.push('</table>');
+  } else {
+    h.push('<p style="margin:8px 0 0;font-size:15px;">No key measure was guided for the period this release reports.</p>');
+  }
+  h.push('</div>');
+
+  // 2. Outlook - a rule down the left.
+  h.push('<div style="margin-top:22px;padding:2px 0 2px 14px;border-left:3px solid ' + GREEN + ';">');
+  h.push(label("Outlook: what they guide now"));
+  if (sec.outlook.length) {
+    h.push(tableOpen + headRow(["Measure", "New guide", "Change"]));
+    for (const o of sec.outlook) {
+      h.push('<tr>'
+        + '<td style="' + cellStyle + 'font-size:14px;line-height:1.3;">' + (o.first ? esc(o.measure) : '') + small(o.period) + '</td>'
+        + '<td style="' + wrapStyle + 'color:' + INK + ';">' + esc(o.guide) + '</td>'
+        + '<td style="' + cellStyle + 'font-size:13px;color:' + MUTED + ';">' + esc(o.change) + '</td>'
+        + '</tr>');
+    }
+    h.push('</table>');
+  } else {
+    h.push('<p style="margin:8px 0 0;font-size:15px;">No new figure for a key measure in this release.</p>');
+  }
+  h.push('</div>');
+
+  // 3. Track record.
+  h.push('<div style="margin-top:22px;">');
+  h.push(label("Track record"));
+  h.push('<p style="margin:6px 0 0;font-size:15px;">' + esc(lead) + '</p>');
+  for (const r of sec.record) {
+    h.push('<div style="margin-top:12px;">');
+    h.push('<div style="font-size:15px;">' + esc(r.measure) + '</div>');
+    h.push('<div style="font-size:17px;letter-spacing:2px;color:' + GREEN + ';font-family:Arial,Helvetica,sans-serif;">'
+      + esc(r.symbols) + '</div>');
+    h.push('<div style="font-size:13px;color:' + MUTED + ';">' + esc(r.span + " \u00b7 " + r.line) + '</div>');
     h.push('</div>');
-  };
-  block("This release, against the company's own guide", brief.reported, true);
-  block("The record", brief.record, false);
-  block("Guided in this release", brief.guiding, false);
-  h.push('<p style="margin:14px 0 0;font-size:13px;color:' + MUTED + ';">Counted from the company\'s own releases. Nothing here is a forecast.</p>');
+  }
+  h.push('<p style="margin:12px 0 0;font-size:12px;color:' + MUTED + ';">\u25B2\uFE0E above the guide \u00b7 \u25CF\uFE0E within the range or on it \u00b7 \u25BC\uFE0E below. Oldest first. Counted from the company\'s own releases; nothing here is a forecast.</p>');
+  h.push('</div>');
+
+  h.push('<div style="margin-top:30px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:' + MUTED + ';">Detailed history</div>');
 
   const th = (head) => '<th align="left" style="padding:0 8px 5px 0;border-bottom:1px solid '
     + RULE + ';font-weight:normal;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:'

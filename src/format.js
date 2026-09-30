@@ -31,17 +31,75 @@
  */
 export function formatValue(n, unit) {
   if (typeof n !== "number" || !Number.isFinite(n)) return "";
+  const m = moneyScale(n, unit);
+  if (m) return sign(n) + "$" + m.size + m.suffix;
+  const size = Math.abs(n);
   switch (unit) {
-    case "percent": return n + "%";
-    case "USD billions": return "$" + n + "bn";
-    case "USD millions": return "$" + n + "m";
-    case "USD per share": return "$" + n.toFixed(2);
+    case "percent": return sign(n) + size + "%";
+    case "USD per share": return sign(n) + "$" + size.toFixed(2);
     // A ratio in turns. Delta guides "adjusted debt to EBITDAR 2x - 3x", and
     // leverage, coverage and turns guides across several sectors are written
     // the same way. Printed bare, "2 to 3" beside a column of percentages and
     // dollar figures reads as a number missing its unit.
-    case "multiple": return n + "x";
+    case "multiple": return sign(n) + size + "x";
     default: return String(n);
+  }
+}
+
+/* A minus sign, not a hyphen, and IN FRONT OF the dollar sign. Carnival's
+   second-quarter 2024 guide printed as "$-35m", which reads as a typo. */
+function sign(n) {
+  return n < 0 ? "\u2212" : "";
+}
+
+/**
+ * Money in millions is written in billions once it reaches a billion.
+ *
+ * Carnival guides net income in millions some quarters and billions others,
+ * and the email printed "$1800m" beside "$1.86bn" and "raised to $3080m (was
+ * $3.07bn)". The same size of number, written two ways, reads as two
+ * different sizes. Every digit the company gave is kept: 1,982 becomes
+ * $1.982bn, not $2.0bn.
+ *
+ * `atLeast` lets a range decide once for both ends, so "$950m to $1,050m"
+ * prints as "$0.95bn to $1.05bn" rather than one end in each unit.
+ */
+function moneyScale(n, unit, atLeast) {
+  if (unit === "USD billions") return { size: Math.abs(n), suffix: "bn" };
+  if (unit !== "USD millions") return null;
+  const big = Math.abs(typeof atLeast === "number" ? atLeast : n) >= 1000;
+  if (!big) return { size: Math.abs(n), suffix: "m" };
+  // To the nearest million: FactSet reports revenue to the thousand
+  // ($2,476.256m), and "$2.476256bn" is noise, not precision.
+  return { size: Number((Math.abs(n) / 1000).toFixed(3)), suffix: "bn" };
+}
+
+/* A money figure in the scale chosen by the larger end of its range. */
+function formatInScale(n, unit, larger) {
+  const m = moneyScale(n, unit, larger);
+  if (!m) return formatValue(n, unit);
+  return sign(n) + "$" + m.size + m.suffix;
+}
+
+/**
+ * A difference between two figures, written in the unit it was measured in.
+ *
+ * Percentage guides get POINTS, not percent: a growth rate 1.2 points above
+ * its guide is "1.2pp", and "1.2%" would say something else. Money follows the
+ * same billion rule as formatValue. `signed` puts a + or − in front.
+ */
+export function formatGap(d, unit, signed) {
+  if (typeof d !== "number" || !Number.isFinite(d)) return "";
+  const x = Number(d.toFixed(4));
+  const lead = signed ? (x > 0 ? "+" : x < 0 ? "\u2212" : "") : "";
+  const size = Math.abs(x);
+  const m = moneyScale(size, unit);
+  if (m) return lead + "$" + m.size + m.suffix;
+  switch (unit) {
+    case "percent": return lead + size + "pp";
+    case "USD per share": return lead + "$" + size.toFixed(2);
+    case "multiple": return lead + size + "x";
+    default: return lead + size;
   }
 }
 
@@ -59,7 +117,8 @@ export function formatFigure(guide, unit) {
   const hasValue = typeof g.value === "number" && Number.isFinite(g.value);
 
   if (hasLow && hasHigh) {
-    return formatValue(g.low, unit) + " to " + formatValue(g.high, unit);
+    const larger = Math.max(Math.abs(g.low), Math.abs(g.high));
+    return formatInScale(g.low, unit, larger) + " to " + formatInScale(g.high, unit, larger);
   }
   if (hasValue) return formatValue(g.value, unit);
   if (hasLow) return formatValue(g.low, unit);

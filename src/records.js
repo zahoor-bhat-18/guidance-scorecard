@@ -145,6 +145,9 @@ export function forEmail(record) {
        is either printed or decides how a row is printed. */
     annual: (record.annual || []).map((p) => ({
       metric: p.metric_as_written || p.metric,
+      // The broad class ("capex"), so a row the company labelled only
+      // "Total" can still be named for what it totals.
+      family: p.metric || null,
       period: p.guide_period,
       unit: p.unit,
       guide: p.guide,

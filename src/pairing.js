@@ -65,10 +65,31 @@ function figureOf(g) {
  * figure in the actuals extraction, one step further down, and it was found
  * the same way: fixing the first exposed the second.
  */
-function forPeriod(candidates, period) {
+function forPeriod(candidates, period, askedFor) {
   if (!candidates || !candidates.length) return null;
   const exact = candidates.find((a) => a.period && period && samePeriod(period, a.period));
   if (exact) return exact;
+  /* THE ANSWER TO THIS GUIDE'S OWN QUESTION.
+   *
+   * Every actual records which guide period it was asked for. When no answer
+   * carries the period itself - because the model returned nothing - the
+   * answer that was asked for this period is still the right one to attach:
+   * it says what the model found (or that it found nothing), and the checks
+   * below give the true reason.
+   *
+   * Without this, Carnival's second-quarter 2026 release was refused fourteen
+   * times as "more than one reported figure could be this measure". There
+   * was not one figure, let alone two: the quarter and the year had each been
+   * asked for, both came back empty, and two empty answers under one label
+   * looked like a choice between two figures.
+   *
+   * Only for the exact label (askedFor). Under the looser measure key, two
+   * different measures - GAAP and adjusted - can each have been asked for the
+   * same period, and picking one would be a guess. */
+  if (askedFor) {
+    const own = candidates.filter((a) => a.guide_period && period && a.guide_period === period);
+    if (own.length === 1) return own[0];
+  }
   return candidates.length === 1 ? candidates[0] : null;
 }
 
@@ -100,15 +121,19 @@ export function pairUp(guides, actuals) {
     const label = written.toLowerCase().trim();
     const key = metricKey(written);
 
-    let a = forPeriod(byLabel.get(label), g.period);
+    let a = forPeriod(byLabel.get(label), g.period, true);
     let matchedOn = a ? "label" : null;
     let ambiguous = false;
+    let nothingFound = false;
 
     if (!a && key) {
       const candidates = byMeasure.get(key) || [];
       a = forPeriod(candidates, g.period);
       if (a) matchedOn = "measure";
-      else if (candidates.length > 1) ambiguous = true;
+      // Ambiguous only when two or more answers actually carry a figure.
+      // Several empty answers are not a choice between figures.
+      else if (candidates.filter((c) => c.value !== null && c.value !== undefined).length > 1) ambiguous = true;
+      else if (candidates.length > 1) nothingFound = true;
     }
 
     const base = {
@@ -141,10 +166,34 @@ export function pairUp(guides, actuals) {
       continue;
     }
 
+    if (!a && nothingFound) {
+      pairs.push({ ...base, comparable: false, why: "No reported figure was found for this in the release." });
+      continue;
+    }
+
     if (!a) {
       pairs.push({ ...base, comparable: false, why: "No actual was looked for under this metric." });
       continue;
     }
+
+    /* WHAT THE MODEL ANSWERED, KEPT ON EVERY PAIR.
+     *
+     * A refused pair used to keep only its reason, so a wrong refusal could
+     * not be diagnosed from the record - Carnival's missing second quarter had
+     * to be re-run by hand to see that the model had simply returned nothing.
+     * The answer is small and is the evidence; it stays. */
+    base.answer = {
+      asked_as: a.asked_as ?? null,
+      found_as: a.found_as ?? null,
+      section: a.section ?? null,
+      period_text: a.period_text ?? null,
+      period: a.period ?? null,
+      period_why: a.period_why ?? null,
+      value: a.value ?? null,
+      unit: a.unit ?? null,
+      quote: a.quote ?? null,
+      second_look: a.second_look || null,
+    };
 
     base.actual = a.value;
     base.actual_unit = a.unit;
@@ -165,7 +214,7 @@ export function pairUp(guides, actuals) {
     }
 
     if (a.value === null) {
-      pairs.push({ ...base, comparable: false, why: "The release does not report this figure." });
+      pairs.push({ ...base, comparable: false, why: "No reported figure was found for this in the release." });
       continue;
     }
     if (!g.period) {
@@ -360,6 +409,32 @@ export function markOpenAtAnswer(pairs, answerFiled, cal) {
  * release before the previous one. Returns copies marked with where they came
  * from; nothing about the originals changes.
  */
+/**
+ * The measure, loosely, for deciding whether a later release has REPLACED an
+ * older guide.
+ *
+ * Jabil set a long-range target in March 2024 - "core EPS of $10.65 for
+ * FY25" - and from September 2024 guided the same year as "Core diluted
+ * earnings per share (Non-GAAP)": $8.65, later $9.33. The two labels gave
+ * different keys ("earnings per share" and "diluted earnings per share"), so
+ * the newer guides did not block the old target, it was carried to the
+ * FY2025 result, and the email reported a $0.90 miss against a number the
+ * company had long since replaced.
+ *
+ * "Diluted", "common" and the "U.S." in "U.S. GAAP" do not change which
+ * measure is meant. This looser key is used only to BLOCK a carry: the worst
+ * it can do is leave an old guide unscored. It is never used to pair a guide
+ * with a result.
+ */
+function replacedKey(label) {
+  return metricKey(label)
+    .replace(/\bu s\b/g, " ")
+    .replace(/\b(diluted|common)\b/g, " ")
+    .replace(/\bper share(\s+per share)+\b/g, "per share")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function guidesToCarry(older, inForce, answerFiled, priorFiled, cal) {
   if (!cal || !answerFiled || !priorFiled) return [];
   /* A mention WITHOUT a number blocks too. GE guided 2025 adjusted revenue
@@ -371,13 +446,13 @@ export function guidesToCarry(older, inForce, answerFiled, priorFiled, cal) {
   const has = new Set();
   for (const g of inForce || []) {
     if (!g.period) continue;
-    has.add(metricKey(g.metric_as_written || g.metric) + "|" + g.period);
+    has.add(replacedKey(g.metric_as_written || g.metric) + "|" + g.period);
   }
   const out = [];
   for (const src of older || []) {
     for (const g of src.guides || []) {
       if (!g.period) continue;
-      const key = metricKey(g.metric_as_written || g.metric) + "|" + g.period;
+      const key = replacedKey(g.metric_as_written || g.metric) + "|" + g.period;
       if (has.has(key)) continue;
       if (!hasFigure(g)) { has.add(key); continue; }
       let endsNow = false;
