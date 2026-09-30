@@ -165,7 +165,8 @@ export function noteFor(s, unsub) {
         + " guidance to score" + (s.matched ? " (" + figures(s.matched) + " matched)" : "")
         + ", so there is nothing useful to send.",
       "Many companies give their outlook only on the call or in slides, which are not filed with the SEC."
-        + " You stay on the list, and hear from us only if that changes.",
+        + " You stay on the list: each time it reports you will get a short note saying so, and the full"
+        + " scorecard once there is something to score.",
     ];
   } else {
     // "no releases": the company does not put earnings releases on file with
