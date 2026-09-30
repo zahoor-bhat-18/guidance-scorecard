@@ -19,7 +19,7 @@
  */
 
 import { resolveCik, companyCalendar, shareCountChanges } from "../src/xbrl.js";
-import { earningsReleases, guidanceFrom, guidanceUpdatesBetween, applyUpdates } from "../src/guidance.js";
+import { earningsReleases, guidanceFrom, guidanceUpdatesBetween, applyUpdates, completedDeals } from "../src/guidance.js";
 import { requestsFrom, actualsFrom } from "../src/actuals.js";
 import { pairUp, refuseAcrossSplit, markOpenAtAnswer, guidesToCarry } from "../src/pairing.js";
 import { metricKey } from "../src/metrics.js";
@@ -174,7 +174,19 @@ function mergePairs(fresh, stored) {
  */
 async function handle(ticker) {
   const stored = await kvGet("record:" + ticker);
-  if (!stored) throw new Error("No stored record. Run the backfill for " + ticker + " first.");
+  /* NO RECORD YET IS NOT A FAILURE.
+   *
+   * Someone followed Conagra on 30 Sep 2026, hours after its release. The
+   * poller saw the release still in EDGAR's feed and started a send while the
+   * new-company backfill was still running, and the send failed: "No stored
+   * record". Nothing was lost - the backfill reads the latest release itself,
+   * and the new follower's "now covering" email comes from it - but the run
+   * went red and read like a breakage. A company with no record is one being
+   * set up; the send steps aside and says so. */
+  if (!stored) {
+    console.log(ticker + ": no record yet - it is being set up, and the setup reads this release itself.");
+    return { ticker, skipped: "no record yet (being set up; the setup reads this release)" };
+  }
   const record = JSON.parse(stored);
 
   const { cik, name } = await resolveCik(env, ticker);
@@ -237,8 +249,15 @@ async function handle(ticker) {
   } catch (e) {
     console.error(ticker + ": share splits cannot be checked - " + e.message);
   }
+  let deals = [];
+  try {
+    deals = await completedDeals(env, cik);
+  } catch (e) {
+    console.error(ticker + ": completed deals cannot be checked - " + e.message);
+  }
   const scored = scoreAll(markOpenAtAnswer(refuseAcrossSplit(pairUp(priorGuides, actuals), {
     changes: shareChanges,
+    deals,
     guideFiled: record.releasesRead?.[0]?.filed,
     actualFiled: current.filed,
   }), current.filed, calendar));
@@ -255,7 +274,7 @@ async function handle(ticker) {
     try {
       const r = await actualsFrom(env, cik, current, requestsFrom(carried, calendar), calendar);
       carriedPairs = scoreAll(markOpenAtAnswer(refuseAcrossSplit(pairUp(carried, r.actuals), {
-        changes: shareChanges, guideFiled: since, actualFiled: current.filed,
+        changes: shareChanges, deals, guideFiled: since, actualFiled: current.filed,
       }), current.filed, calendar)).pairs;
     } catch (e) {
       console.error(ticker + ": carried guides could not be checked - " + e.message);
