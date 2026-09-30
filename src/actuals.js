@@ -865,6 +865,48 @@ function valueInQuoteAnyScale(value, quote) {
 
 const SECOND_LOOK_LIMIT = 30;
 
+/* ------------------------------------------------------------------ *
+ * Did the release itself measure this result against guidance?
+ * ------------------------------------------------------------------ */
+
+/* The same test score.js applies to the quoted line. */
+const AGAINST_GUIDE = /\b(outperform\w*|better than|exceed\w*|ahead of|above|beat|below|short of|missed|in line with|consistent with)\b[^.]{0,80}\b(guidance|outlook|forecast)\b/i;
+
+/* The words that name a measure in running text. */
+function measureWords(label) {
+  const l = String(label || "").toLowerCase();
+  if (/\beps\b|earnings per (\w+ )?share/.test(l)) return /\b(eps|earnings per (\w+ )?share)\b/i;
+  if (/ebitda/.test(l)) return /\bebitda\b/i;
+  if (/net income|net earnings/.test(l)) return /\bnet (income|earnings)\b/i;
+  if (/operating (income|profit)/.test(l)) return /\boperating (income|profit)\b/i;
+  if (/free cash flow/.test(l)) return /\bfree cash flow\b/i;
+  if (/revenue|sales/.test(l)) return /\b(revenues?|sales)\b/i;
+  return null;
+}
+
+/**
+ * The sentence, if any, in which the release measures this figure against
+ * its own guidance.
+ *
+ * Carnival writes it in words - "adjusted net income of $134 million was
+ * $170 million better than March guidance" - in the summary, while the figure
+ * itself is read from a table row. The size check in score.js looked only at
+ * the table row, found no such sentence, and marked a result the company had
+ * itself confirmed as a probable wrong row. The whole release is searched
+ * here, sentence by sentence; free, no model involved.
+ */
+export function statedAgainstGuide(text, label) {
+  const words = measureWords(label);
+  if (!words || !text) return null;
+  const sentences = String(text).split(/(?<=[.;])\s+/);
+  for (const s of sentences) {
+    if (s.length > 600) continue;
+    if (/forward[-\s]looking/i.test(s)) continue;
+    if (words.test(s) && AGAINST_GUIDE.test(s)) return s.trim().slice(0, 300);
+  }
+  return null;
+}
+
 /**
  * Ask once more, and only, for the figures that came back empty.
  *
@@ -1215,6 +1257,15 @@ export async function actualsFrom(env, cik, release, requests, cal) {
 
   // Any growth guide still without a usable answer: build it from two amounts.
   const growth = await growthFromLevels(env, requests, actuals, recheck.adjustedFor, filing.text, release, cal);
+
+  // Where the release itself measures a figure against guidance, keep the
+  // sentence: it confirms the pairing (score.js).
+  for (const a of actuals) {
+    if (a && a.value !== null && !a.stated_vs_guide) {
+      a.stated_vs_guide = statedAgainstGuide(filing.text, a.metric_as_written);
+    }
+  }
+
 
   return {
     release: {

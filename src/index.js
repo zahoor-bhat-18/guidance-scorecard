@@ -329,11 +329,13 @@ async function pollProblem(env, message) {
  * puts enough numeric guidance in its releases to score.
  *
  * Started on CONFIRMATION, not signup, so a typo or a bot costs nothing.
- * Capped, because each new company costs model calls: five tickers per
- * signup, ten new companies a day across everyone.
+ * Not capped: see the note below.
  * ------------------------------------------------------------------ */
 
-const MAX_TICKERS_PER_SIGNUP = 5;
+/* No cap on tickers per signup and none on new companies a day (removed 30
+   Sep 2026, at the owner's request, to add companies faster for testing).
+   The human check (Turnstile) is the guard now. The cost of a new company is
+   about thirty paid model questions, once. */
 
 /**
  * Cloudflare Turnstile: is this a person?
@@ -364,7 +366,6 @@ async function passedTurnstile(env, token, ip) {
     return { ok: false, error: "The check could not be confirmed just now. Please try again in a moment." };
   }
 }
-const NEW_COMPANIES_PER_DAY = 10;
 // How long a request blocks another for the same ticker. Long enough to
 // cover a backfill that is queued or running; a finished one leaves a record,
 // and a ticker with a record is never requested again.
@@ -380,7 +381,6 @@ async function requestBackfill(env, tickers) {
   const go = [];
   for (const t of tickers) {
     if (await env.CACHE.get("requested:" + t)) out.alreadyUnderway.push(t);
-    else if (used + go.length >= NEW_COMPANIES_PER_DAY) out.overLimit.push(t);
     else go.push(t);
   }
   if (!go.length) return out;
@@ -873,9 +873,6 @@ export default {
 
         const asked = cleanTickers(body.tickers);
         if (!asked.length) return json({ error: "Name at least one ticker." }, 400);
-        if (asked.length > MAX_TICKERS_PER_SIGNUP) {
-          return json({ error: "Up to " + MAX_TICKERS_PER_SIGNUP + " tickers at a time." }, 400);
-        }
 
         // Any company registered with the SEC can be followed. One without a
         // record is built after the address is confirmed.

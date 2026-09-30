@@ -757,6 +757,7 @@ const KEY_LIMIT = 5;
 /* Measures in the outlook: the key measures plus any renamed or new one of
    the same kinds, so a little more room than the tables. */
 const OUTLOOK_LIMIT = 6;
+const BRIDGE = /\b(improvement|impact|headwinds?|tailwinds?|benefit|compared (to|with) (january|february|march|april|may|june|july|august|september|october|november|december|prior|previous|the prior|the previous|our prior|our previous|last)\b)/i;
 
 function keyRank(g) {
   const label = (g.labels || []).join(" ") + " " + (g.metric || "");
@@ -1350,6 +1351,15 @@ export function sectionsOf(view, keys) {
     // Ordered by kind (EPS, revenue, profit, cash flow) like the tables,
     // then by the tables' own order within a kind.
     const table = keys.findIndex((g) => String(g.key).split("|")[0] === base);
+    /* A bridge, not a measure. Carnival guided "operational improvement in
+       adjusted net income compared to June" - a $150m step within its net
+       income guide - and it reached the outlook as though it were a sixth
+       key measure. A line describing a change in something, or an effect on
+       it, is left to the site; the measures themselves are listed. Organic
+       growth and "net sales change" are measures and are not caught: the test
+       is for improvement, impact, headwind, tailwind, benefit, or a
+       comparison with an earlier guide. */
+    if (table < 0 && BRIDGE.test(String(r.label || r.metric || ""))) continue;
     const kind = table >= 0 ? keyRank(keys[table]) : keyRank({ labels: [r.label || r.metric || ""] });
     const rank = kind === 99 && table < 0 ? 99 : kind * 100 + (table >= 0 ? table : 50);
     if (!byBase.has(base)) byBase.set(base, { base, rank, rows: [] });

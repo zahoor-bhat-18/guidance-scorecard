@@ -193,6 +193,7 @@ export function pairUp(guides, actuals) {
       unit: a.unit ?? null,
       quote: a.quote ?? null,
       second_look: a.second_look || null,
+      stated_vs_guide: a.stated_vs_guide || null,
     };
 
     base.actual = a.value;
@@ -325,7 +326,33 @@ export function ratioWords(r) {
  *
  * Per-share figures only. A split changes nothing about revenue or margins.
  */
+/* Measures a deal does not disturb: they are stated without the deal. */
+const DEAL_PROOF = /\b(organic|comparable|like[-\s]for[-\s]like|same[-\s]store|excluding (acquisitions|divestitures|m&a)|ex[-\s]m&a|core sales)\b/i;
+
+/**
+ * Mark each pair with a completed deal (8-K item 2.01) filed between its
+ * guide and its result. score.js cautions (†) such a pair rather than
+ * refusing it: most deals are small against the whole company, and the
+ * figure is still the company's; but a guide made before a spin-off is for a
+ * different company than the result. Organic and comparable measures are
+ * stated without the deal and are left alone.
+ */
+function markAcrossDeals(pairs, dates) {
+  const deals = (dates && dates.deals) || [];
+  const actualFiled = dates && dates.actualFiled;
+  if (!deals.length || !actualFiled) return;
+  for (const p of pairs) {
+    if (!p.comparable) continue;
+    if (DEAL_PROOF.test(String(p.metric_as_written || ""))) continue;
+    const guideFiled = (p.guide_updated && p.guide_updated.filed) || p.guide_filed || dates.guideFiled;
+    if (!guideFiled) continue;
+    const d = deals.find((x) => String(x.filed) > String(guideFiled) && String(x.filed) <= String(actualFiled));
+    if (d) p.deal_between = { filed: d.filed, accession: d.accession };
+  }
+}
+
 export function refuseAcrossSplit(pairs, dates) {
+  markAcrossDeals(pairs, dates);
   const changes = (dates && dates.changes) || [];
   const actualFiled = dates && dates.actualFiled;
   if (!changes.length || !dates || !dates.guideFiled || !actualFiled) return pairs;
@@ -429,7 +456,11 @@ export function markOpenAtAnswer(pairs, answerFiled, cal) {
 function replacedKey(label) {
   return metricKey(label)
     .replace(/\bu s\b/g, " ")
-    .replace(/\b(diluted|common)\b/g, " ")
+    // "Growth" too: GE guided 2025 adjusted revenue at "10%" in April and
+    // then as "adjusted revenue growth" of "mid-teens" in July and October.
+    // The later guides were the same measure in other words, and the April
+    // 10% was still carried past them.
+    .replace(/\b(diluted|common|growth)\b/g, " ")
     .replace(/\bper share(\s+per share)+\b/g, "per share")
     .replace(/\s+/g, " ")
     .trim();

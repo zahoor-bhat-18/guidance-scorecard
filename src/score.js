@@ -119,6 +119,19 @@ const STATED_AGAINST_GUIDE = /\b(outperform\w*|better than|exceed\w*|ahead of|ab
 function flagsFor(pair, actual, low, high, value) {
   const flags = [];
   if (STATED_AGAINST_GUIDE.test(String(pair.quote || ""))) return flags;
+  // The same, found anywhere in the release rather than only in the line the
+  // figure was taken from (actuals.js looks; see statedAgainstGuide there).
+  if (pair.answer && pair.answer.stated_vs_guide) return flags;
+  /* A completed acquisition or disposal between the guide and the result
+     brings back the stricter size test that applied before 30 Sep 2026. Not
+     a caution on every such pair: Carnival filed one in May 2026 for a
+     restructuring that changed nothing a guide measures. But a gap that would
+     be ordinary on its own is suspect when the company changed shape in
+     between - Honeywell's spin-off, GE's, Broadcom's VMware purchase. */
+  const deal = pair.deal_between
+    ? " An acquisition or disposal was completed in between (8-K filed " + pair.deal_between.filed
+      + "), so the guide may be for a different company than the result."
+    : "";
   const isGrowth = pair.shape === "growth_range" || pair.shape === "growth_point";
 
   const bound = typeof low === "number" && typeof high === "number"
@@ -151,11 +164,16 @@ function flagsFor(pair, actual, low, high, value) {
 
   /* A margin or a rate. Three points off a guided margin is not a miss, it is
      a different business. */
+  /* Five points, not three (30 Sep 2026). Micron's June 2026 gross margin
+     came in 3.9 points above an 81% guide - a real quarter, in the release's
+     own headline - and was marked as a probable wrong row. A wrong row for a
+     margin (gross read as operating, a segment read as the total) is usually
+     ten points or more away. */
   if (pair.unit === "percent") {
-    if (gap > 3) {
+    if (gap > (deal ? 3 : 5)) {
       flags.push("The gap is " + Number(gap.toFixed(4)) + " percentage points, which is very"
         + " large for a margin or rate. Check for a change in scope, a restatement, or the"
-        + " wrong row before treating this as a miss or a beat.");
+        + " wrong row before treating this as a miss or a beat." + deal);
     }
     return flags;
   }
@@ -174,12 +192,31 @@ function flagsFor(pair, actual, low, high, value) {
      were all perfectly normal quarters wearing a warning label.
      Revenue is not leveraged. Honeywell missing sales by 8% is not a quarter,
      it is a company that sold half of itself. */
-  const limit = looksLikeEarnings(pair) ? 0.25 : 0.05;
+  /* Loosened 30 Sep 2026, because the caution was hiding real quarters:
+     Jabil's revenue came in 6-7% above the top of its range three times in
+     two years, Micron's 21% in a quarter it plainly described as a record,
+     and each was marked as a probable wrong row and left out of the counts.
+     Every figure now carries the line it was read from, which is a better
+     guard against a wrong row than its size; the size check is kept only
+     for gaps too large to be an ordinary result - a quarter of revenue, or
+     half of earnings.
+
+     Earnings guided small against what was earned are skipped too. Carnival
+     guided second-quarter 2024 adjusted net income at a $35m LOSS and earned
+     $134m; guided the fourth quarter at $60m and earned $186m. A gap as a
+     share of a guide that small, or of the wrong sign, measures the guide,
+     not the row. */
+  const earnings = looksLikeEarnings(pair);
+  if (earnings && !deal) {
+    const sameSign = bound * actual > 0;
+    if (!sameSign || Math.abs(bound) < Math.abs(actual) * 0.5) return flags;
+  }
+  const limit = deal ? (earnings ? 0.25 : 0.05) : (earnings ? 0.5 : 0.25);
 
   if (gap / scale > limit) {
     flags.push("The gap is " + Math.round((gap / scale) * 1000) / 10 + "% of the guided figure."
       + " Check for a change in scope, a restatement, or the wrong row before treating this"
-      + " as a miss or a beat.");
+      + " as a miss or a beat." + deal);
   }
   return flags;
 }

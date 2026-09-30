@@ -545,6 +545,16 @@ function guardGuide(input) {
 
   const pool = quoteNumbers(g.quote);
   for (const e of bandEnds(g.quote)) pool.add(e);
+  /* "Flat" is zero, for a change. Delta's July 2025 release guided September
+     quarter revenue "flat to up 4 percent compared to the prior year", and
+     printed the same guide in its outlook table as "0% - 4%". The model
+     quoted the sentence, the 0 was not in it, and the whole guide was dropped
+     as unverified - so a guide the company printed twice was never scored.
+     A change guided as "flat" means no change: 0, and nothing else. Only for
+     changes (a percentage or growth guide), never for a level - "flat
+     revenue" of a dollar amount has no number to stand for. */
+  const isChange = g.unit === "percent" || /growth/.test(String(g.shape || ""));
+  if (isChange && /\bflat\b/i.test(String(g.quote || ""))) pool.add(0);
   const stated = [];
   if (typeof g.low === "number") stated.push(["low", g.low]);
   if (typeof g.high === "number") stated.push(["high", g.high]);
@@ -868,6 +878,28 @@ export function looksLikeGuidance(text) {
     if (figure.test(around)) return true;
   }
   return false;
+}
+
+/**
+ * Completed acquisitions and disposals: 8-Ks carrying item 2.01, oldest first.
+ *
+ * Honeywell spun off Solstice between guiding its 2025 sales and reporting
+ * them, and the result was scored against a guide for a bigger company.
+ * Item 2.01 ("Completion of Acquisition or Disposition of Assets") is filed
+ * for exactly this, and only for deals large enough to matter. Free: the same
+ * submissions list the releases come from.
+ */
+export async function completedDeals(env, cik) {
+  const subs = await secJson(env, "https://data.sec.gov/submissions/CIK" + cik + ".json");
+  const r = (subs.filings && subs.filings.recent) || {};
+  const out = [];
+  for (let i = 0; i < (r.form || []).length; i++) {
+    if (!/^8-K/.test(String(r.form[i]))) continue;
+    const items = String((r.items || [])[i] || "");
+    if (!/(^|[^0-9.])2\.01([^0-9]|$)/.test(items)) continue;
+    out.push({ accession: r.accessionNumber[i], filed: r.filingDate[i], items });
+  }
+  return out.sort((a, b) => String(a.filed).localeCompare(String(b.filed)));
 }
 
 /** Every 8-K that could carry a guidance update, oldest first. */
