@@ -26,7 +26,7 @@ import { metricKey } from "../src/metrics.js";
 import { scoreAll } from "../src/score.js";
 import { revisionsBetween } from "../src/revisions.js";
 import { forEmail, headline } from "../src/records.js";
-import { renderEmail } from "../src/email.js";
+import { renderEmail, renderNothingToScore } from "../src/email.js";
 
 const env = {
   SEC_USER_AGENT: process.env.SEC_USER_AGENT,
@@ -327,13 +327,42 @@ async function handle(ticker) {
    * period waits for the next backfill rather than sending early.
    */
   if (updated.coverage && updated.coverage.publishable === false) {
+    // Not enough to score - but the follower is still told, on the day, that
+    // the release came in and why there is no scorecard. Silence read as the
+    // product having failed. See renderNothingToScore.
+    const subscribers = JSON.parse((await kvGet("subscribers")) || "{}");
+    const followers = Object.entries(subscribers)
+      .filter(([, v]) => (v.tickers || []).includes(ticker))
+      .map(([email]) => email);
+    const guided = (moved.revisions || [])
+      .filter((r) => ["new", "raised", "cut", "unchanged", "narrowed", "widened"].includes(r.direction))
+      .map((r) => r.summary);
+    let sent = 0;
+    for (const email of followers) {
+      const unsub = SITE + "/unsubscribe?e=" + encodeURIComponent(email)
+        + "&s=" + (await hmac(process.env.UNSUB_SECRET, email));
+      const mail = renderNothingToScore({
+        company: updated.company || name,
+        ticker,
+        cik,
+        filed: current.filed,
+        accession: current.accession,
+        guided,
+        matched: (updated.coverage && updated.coverage.matchedFigures) || 0,
+        releasesRead: (updated.releasesRead || []).length,
+      }, { unsubscribeUrl: unsub, postalAddress: process.env.POSTAL_ADDRESS });
+      await sendMail(email, mail, unsub);
+      sent += 1;
+    }
     return {
       ticker,
       release: current.accession,
       filed: current.filed,
       newPairs: scored.pairs.filter((p) => p.comparable).length,
-      skipped: "Record updated, not published: "
+      nothingToScore: "Not enough to score: "
         + (updated.coverage.reason || "no measure has enough matched periods yet"),
+      followers: followers.length,
+      sent,
     };
   }
 
