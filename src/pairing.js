@@ -205,9 +205,11 @@ export function pairUp(guides, actuals) {
       stated_vs_guide: a.stated_vs_guide || null,
     };
 
-    base.actual = thousandsFixed(g, a);
-    if (base.actual !== a.value) base.actual_scaled = "read in thousands; divided by 1,000";
-    base.actual_unit = a.unit;
+    const inGuideUnit = sameMoneyUnit(g, a);
+    base.actual = thousandsFixed(g, inGuideUnit);
+    if (inGuideUnit.value !== a.value) base.actual_scaled = "converted from " + a.unit + " to " + g.unit;
+    else if (base.actual !== a.value) base.actual_scaled = "read in thousands; divided by 1,000";
+    base.actual_unit = inGuideUnit.unit;
     base.actual_period = a.period;
     // Carried onto the pair. It was not, and the backfill's own diagnostic for
     // unreadable periods reads this field - so it printed "(none returned)" for
@@ -351,6 +353,23 @@ export function ratioWords(r) {
  * thousands separator, exactly as read. Anything else is left alone - the
  * size check in score.js is there for the rest.
  */
+/**
+ * A money result in the guide's own scale.
+ *
+ * Lamb Weston guided fiscal 2023 net sales as "$5.25 billion to $5.35
+ * billion" and reports in millions ("$5,350.6"); the answer came back as
+ * 5,350.6 USD millions and was compared, as a bare number, with 5.35 - an
+ * "above" by a thousand times. Millions and billions are the same measure in
+ * two scales: the result is put in the guide's before anything compares
+ * them. Nothing else is converted.
+ */
+function sameMoneyUnit(g, a) {
+  const scale = { "USD millions": 1e6, "USD billions": 1e9 };
+  const from = scale[a.unit], to = scale[g.unit];
+  if (!from || !to || from === to || typeof a.value !== "number") return a;
+  return { ...a, value: Number((a.value * from / to).toFixed(6)), unit: g.unit };
+}
+
 function thousandsFixed(g, a) {
   const v = a.value;
   if (typeof v !== "number") return v;
@@ -361,8 +380,14 @@ function thousandsFixed(g, a) {
   const mid = ends.reduce((x, y) => x + y, 0) / ends.length;
   const ratio = Math.abs(v / mid);
   if (ratio < 300 || ratio > 3000) return v;
-  const printed = Math.round(Math.abs(v)).toLocaleString("en-US");
-  if (!String(a.quote || "").includes(printed)) return v;
+  // As printed, with or without its decimals: Helen of Troy "289,322",
+  // Lamb Weston "5,350.6" (millions, against a guide in billions).
+  const q = String(a.quote || "");
+  const printed = [
+    Math.round(Math.abs(v)).toLocaleString("en-US"),
+    Math.abs(v).toLocaleString("en-US", { maximumFractionDigits: 3 }),
+  ];
+  if (!printed.some((x) => q.includes(x))) return v;
   return Number((v / 1000).toFixed(6));
 }
 
