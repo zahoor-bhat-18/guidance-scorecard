@@ -226,6 +226,31 @@ export function pairUp(guides, actuals) {
       base.actual_matched_as = a.metric_as_written;
     }
 
+    /* THE GUIDE'S OWN YARDSTICK. McCormick writes "2024 earnings per share
+       to be in the range of $2.81 to $2.86, compared to $2.52 of earnings
+       per share in 2023". $2.52 was its GAAP EPS for 2023; adjusted was
+       $2.70. The guide was scored against adjusted EPS ($2.95, "above"),
+       whose own line prints $2.70 for the year before. When a guide names
+       the prior-year figure it is measured from, the result's line must
+       show that same figure for its prior year - or it is a different
+       basis, and the pair is refused. */
+    if (a.value !== null && typeof a.value === "number") {
+      const m = String(g.quote || "").match(/compared\s+(?:to|with)\s+\$\s?(\d[\d,]*\.?\d*)/i);
+      if (m && (g.unit === "USD per share" || /^USD /.test(String(g.unit || "")))) {
+        const prior = Number(m[1].replace(/,/g, ""));
+        const shown = String(a.quote || "").replace(/,/g, "");
+        const nums = (shown.match(/\d+\.?\d*/g) || []).map(Number);
+        const hasPrior = nums.some((x) => Math.abs(x - prior) < 0.0051);
+        // Only when the result's line shows a prior year at all (two or more
+        // figures) - a one-figure line proves nothing either way.
+        if (!hasPrior && nums.length >= 2 && Math.abs(a.value - prior) > 0.0051) {
+          pairs.push({ ...base, comparable: false,
+            why: "The guide is measured from $" + prior + " last year; the result's line shows a different prior-year figure, so it is a different basis (GAAP vs adjusted)." });
+          continue;
+        }
+      }
+    }
+
     /* A guide for one part of the company is never scored against the
        whole. If the result's own line is the consolidated, total or
        enterprise figure and does not name the part, the pair is refused -
