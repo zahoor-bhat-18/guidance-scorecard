@@ -842,7 +842,11 @@ export function missedGuideLines(text, guides) {
     if (BOILERPLATE.test(line)) { lastOutlook = -1000; return; }
     if (OUTLOOK_WORD.test(line)) lastOutlook = i;
     if (i - lastOutlook > 40) return;
-    if (!GUIDE_SHAPED.test(line)) return;
+    /* Guide-shaped, or a sentence that says it is a guide. Broadcom writes
+       "we expect AI semiconductor revenue to double year-over-year to $8.2
+       billion" - no range, no band, and a guide all the same. */
+    const sentenceGuide = OUTLOOK_WORD.test(line) && /\$\s?\d|\d\s?%/.test(line);
+    if (!GUIDE_SHAPED.test(line) && !sentenceGuide) return;
     const nums = [...statedNumbers(line)].filter((n) => n !== 0 || /\b0(\.0+)?\s?%/.test(line));
     if (!nums.length) return;
     /* A results row, not a guide row. FactSet's results table carries a
@@ -851,7 +855,13 @@ export function missedGuideLines(text, guides) {
        results beside this year's guides on one line; read alone, the range
        was given the wrong year. A guide row states one figure or one range
        for each of at most two columns (GAAP and adjusted): four figures. */
-    if (nums.length > 4) return;
+    /* ...but only for a ROW. A sentence carries more figures than four
+       easily and is still a guide: FactSet's "Fiscal 2024 guidance update:
+       expected ASV plus professional services growth of 5-7%, GAAP revenue
+       growth of 5.5-6%" has five, and was lost when every line over four
+       was skipped. A row is mostly figures; a sentence is mostly words. */
+    const words = (line.match(/[A-Za-z]{2,}/g) || []).length;
+    if (nums.length > 4 && words < 2 * nums.length) return;
     /* Not from a reconciliation. General Electric's January 2024 release
        reconciles GE VERNOVA's free cash flow guide under its own heading,
        and "CFOA (GAAP) $1.5 - $1.9" was taken for General Electric's own
