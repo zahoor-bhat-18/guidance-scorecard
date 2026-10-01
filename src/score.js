@@ -147,6 +147,19 @@ function flagsFor(pair, actual, low, high, value) {
      check is not applied when the guide is under 2% of the result. */
   const nearZero = Math.abs(bound) < Math.abs(actual) * 0.02;
 
+  /* About a thousand times the guide, in money: a thousands-for-millions
+     slip, not a guide of about nothing. Helen of Troy's $289,322 thousand,
+     read as millions against a $295 million guide, passed every check here.
+     pairing.js corrects the slip when the quote proves it; this catches the
+     rest. */
+  const thousandFold = /^USD (millions|billions)$/.test(String(pair.unit || ""))
+    && bound !== 0 && Math.abs(actual / bound) >= 300 && Math.abs(actual / bound) <= 3000;
+  if (thousandFold) {
+    flags.push("The result is about a thousand times the guide - most likely a figure in thousands"
+      + " read as millions, not a beat or a miss.");
+    return flags;
+  }
+
   /* A growth guide answered with a level.
      Honeywell guided adjusted earnings growth of 3% and the release reported
      9.78 - which is not 9.78% growth, it is $9.78 of earnings per share. Both
@@ -207,7 +220,12 @@ function flagsFor(pair, actual, low, high, value) {
      share of a guide that small, or of the wrong sign, measures the guide,
      not the row. */
   const earnings = looksLikeEarnings(pair);
-  if (earnings && !deal) {
+  /* ...but never for a result twenty or more times its guide. That is not
+     a small guide; it is a wrong row or a wrong scale (Helen of Troy's
+     $289,322 thousand read as millions against a $295 million guide), and
+     the exemption above was hiding it. */
+  const absurd = Math.abs(actual) > 20 * Math.abs(bound);
+  if (earnings && !deal && !absurd) {
     const sameSign = bound * actual > 0;
     if (!sameSign || Math.abs(bound) < Math.abs(actual) * 0.5) return flags;
   }
