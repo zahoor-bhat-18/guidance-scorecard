@@ -1339,6 +1339,7 @@ export function sectionsOf(view, keys) {
          say nothing had been guided - which was false. */
       if (p.flagged) quarterFlagged++;
       quarter.push({
+        p,
         flagged: Boolean(p.flagged),
         measure: g.metric,
         period: periodLabel(p.period),
@@ -1437,6 +1438,7 @@ export function sectionsOf(view, keys) {
     kept.sort((a, b) => (/FY/.test(a.period) - /FY/.test(b.period)) || (periodSortKey(a.period) - periodSortKey(b.period)));
     kept.slice(0, 3).forEach((r, i) => {
       outlook.push({
+        r,
         measure,
         first: i === 0,
         period: periodLabel(r.period),
@@ -1497,6 +1499,312 @@ function bare(x) {
   return String(x || "").replace(/\uFE0E/g, "");
 }
 
+
+/* ------------------------------------------------------------------ *
+ * The redesign (1 Oct 2026): hero, result cards, outlook, beat strips
+ * ------------------------------------------------------------------ */
+
+/* The hero's colour states the outcome, decided here from the key measures
+   alone. Key measures are EPS, revenue, profit, cash flow and margins - for
+   all of them, above the guide is the better side. Costs are never key
+   measures, so the colour can never praise a cost overrun. */
+const HERO = {
+  beat: { bg: "#1f4435", fg: "#ffffff", sub: "#cfe0d6" },
+  mixed: { bg: "#3b4a57", fg: "#ffffff", sub: "#cdd5dc" },
+  miss: { bg: "#7a3b22", fg: "#ffffff", sub: "#efd2c4" },
+  none: { bg: "#e6eaee", fg: "#17202a", sub: "#5f6b76" },
+};
+const SANS = "-apple-system,'Segoe UI',Helvetica,Arial,sans-serif";
+const SERIF_HEAD = "Georgia,'Times New Roman',serif";
+const RANGE_BAND = "#cfe0d6";
+const LIGHT = "#a9c6b6";
+const PAGE = "#eef1f3";
+const LINE = "#e3e7ea";
+const SOFT = "#5f6b76";
+
+/* The figures of a guide, as numbers: its ends, or the single figure twice. */
+function guideEnds(p) {
+  const g = p.guide || {};
+  const lo = num(g.low) !== null ? num(g.low) : num(g.value);
+  const hi = num(g.high) !== null ? num(g.high) : num(g.value);
+  if (lo === null && hi === null) return null;
+  return { lo: lo === null ? hi : lo, hi: hi === null ? lo : hi };
+}
+
+function isPoints(unit) {
+  return unit === "percent";
+}
+
+/* "+7.8% on the midpoint" for money and per-share; nothing for a percentage,
+   whose gap is already in points. */
+function vsMidpoint(p) {
+  const e = guideEnds(p);
+  const a = num(p.actual);
+  if (!e || a === null || isPoints(p.unit)) return "";
+  const mid = (e.lo + e.hi) / 2;
+  if (!mid || mid < 0) return "";
+  const pct = Math.round((a / mid - 1) * 1000) / 10;
+  return (pct > 0 ? "+" : pct < 0 ? "\u2212" : "") + Math.abs(pct) + "% on the midpoint";
+}
+
+/* "$1.42 above the top", "within the range", "1.2 points below the bottom". */
+function gapWords(p) {
+  const l = landing(p);
+  if (!l) return "";
+  if (l.word === "within") return "within the range";
+  if (l.word === "at") return "exactly on the guide";
+  const ranged = num((p.guide || {}).low) !== null && num((p.guide || {}).high) !== null;
+  const where = ranged ? (l.word === "above" ? " above the top" : " below the bottom") : " " + l.word;
+  if (!l.gap) return l.word;
+  if (isPoints(p.unit)) return Number(tidy(l.gap)).toString() + (l.gap === 1 ? " point" : " points") + where;
+  return formatGap(l.gap, p.unit, false) + where;
+}
+
+/* The range bar: the guided band shaded, the result a dark mark. Built from
+   table cells of set widths - the one way to draw this that Gmail, Apple
+   Mail and Outlook all keep. */
+function rangeBar(p) {
+  const e = guideEnds(p);
+  const a = num(p.actual);
+  if (!e || a === null) return "";
+  const lo = Math.min(e.lo, e.hi), hi = Math.max(e.lo, e.hi);
+  const sLo = Math.min(lo, a), sHi = Math.max(hi, a);
+  const pad = (sHi - sLo) * 0.3 || Math.max(Math.abs(hi) * 0.02, 0.5);
+  const L = sLo - pad, W = (sHi + pad) - L;
+  const pct = (x) => (x / W) * 100;
+  let cells;
+  if (a > hi) cells = [[pct(lo - L), null], [Math.max(pct(hi - lo), 1.2), RANGE_BAND], [Math.max(pct(a - hi) - 1.6, 0.5), null], [1.6, GREEN]];
+  else if (a < lo) cells = [[pct(a - L), null], [1.6, GREEN], [Math.max(pct(lo - a) - 1.6, 0.5), null], [Math.max(pct(hi - lo), 1.2), RANGE_BAND]];
+  else cells = [[pct(lo - L), null], [Math.max(pct(a - lo), 0.6), RANGE_BAND], [1.6, GREEN], [Math.max(pct(hi - a), 0.6), RANGE_BAND]];
+  const tds = cells.map(([w, c]) => '<td width="' + w.toFixed(1) + '%" style="height:8px;font-size:0;line-height:0;'
+    + (c ? 'background:' + c + ';' : '') + '">&nbsp;</td>').join("")
+    + '<td style="font-size:0;line-height:0;">&nbsp;</td>';
+  return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"'
+    + ' style="border-collapse:collapse;margin-top:10px;"><tr>' + tds + '</tr></table>';
+}
+
+/* The beat strip: one square per period, oldest left. */
+function beatStrip(seq) {
+  const st = {
+    A: "background:" + GREEN + ";",
+    W: "background:" + LIGHT + ";",
+    B: "background:#ffffff;border:2px solid " + GREEN + ";",
+    F: "background:#ffffff;border:2px dashed " + SOFT + ";",
+  };
+  return '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
+    + seq.map((k) => '<td style="padding:0 4px 0 0;"><div style="width:16px;height:16px;' + st[k]
+      + 'border-radius:3px;font-size:0;line-height:0;">&nbsp;</div></td>').join("")
+    + '</tr></table>';
+}
+
+/* "2026-09-30" as "30 Sep 2026". */
+function longDate(iso) {
+  const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return String(iso || "");
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return Number(m[3]) + " " + months[Number(m[2]) - 1] + " " + m[1];
+}
+
+function plural(n, one, many) {
+  return n + " " + (n === 1 ? one : many);
+}
+
+function periodWord(rows) {
+  const fy = rows.filter((p) => /FY$/.test(String(p.period))).length;
+  if (fy === rows.length) return ["year", "years"];
+  if (fy === 0) return ["quarter", "quarters"];
+  return ["period", "periods"];
+}
+
+/**
+ * Everything the redesigned top of the email prints, worked out once.
+ */
+export function designOf(view, keys, sec) {
+  const latest = view.latestRelease && view.latestRelease.accession;
+  const counted = sec.quarter.filter((q) => !q.flagged);
+  const c = { above: 0, within: 0, at: 0, below: 0 };
+  for (const q of counted) c[q.word] += 1;
+
+  let kind = "none";
+  if (counted.length) {
+    if (c.above && !c.below) kind = "beat";
+    else if (c.below && !c.above) kind = "miss";
+    else kind = "mixed";
+  }
+
+  // The record of each key measure: the last ten periods, oldest first.
+  const record = [];
+  for (const g of keys) {
+    const real = g.rows.filter((p) => !p.notGuided && !p.unanswered && landing(p));
+    if (!real.length) continue;
+    const ordered = real.slice().sort((a, b) => periodSortKey(a.period) - periodSortKey(b.period)).slice(-10);
+    const clean = ordered.filter((p) => !p.flagged);
+    const n = { above: 0, within: 0, below: 0 };
+    const over = [];
+    for (const p of clean) {
+      const w = landing(p).word;
+      n[w === "at" ? "within" : w] += 1;
+      const e = guideEnds(p);
+      const a = num(p.actual);
+      if (e && a !== null) {
+        const mid = (e.lo + e.hi) / 2;
+        if (isPoints(p.unit)) over.push(a - mid);
+        else if (mid > 0) over.push((a / mid - 1) * 100);
+      }
+    }
+    const [one, many] = periodWord(ordered);
+    const total = clean.length;
+    const parts = [];
+    const lead = n.above >= n.below
+      ? ["above", n.above] : ["below", n.below];
+    const order = lead[0] === "above" ? ["above", "within", "below"] : ["below", "within", "above"];
+    for (const w of order) {
+      if (!n[w]) continue;
+      parts.push(parts.length === 0
+        ? (total === 1
+          ? (w.charAt(0).toUpperCase() + w.slice(1)) + " the guide in the one " + one + " scored so far"
+          : (w.charAt(0).toUpperCase() + w.slice(1)) + " in " + n[w] + " of the last " + plural(total, one, many))
+        : w + " in " + n[w]);
+    }
+    if (!n.below && n.above) parts.push("never below");
+    const left = ordered.length - clean.length;
+    let typical = "";
+    if (over.length >= 2) {
+      const m = median(over);
+      const size = Math.round(Math.abs(m) * 10) / 10;
+      typical = size === 0 ? "Typically lands on the midpoint."
+        : "Typically " + (isPoints(g.unit) ? size + (size === 1 ? " point " : " points ") : size + "% ")
+          + (m > 0 ? "over" : "under") + " the midpoint.";
+    }
+    if (left) typical += (typical ? " " : "") + plural(left, "period", "periods") + " set aside.";
+    record.push({
+      measure: g.metric,
+      seq: ordered.map((p) => p.flagged ? "F" : ({ above: "A", within: "W", at: "W", below: "B" })[landing(p).word]),
+      span: ordered.length > 1 ? periodLabel(ordered[0].period) + " to " + periodLabel(ordered[ordered.length - 1].period) : periodLabel(ordered[0].period),
+      line: parts.join(", ") + ".",
+      typical,
+      below: n.below,
+      total,
+      unitWord: [one, many],
+    });
+  }
+
+  /* The outlook, with the new guide set beside what was just reported - only
+     the SAME measure on the SAME basis. FactSet guides GAAP EPS ($17.00 to
+     $17.50) and adjusted EPS ($19.25 to $19.65) for fiscal 2027; matched on
+     the measure alone, the GAAP guide was named "Adjusted diluted EPS" and
+     printed "down 4.2% on the $18.01 just reported" - an adjusted result. */
+  const basisOfLabel = (label) => /\b(adjusted|non-?gaap|core|comparable|organic|underlying|excluding)\b/i.test(String(label || ""))
+    ? "non_gaap" : "gaap";
+  // The measure without its basis word; the basis is matched separately.
+  const plainKey = (x) => metricKey(x).replace(/\bgaap\b/g, " ").replace(/\s+/g, " ").trim();
+  const reportedNow = [];
+  for (const q of sec.quarter) if (!q.flagged && q.p) reportedNow.push(q.p);
+  const outlook = sec.outlook.map((o0) => {
+    const r = o0.r;
+    const rBasis = basisOfLabel(r && r.label);
+    const group = keys.find((g) => g.metric === o0.measure);
+    const groupBasis = basisOfLabel(group ? group.metric : o0.measure);
+    const o = groupBasis === rBasis ? o0 : { ...o0, measure: displayLabel([String((r && r.label) || o0.measure)]) };
+    // Like with like: a year's guide beside the year just reported, a
+    // quarter's beside the quarter.
+    const kindOf = (per) => /FY$/.test(String(per || "")) ? "FY" : "Q";
+    const just = reportedNow.find((p) => kindOf(p.period) === kindOf(r && r.period)
+      && plainKey(p.metric) === plainKey((r && r.label) || o.measure)
+      && basisOfLabel(p.metric) === rBasis);
+    let compare = "";
+    if (r && r.after && just && unitClass(r.unit) === unitClass(just.unit)) {
+      const lo = num(r.after.low) !== null ? num(r.after.low) : num(r.after.value);
+      const hi = num(r.after.high) !== null ? num(r.after.high) : num(r.after.value);
+      const a = num(just.actual);
+      if (lo !== null && hi !== null && a !== null) {
+        const mid = ((lo + hi) / 2) * unitScale(r.unit) / unitScale(just.unit);
+        const midText = formatValue(Number(((lo + hi) / 2).toFixed(4)), r.unit);
+        const reported = formatValue(a, just.unit);
+        if (isPoints(r.unit)) {
+          const d = Math.round((mid - a) * 100) / 100;
+          compare = (lo !== hi ? "Midpoint " + midText + ", " : "")
+            + (d === 0 ? "level with" : Math.abs(d) + (Math.abs(d) === 1 ? " point " : " points ") + (d > 0 ? "above" : "below"))
+            + " the " + reported + " just reported";
+        } else if (a > 0) {
+          const pct = Math.round((mid / a - 1) * 1000) / 10;
+          compare = (lo !== hi ? "Midpoint " + midText + ", " : "")
+            + (pct === 0 ? "level with" : (pct > 0 ? "up " : "down ") + Math.abs(pct) + "% on")
+            + " the " + reported + " just reported";
+        }
+      }
+    }
+    const change = o.change === "new" ? "" : o.change.charAt(0).toUpperCase() + o.change.slice(1);
+    return { ...o, line: [change, compare].filter(Boolean).join(". ") };
+  });
+
+  // The hero's one line - fixed templates, never free text.
+  const names = (w) => counted.filter((q) => q.word === w).map((q) => q.measure);
+  const join = (xs) => xs.length <= 1 ? (xs[0] || "") : xs.slice(0, -1).join(", ") + " and " + xs[xs.length - 1];
+  const bits = [];
+  if (kind === "beat" || kind === "miss") {
+    // A streak: the latest periods in which no key measure was below.
+    const byPeriod = new Map();
+    for (const g of keys) for (const p of g.rows) {
+      if (p.notGuided || p.unanswered || p.flagged || !landing(p)) continue;
+      const k = periodSortKey(p.period);
+      if (!byPeriod.has(k)) byPeriod.set(k, []);
+      byPeriod.get(k).push(landing(p).word);
+    }
+    const ks = Array.from(byPeriod.keys()).sort((a, b) => b - a);
+    let streak = 0;
+    for (const k of ks) { if (byPeriod.get(k).includes("below")) break; streak++; }
+    if (kind === "beat" && streak >= 3) {
+      const allRows = keys.flatMap((g) => g.rows.filter((p) => !p.notGuided && !p.unanswered));
+      const [one, many] = periodWord(allRows);
+      bits.push("No miss on any key measure in " + plural(streak, one, many) + ".");
+    }
+    if (kind === "miss") bits.push(join(names("below")) + (names("below").length === 1 ? " came in" : " came in") + " below the guide.");
+  } else if (kind === "mixed") {
+    const up = names("above"), down = names("below");
+    if (up.length) bits.push(join(up) + (up.length === 1 ? " beat." : " beat."));
+    if (down.length) bits.push(join(down) + " missed.");
+  }
+  // A missed measure that misses often: say so.
+  for (const r of record) {
+    if (names("below").includes(r.measure) && r.below >= 2 && r.total >= 3) {
+      bits.push(r.measure + " has come in below its guide in " + r.below + " of the last " + plural(r.total, r.unitWord[0], r.unitWord[1]) + ".");
+      break;
+    }
+  }
+  // The biggest new guide against what was just reported.
+  // A full-year guide makes the better headline than the next quarter's:
+  // quarters are seasonal, and "guided down 9%" for a seasonally smaller
+  // first quarter reads as bad news when it is not.
+  const moves = outlook.filter((o) => /(up|down) [\d.]+% on/.test(o.line));
+  const firstMove = moves.find((o) => /^FY/.test(o.period)) || moves[0];
+  if (firstMove && bits.length < 3) {
+    const m = firstMove.line.match(/(up|down) ([\d.]+)%/);
+    bits.push(firstMove.measure + " is guided " + m[1] + " " + m[2] + "% for " + firstMove.period + ".");
+  }
+
+  let big, side;
+  if (kind === "none") {
+    big = "0";
+    side = "key measures to score<br>in this release";
+  } else {
+    big = c.above + "/" + counted.length;
+    const rest = [];
+    if (c.within + c.at) rest.push(c.within + c.at + " within");
+    if (c.below) rest.push(c.below + " below");
+    side = "key measures above the<br>company's own guide" + (rest.length ? "<br>" + rest.join(", ") : "");
+  }
+  if (kind === "none" && !bits.length) {
+    bits.push(sec.outlook.length
+      ? "Nothing this release reported had a guide in force. What it guides now is below."
+      : "This release reported nothing against a guide, and guided no key measure.");
+  }
+  const flaggedNote = sec.quarter.length - counted.length;
+  if (flaggedNote) bits.push(plural(flaggedNote, "figure", "figures") + " marked \u2020 not counted.");
+
+  return { kind, big, side, line: bits.join(" "), record, outlook };
+}
+
 export function renderEmail(view, options) {
   const opts = options || {};
   const company = displayName(view.company || view.ticker);
@@ -1521,41 +1829,37 @@ export function renderEmail(view, options) {
   /* ---------------- plain text ---------------- */
 
   const t = [];
+  const d = designOf(view, metrics, sec);
+  const heroText = d.side.replace(/<br>/g, " ");
   t.push(company + " (" + view.ticker + ")");
   t.push("");
-  // 1. This quarter against its guide.
-  t.push("THIS QUARTER VS GUIDANCE");
+  t.push(d.big + " " + heroText);
+  if (d.line) t.push(d.line);
+  t.push("");
   if (sec.quarter.length) {
-    t.push(sec.quarterLine);
-    const rows = sec.quarter.map((q) => [q.measure + ", " + q.period, q.guided, q.reported, bare(q.result)]);
-    for (const line of textTable(["Measure", "Guided", "Reported", "Result"], rows)) t.push("   " + line);
-  } else {
-    t.push("No key measure was guided for the period this release reports.");
+    t.push("THIS RELEASE AGAINST THE GUIDE");
+    for (const q of sec.quarter) {
+      t.push("- " + q.measure + ", " + q.period + ": " + q.reported + " (guided " + q.guided + ") - "
+        + gapWords(q.p) + (vsMidpoint(q.p) ? ", " + vsMidpoint(q.p) : ""));
+    }
+    t.push("");
   }
-  t.push("");
-
-  // 2. What they guide now.
-  t.push("OUTLOOK: WHAT THEY GUIDE NOW");
-  if (sec.outlook.length) {
-    const rows = sec.outlook.map((o) => [o.first ? o.measure : "", o.period, o.guide, o.change]);
-    for (const line of textTable(["Measure", "Period", "New guide", "Change"], rows)) t.push("   " + line);
-  } else {
-    t.push("No new figure for a key measure in this release.");
+  if (d.outlook.length) {
+    t.push("WHAT THEY GUIDE NOW");
+    for (const o of d.outlook) t.push("- " + o.measure + ", " + o.period + ": " + o.guide + (o.line ? " - " + o.line : ""));
+    t.push("");
   }
-  t.push("");
-
-  // 3. The record.
-  t.push("TRACK RECORD");
-  t.push(lead);
-  for (const r of sec.record) {
-    t.push("- " + r.measure + " (" + r.span + "): " + bare(r.symbols));
-    t.push("  " + r.line);
+  if (d.record.length) {
+    t.push("HOW RELIABLE THEIR GUIDE HAS BEEN");
+    t.push(lead);
+    for (const r of d.record) {
+      t.push("- " + r.measure + " (" + r.span + "): " + r.line + (r.typical ? " " + r.typical : ""));
+    }
+    t.push("");
   }
-  t.push("  \u25B2 above the guide   \u25CF within the range or on it   \u25BC below. Oldest first.");
-  t.push("");
   t.push("Counted from the company's own releases. Nothing here is a forecast.");
   t.push("");
-  t.push("DETAILED HISTORY");
+  t.push("FULL HISTORY");
   t.push("");
 
   for (const g of metrics) {
@@ -1611,82 +1915,76 @@ export function renderEmail(view, options) {
   /* ---------------- html ---------------- */
 
   const h = [];
-  h.push('<div style="margin:0;padding:24px 0;background:' + CREAM + ';">');
-  h.push('<div style="max-width:560px;margin:0 auto;padding:0 20px;font-family:Georgia,\'Times New Roman\',serif;color:' + INK + ';font-size:16px;line-height:1.5;">');
+  const H = HERO[d.kind];
+  const heading = (text) => '<div style="font-family:' + SERIF_HEAD + ';font-size:19px;color:' + INK + ';margin:26px 0 6px;">' + esc(text) + '</div>';
+  const quietLine = (text) => '<div style="font-size:12px;line-height:1.45;color:' + SOFT + ';padding-top:6px;">' + esc(text) + '</div>';
+  h.push('<div style="margin:0;padding:20px 0;background:' + PAGE + ';">');
+  h.push('<div style="max-width:600px;margin:0 auto;background:#ffffff;font-family:' + SANS + ';color:' + INK + ';font-size:15px;line-height:1.45;">');
 
-  h.push('<div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:' + MUTED + ';">Guidance record</div>');
-  h.push('<h1 style="margin:6px 0 2px;font-size:24px;font-weight:normal;color:' + GREEN + ';">' + esc(company) + '</h1>');
-  h.push('<div style="font-size:14px;color:' + MUTED + ';">' + esc(view.ticker) + '</div>');
+  // The hero: the outcome, in its colour.
+  h.push('<div style="background:' + H.bg + ';color:' + H.fg + ';padding:24px 22px 22px;">');
+  h.push('<div style="font-size:13px;color:' + H.sub + ';">' + esc(company + " (" + view.ticker + ")")
+    + (view.latestRelease && view.latestRelease.filed ? " \u00b7 filed " + esc(longDate(view.latestRelease.filed)) : "") + '</div>');
+  h.push('<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:12px;"><tr>'
+    + '<td style="font-size:50px;font-weight:700;line-height:1;letter-spacing:-1px;padding-right:16px;white-space:nowrap;color:' + H.fg + ';">' + esc(d.big) + '</td>'
+    + '<td style="font-size:15px;line-height:1.35;color:' + H.fg + ';">' + d.side + '</td></tr></table>');
+  if (d.line) h.push('<div style="font-size:15px;line-height:1.45;margin-top:14px;color:' + H.fg + ';">' + esc(d.line) + '</div>');
+  h.push('</div>');
 
-  const label = (text) => '<div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:'
-    + MUTED + ';">' + esc(text) + '</div>';
-  const small = (text) => '<div style="font-size:12px;color:' + MUTED + ';">' + esc(text) + '</div>';
-  const cellStyle = 'padding:6px 8px 6px 0;border-bottom:1px solid ' + RULE + ';vertical-align:top;';
-  const numStyle = cellStyle + 'font-family:' + MONO + ';font-size:13px;white-space:nowrap;';
-  /* A guided range may break at "to" - "$32.75bn to $34.25bn" does not fit
-     beside three other columns on a phone, and the table ran off the right
-     edge. A single figure never breaks: it has no space in it. */
-  const wrapStyle = cellStyle + 'font-family:' + MONO + ';font-size:13px;line-height:1.35;';
-  const headRow = (heads) => '<tr>' + heads.map((x) => '<th align="left" style="padding:0 8px 5px 0;border-bottom:1px solid '
-    + RULE + ';font-weight:normal;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:'
-    + MUTED + ';">' + esc(x) + '</th>').join("") + '</tr>';
-  const tableOpen = '<table role="presentation" cellpadding="0" cellspacing="0" border="0"'
-    + ' style="width:100%;margin-top:8px;border-collapse:collapse;">';
+  h.push('<div style="padding:0 22px;">');
 
-  // 1. This quarter vs guidance - a shaded box.
-  h.push('<div style="margin-top:22px;padding:14px 16px 16px;background:' + SHADE + ';border:1px solid ' + RULE + ';">');
-  h.push(label("This quarter vs guidance"));
+  // This release against the guide: one row per figure, with its bar.
   if (sec.quarter.length) {
-    h.push('<p style="margin:6px 0 0;font-size:17px;color:' + GREEN + ';">' + esc(sec.quarterLine) + '</p>');
-    h.push(tableOpen + headRow(["Measure", "Guided", "Reported", "Result"]));
+    h.push(heading("This release against the guide"));
     for (const q of sec.quarter) {
-      h.push('<tr>'
-        + '<td style="' + cellStyle + 'font-size:14px;line-height:1.3;">' + esc(q.measure) + small(q.period) + '</td>'
-        + '<td style="' + wrapStyle + 'color:' + MUTED + ';">' + esc(q.guided) + '</td>'
-        + '<td style="' + numStyle + 'color:' + INK + ';">' + esc(q.reported) + '</td>'
-        + '<td style="' + numStyle + 'color:' + GREEN + ';">' + esc(q.result) + '</td>'
-        + '</tr>');
+      const mid = vsMidpoint(q.p);
+      h.push('<div style="padding:14px 0;border-top:1px solid ' + LINE + ';">'
+        + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>'
+        + '<td style="vertical-align:top;font-size:15px;">' + esc(q.measure)
+        + '<div style="font-size:13px;color:' + SOFT + ';margin-top:3px;">' + esc(q.period + " \u00b7 guided " + q.guided) + '</div></td>'
+        + '<td align="right" style="vertical-align:top;white-space:nowrap;padding-left:10px;">'
+        + '<div style="font-size:23px;font-weight:600;letter-spacing:-0.3px;">' + esc(q.reported) + '</div>'
+        + '<div style="font-size:13px;color:' + GREEN + ';margin-top:2px;">' + esc(gapWords(q.p)) + '</div></td></tr></table>'
+        + rangeBar(q.p)
+        + (mid ? '<div style="font-size:12px;color:' + SOFT + ';margin-top:6px;">' + esc(mid) + '</div>' : '')
+        + '</div>');
     }
-    h.push('</table>');
-  } else {
-    h.push('<p style="margin:8px 0 0;font-size:15px;">No key measure was guided for the period this release reports.</p>');
+    h.push(quietLine("Shaded: the range guided. Dark mark: the result." + (sec.quarter.some((q) => q.flagged) ? " \u2020: see the note below." : "")));
   }
-  h.push('</div>');
 
-  // 2. Outlook - a rule down the left.
-  h.push('<div style="margin-top:22px;padding:2px 0 2px 14px;border-left:3px solid ' + GREEN + ';">');
-  h.push(label("Outlook: what they guide now"));
-  if (sec.outlook.length) {
-    h.push(tableOpen + headRow(["Measure", "New guide", "Change"]));
-    for (const o of sec.outlook) {
-      h.push('<tr>'
-        + '<td style="' + cellStyle + 'font-size:14px;line-height:1.3;">' + (o.first ? esc(o.measure) : '') + small(o.period) + '</td>'
-        + '<td style="' + wrapStyle + 'color:' + INK + ';">' + esc(o.guide) + '</td>'
-        + '<td style="' + cellStyle + 'font-size:13px;color:' + MUTED + ';">' + esc(o.change) + '</td>'
-        + '</tr>');
+  // What they guide now.
+  if (d.outlook.length) {
+    h.push('<div style="margin-top:26px;padding:2px 0 2px 16px;border-left:3px solid ' + GREEN + ';">');
+    h.push(heading("What they guide now").replace("margin:26px 0 6px", "margin:0 0 6px"));
+    for (const o of d.outlook) {
+      h.push('<div style="padding:8px 0;">'
+        + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>'
+        + '<td style="font-size:15px;vertical-align:top;">' + esc(o.measure) + '<div style="font-size:12px;color:' + SOFT + ';">' + esc(o.period) + '</div></td>'
+        + '<td align="right" style="font-size:15px;font-weight:600;white-space:nowrap;vertical-align:top;padding-left:10px;">' + esc(o.guide) + '</td></tr></table>'
+        + (o.line ? '<div style="font-size:13px;color:' + SOFT + ';margin-top:2px;">' + esc(o.line) + '</div>' : '')
+        + '</div>');
     }
-    h.push('</table>');
-  } else {
-    h.push('<p style="margin:8px 0 0;font-size:15px;">No new figure for a key measure in this release.</p>');
-  }
-  h.push('</div>');
-
-  // 3. Track record.
-  h.push('<div style="margin-top:22px;">');
-  h.push(label("Track record"));
-  h.push('<p style="margin:6px 0 0;font-size:15px;">' + esc(lead) + '</p>');
-  for (const r of sec.record) {
-    h.push('<div style="margin-top:12px;">');
-    h.push('<div style="font-size:15px;">' + esc(r.measure) + '</div>');
-    h.push('<div style="font-size:17px;letter-spacing:2px;color:' + GREEN + ';font-family:Arial,Helvetica,sans-serif;">'
-      + esc(r.symbols) + '</div>');
-    h.push('<div style="font-size:13px;color:' + MUTED + ';">' + esc(r.span + " \u00b7 " + r.line) + '</div>');
     h.push('</div>');
   }
-  h.push('<p style="margin:12px 0 0;font-size:12px;color:' + MUTED + ';">\u25B2\uFE0E above the guide \u00b7 \u25CF\uFE0E within the range or on it \u00b7 \u25BC\uFE0E below. Oldest first. Counted from the company\'s own releases; nothing here is a forecast.</p>');
-  h.push('</div>');
 
-  h.push('<div style="margin-top:30px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:' + MUTED + ';">Detailed history</div>');
+  // How reliable the guide has been: one strip per key measure.
+  if (d.record.length) {
+    h.push(heading("How reliable their guide has been"));
+    h.push('<div style="font-size:13px;color:' + SOFT + ';margin:-2px 0 8px;">' + esc(lead) + '</div>');
+    for (const r of d.record) {
+      h.push('<div style="padding:12px 0;border-top:1px solid ' + LINE + ';">'
+        + '<div style="font-size:15px;margin-bottom:8px;">' + esc(r.measure) + '</div>'
+        + beatStrip(r.seq)
+        + '<div style="font-size:11px;color:' + SOFT + ';margin-top:5px;">' + esc(r.span + ", oldest first") + '</div>'
+        + '<div style="font-size:14px;margin-top:8px;">' + esc(r.line) + '</div>'
+        + (r.typical ? '<div style="font-size:13px;color:' + SOFT + ';margin-top:2px;">' + esc(r.typical) + '</div>' : '')
+        + '</div>');
+    }
+    h.push(quietLine("Solid: above the guide. Light: within the range. Outlined: below. Dashed: set aside (\u2020), the gap is too large to be sure it is like for like."));
+  }
+
+  h.push('<div style="margin-top:30px;font-family:' + SERIF_HEAD + ';font-size:19px;">Full history</div>');
+  h.push('<div style="font-size:13px;color:' + SOFT + ';margin-top:2px;">Every period, against the last guide in force.</div>');
 
   const th = (head) => '<th align="left" style="padding:0 8px 5px 0;border-bottom:1px solid '
     + RULE + ';font-weight:normal;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:'
@@ -1793,7 +2091,7 @@ export function renderEmail(view, options) {
       + (opts.postalAddress ? ' &middot; ' + esc(opts.postalAddress) : '') + '</p>');
   }
 
-  h.push('</div></div>');
+  h.push('</div></div></div>');
 
   return { subject, html: h.join("\n"), text: t.join("\n") };
 }
