@@ -226,6 +226,20 @@ export function pairUp(guides, actuals) {
       base.actual_matched_as = a.metric_as_written;
     }
 
+    /* A guide for one part of the company is never scored against the
+       whole. If the result's own line is the consolidated, total or
+       enterprise figure and does not name the part, the pair is refused -
+       left unscored rather than scored wrongly. */
+    if (g.segment && a.value !== null) {
+      const where = String(a.found_as || "") + " " + String(a.quote || "");
+      const namesPart = new RegExp("\\b" + String(g.segment).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b", "i").test(where);
+      if (!namesPart && /\b(consolidated|total|enterprise|company[- ]wide)\b/i.test(where)) {
+        pairs.push({ ...base, comparable: false, segment: g.segment,
+          why: "The guide is for " + g.segment + " only; the figure found is for the whole company." });
+        continue;
+      }
+    }
+
     if (a.value === null) {
       pairs.push({ ...base, comparable: false, why: "No reported figure was found for this in the release." });
       continue;

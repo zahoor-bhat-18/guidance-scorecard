@@ -912,6 +912,146 @@ async function secondLookGuides(env, filing, guides) {
   return { asked: snippets.length, found };
 }
 
+
+/* ------------------------------------------------------------------ *
+ * Scope: the whole company, or one part of it
+ * ------------------------------------------------------------------ */
+
+/* Words that open a line without naming a part of the company. */
+const NOT_A_PART = /^(fiscal|full|year|years|quarter|first|second|third|fourth|q[1-4]|fy\d*|h[12]|guidance|outlook|update|updated|company|consolidated|total|enterprise|gaap|non|adjusted|reported|organic|comparable|net|the|our|we|expected|expectations|reaffirmed|raised|lowered|note|notes|and|of|for|in)$/i;
+
+/* A measure, not a part: "Tax rate: reported approximately 20%" opens with
+   what is guided, not with where. */
+const MEASURE_WORD = /\b(rate|sales|revenues?|income|margins?|eps|earnings|cash|flows?|costs?|expenses?|capex|capital|tax|shares?|dividends?|ebitda|profit|growth|outlook|guidance|appendix|summary|highlights?)\b/i;
+
+function isPartName(name) {
+  const words = String(name || "").trim().split(/\s+/).filter(Boolean);
+  if (!words.length || words.length > 6) return false;
+  if (/\d/.test(name)) return false;
+  if (MEASURE_WORD.test(name)) return false;
+  return words.some((w) => !NOT_A_PART.test(w.replace(/[^A-Za-z]/g, "")));
+}
+
+/* "Wine and Spirits: organic net sales decline" -> "Wine and Spirits". */
+function prefixPart(text) {
+  const m = String(text || "").match(/^\s*([A-Z][A-Za-z&'.\- ]{1,48}?)\s*:\s/);
+  return m && isPartName(m[1]) ? m[1].trim() : null;
+}
+
+/**
+ * The parts a release names: from labels and lines that open with a part
+ * ("Beer: net sales growth of 0% - 3%") and from lines that call one a
+ * segment or division ("for the Aerospace segment").
+ */
+export function partsNamed(guides) {
+  const names = new Set();
+  for (const g of guides || []) {
+    for (const t of [g.metric_as_written, g.quote]) {
+      const p = prefixPart(t);
+      if (p) names.add(p);
+    }
+    const re = /\b(?:the|our|its)\s+([A-Z][A-Za-z&' ]{1,48}?)\s+(?:segment|division|business unit)s?\b/g;
+    let m;
+    while ((m = re.exec(String(g.quote || "")))) if (isPartName(m[1])) names.add(m[1].trim());
+  }
+  /* A name on most of the guides is the company, not a part of it ("Carnival
+     Corporation & plc: ..."). */
+  const all = (guides || []).length;
+  return [...names].filter((n) => {
+    if (/\b(inc|corp|corporation|company|plc|ltd|limited|holdings?|group)\b/i.test(n)) return false;
+    const re = new RegExp("\\b" + escapeRe(n) + "\\b", "i");
+    const on = (guides || []).filter((g) => re.test(String(g.quote || "")) || re.test(String(g.metric_as_written || ""))).length;
+    return all < 4 || on / all <= 0.6;
+  });
+}
+
+const escapeRe = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Put the part back into a guide's label when the model left it out.
+ *
+ * Constellation Brands' "Wine and Spirits: organic net sales decline of 17% -
+ * 20%" came back labelled "organic net sales". The result was then looked up
+ * for the whole company - consolidated organic net sales, down 3.8% - and a
+ * guide for one part was scored against the total, "above". A part can be
+ * named anywhere in the line, so the part chosen is the one named closest
+ * BEFORE the guide's own figures ("Beer net sales growth of 0% - 3%; Wine
+ * and Spirits decline of 17% - 20%" gives each range its own part).
+ * Deterministic and free.
+ */
+export function scopeByName(guides) {
+  const parts = partsNamed(guides);
+  if (!parts.length) return guides;
+  return guides.map((g) => {
+    const label = String(g.metric_as_written || "");
+    const inLabel = parts.find((n) => new RegExp("\\b" + escapeRe(n) + "\\b", "i").test(label));
+    if (inLabel) return { ...g, segment: inLabel };
+    const quote = String(g.quote || "");
+    const fig = [g.low, g.high, g.value].find((x) => typeof x === "number");
+    // Where the guide's figure sits in its line.
+    let at = -1;
+    if (typeof fig === "number") {
+      const forms = [String(Math.abs(fig)), Math.abs(fig).toFixed(1), Math.abs(fig).toFixed(2)];
+      for (const f of forms) { const i = quote.indexOf(f); if (i >= 0 && (at < 0 || i < at)) at = i; }
+    }
+    if (at < 0) return g;
+    let best = null, bestAt = -1;
+    for (const n of parts) {
+      const re = new RegExp("\\b" + escapeRe(n) + "\\b", "gi");
+      let m;
+      while ((m = re.exec(quote))) if (m.index < at && m.index > bestAt) { best = n; bestAt = m.index; }
+    }
+    if (!best) return g;
+    return { ...g, segment: best, metric_as_written: best + ": " + label, scope_from: "named in the line" };
+  });
+}
+
+/* The few guides the names cannot settle: their line speaks of a segment or
+   division the release never names as a part. One short, saved question. */
+async function scopeByModel(env, guides, accession) {
+  const ask = [];
+  guides.forEach((g, i) => {
+    if (g.segment) return;
+    if (/\b(segments?|divisions?|business units?)\b/i.test(String(g.quote || ""))) ask.push(i);
+  });
+  if (!ask.length) return { guides, asked: 0 };
+  const list = ask.map((i, j) => ({ id: j, label: guides[i].metric_as_written, line: guides[i].quote }));
+  let answer = [];
+  try {
+    const r = await fetch(ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + env.DEEPSEEK_API_KEY },
+      body: JSON.stringify({
+        model: MODEL,
+        temperature: 0,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: "Each item is one guidance figure from a company's earnings release, with the line it came from. Say whether the figure covers the WHOLE company or only ONE PART of it (a segment, division, business unit, region or brand). Use only the line. Return JSON: {\"scopes\":[{\"id\":0,\"scope\":\"company\"|\"part\",\"part\":\"the part's name as written, or null\"}]}." },
+          { role: "user", content: JSON.stringify(list) },
+        ],
+      }),
+    });
+    if (r.ok) {
+      const data = await r.json();
+      const content = ((data.choices || [])[0] || {}).message?.content || "{}";
+      answer = JSON.parse(content.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim()).scopes || [];
+    }
+  } catch (e) {
+    console.log("Scope check failed for " + accession + ": " + e.message);
+  }
+  const out = guides.slice();
+  for (const a of answer) {
+    const i = ask[Number(a.id)];
+    if (i === undefined || a.scope !== "part" || !a.part) continue;
+    const part = String(a.part).trim();
+    // The part must be printed in the line itself; nothing is taken on trust.
+    if (!new RegExp("\\b" + escapeRe(part) + "\\b", "i").test(String(out[i].quote || ""))) continue;
+    out[i] = { ...out[i], segment: part, metric_as_written: part + ": " + out[i].metric_as_written, scope_from: "scope check" };
+    console.log("Scope check " + accession + ": " + out[i].metric_as_written);
+  }
+  return { guides: out, asked: ask.length };
+}
+
 /**
  * One release in, the guides it contains out.
  *
@@ -934,7 +1074,10 @@ export async function guidanceFrom(env, cik, release, cal, readAlready) {
   // Guide-shaped lines the first reading skipped get one more, short ask.
   // A NEW question, paid once and saved; the first answer is untouched.
   const second = await secondLookGuides(env, { ...filing, accession: release.accession }, first);
-  const raw = first.concat(second.found);
+  // Which part of the company each guide covers, when it is a part.
+  const named = scopeByName(first.concat(second.found));
+  const scoped = await scopeByModel(env, named, release.accession);
+  const raw = scoped.guides;
 
   const withPeriods = raw.map(guardGuide).map((g) => {
     const r = calendar
@@ -963,6 +1106,7 @@ export async function guidanceFrom(env, cik, release, cal, readAlready) {
       textChars: filing.chars,
     },
     calendar,
+    scopeAsked: scoped.asked,
     secondLookAsked: second.asked,
     secondLookFound: second.found.length,
     guarded: guides.filter((g) => g.numbers_verified === false).length,
