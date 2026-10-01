@@ -196,7 +196,8 @@ export function pairUp(guides, actuals) {
       stated_vs_guide: a.stated_vs_guide || null,
     };
 
-    base.actual = a.value;
+    base.actual = thousandsFixed(g, a);
+    if (base.actual !== a.value) base.actual_scaled = "read in thousands; divided by 1,000";
     base.actual_unit = a.unit;
     base.actual_period = a.period;
     // Carried onto the pair. It was not, and the backfill's own diagnostic for
@@ -326,6 +327,36 @@ export function ratioWords(r) {
  *
  * Per-share figures only. A split changes nothing about revenue or margins.
  */
+/**
+ * A money result read in THOUSANDS where the guide is in millions.
+ *
+ * Helen of Troy states its results in thousands ("Adjusted EBITDA $ 289,322")
+ * and guides in millions ("$292 million to $295 million"). On 1 Oct 2026 a
+ * re-asked answer came back as 289,322 "USD millions", and the pair read
+ * $289bn against a $295m guide - scored "above". The figure was right; the
+ * scale was not.
+ *
+ * Corrected only when all of these hold: both sides are money in the same
+ * unit; the result is between 300 and 3,000 times the guide (a thousand-fold
+ * slip, not a real beat); and the result is printed in its own quote with a
+ * thousands separator, exactly as read. Anything else is left alone - the
+ * size check in score.js is there for the rest.
+ */
+function thousandsFixed(g, a) {
+  const v = a.value;
+  if (typeof v !== "number") return v;
+  const money = /^USD (millions|billions)$/;
+  if (!money.test(String(g.unit || "")) || a.unit !== g.unit) return v;
+  const ends = [g.low, g.high, g.value].filter((x) => typeof x === "number" && x !== 0);
+  if (!ends.length) return v;
+  const mid = ends.reduce((x, y) => x + y, 0) / ends.length;
+  const ratio = Math.abs(v / mid);
+  if (ratio < 300 || ratio > 3000) return v;
+  const printed = Math.round(Math.abs(v)).toLocaleString("en-US");
+  if (!String(a.quote || "").includes(printed)) return v;
+  return Number((v / 1000).toFixed(6));
+}
+
 /* Measures a deal does not disturb: they are stated without the deal. */
 const DEAL_PROOF = /\b(organic|comparable|like[-\s]for[-\s]like|same[-\s]store|excluding (acquisitions|divestitures|m&a)|ex[-\s]m&a|core sales)\b/i;
 
