@@ -1805,6 +1805,42 @@ export function designOf(view, keys, sec) {
   return { kind, big, side, line: bits.join(" "), record, outlook };
 }
 
+/* "Micron Technology Inc" as "Micron Technology": the legal suffix adds
+   nothing to a subject line. */
+function shortName(name) {
+  let n = String(name || "").trim();
+  // Repeatedly: "Carnival Corp Ltd", "United Airlines Holdings Inc".
+  for (let i = 0; i < 3; i++) {
+    n = n.replace(/,?\s+(&\s*co|inc|incorporated|corp|corporation|co|company|ltd|limited|plc|holdings?|group)\.?$/i, "").trim();
+  }
+  return n || String(name || "");
+}
+
+/**
+ * The subject line: the outcome first, in fixed words.
+ *   beat  - "Micron Technology beat its own guide on 3 of 3 key measures"
+ *   mixed - "FactSet Research Systems: 2 of 5 key measures above its own guide, 2 below"
+ *   miss  - "X came in below its own guide on 2 of 3 key measures"
+ *   none  - "X reported: new guidance, nothing to score yet" / "X reported: nothing to score"
+ */
+export function subjectOf(view, keys, sec, company) {
+  const d = designOf(view, keys, sec);
+  const name = shortName(company);
+  const counted = sec.quarter.filter((q) => !q.flagged);
+  const n = counted.length;
+  const above = counted.filter((q) => q.word === "above").length;
+  const below = counted.filter((q) => q.word === "below").length;
+  const of = (k) => k + " of " + n + " key " + (n === 1 ? "measure" : "measures");
+  if (d.kind === "beat") return name + " beat its own guide on " + of(above);
+  if (d.kind === "miss") return name + " came in below its own guide on " + of(below);
+  if (d.kind === "mixed") {
+    if (!above && !below) return name + (n === 1 ? ": its one key measure came in within its own guided range"
+      : ": all " + n + " key measures within its own guided range");
+    return name + ": " + of(above) + " above its own guide, " + below + " below";
+  }
+  return name + (d.outlook.length ? " reported: new guidance, nothing to score yet" : " reported: nothing to score against guidance");
+}
+
 export function renderEmail(view, options) {
   const opts = options || {};
   const company = displayName(view.company || view.ticker);
@@ -1824,7 +1860,8 @@ export function renderEmail(view, options) {
       + " - on the site: " + site
     : "";
 
-  const subject = company + " reported - how their guidance has held up";
+  // The subject carries the verdict, from the same counts as the hero.
+  const subject = subjectOf(view, metrics, sec, company);
 
   /* ---------------- plain text ---------------- */
 
@@ -1987,20 +2024,38 @@ export function renderEmail(view, options) {
   h.push('<div style="font-size:13px;color:' + SOFT + ';margin-top:2px;">Every period, against the last guide in force.</div>');
 
   const th = (head) => '<th align="left" style="padding:0 8px 5px 0;border-bottom:1px solid '
-    + RULE + ';font-weight:normal;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:'
-    + MUTED + ';">' + esc(head) + '</th>';
+    + LINE + ';font-weight:normal;font-size:12px;color:'
+    + SOFT + ';">' + esc(head) + '</th>';
 
-  const td = (cell, colour, open) => '<td align="left" style="padding:5px 8px ' + (open ? '3px' : '5px')
-    + ' 0;' + (open ? '' : 'border-bottom:1px solid ' + RULE + ';') + 'color:' + colour
-    + ';white-space:nowrap;">' + esc(cell) + '</td>';
+  /* The guided column may wrap at its spaces: a guide that moved during the
+     period ("$10.4bn to $11bn → $11.1bn to $11.3bn") is wider than a phone
+     leaves room for, and the table ran off the right edge with the result
+     column cut away. Every other column stays on one line. */
+  /* Five columns do not fit a phone. The measure is printed once, as a
+     line of its own, and its years sit under it in four columns. */
+  const stackedRows = (rows) => {
+    const out = ['<tr>' + ["Year", "Guided", "Reported", ""].map((x) => th(x)).join("") + '</tr>'];
+    let last = null;
+    for (const r of rows) {
+      if (r[0] !== last) {
+        out.push('<tr><td colspan="4" style="padding:10px 0 2px;font-size:14px;font-weight:600;color:' + INK + ';">' + esc(r[0]) + '</td></tr>');
+        last = r[0];
+      }
+      out.push('<tr>' + r.slice(1).map((cell, i) => td(cell, i === 0 ? SOFT : INK, false, i === 1)).join("") + '</tr>');
+    }
+    return out.join("");
+  };
+  const td = (cell, colour, open, wrap) => '<td align="left" style="padding:5px 8px ' + (open ? '3px' : '5px')
+    + ' 0;' + (open ? '' : 'border-bottom:1px solid ' + LINE + ';') + 'color:' + colour
+    + ';' + (wrap ? 'line-height:1.35;' : 'white-space:nowrap;') + 'vertical-align:top;">' + esc(cell) + '</td>';
 
   for (const g of metrics) {
-    h.push('<div style="margin-top:22px;padding-top:14px;border-top:1px solid ' + RULE + ';">');
-    h.push('<div style="font-size:16px;color:' + GREEN + ';">' + esc(g.metric) + '</div>');
+    h.push('<div style="margin-top:22px;padding-top:14px;border-top:1px solid ' + LINE + ';">');
+    h.push('<div style="font-size:16px;font-weight:600;color:' + INK + ';">' + esc(g.metric) + '</div>');
 
 
     h.push('<table role="presentation" cellpadding="0" cellspacing="0" border="0"'
-      + ' style="width:100%;margin-top:10px;border-collapse:collapse;font-family:' + MONO
+      + ' style="width:100%;margin-top:10px;border-collapse:collapse;font-family:' + SANS + ';font-variant-numeric:tabular-nums'
       + ';font-size:13px;">');
     h.push('<tr>' + HEADINGS.map(th).join("") + '</tr>');
 
@@ -2015,10 +2070,10 @@ export function renderEmail(view, options) {
         // Still no red or amber anywhere - a tax rate above guidance is bad
         // for the company and irrelevant to a short seller, and colour would
         // decide that for the reader. The strip's green marks the guide.
-        td(cell, quiet ? MUTED : i === 0 ? MUTED : INK, Boolean(strip))).join("") + '</tr>');
+        td(cell, quiet ? SOFT : i === 0 ? SOFT : INK, Boolean(strip), i === 1)).join("") + '</tr>');
       if (strip) {
         h.push('<tr><td colspan="' + cells.length + '" style="padding:0 0 7px 0;border-bottom:1px solid '
-          + RULE + ';">' + strip + '</td></tr>');
+          + LINE + ';">' + strip + '</td></tr>');
       }
     }
 
@@ -2026,68 +2081,62 @@ export function renderEmail(view, options) {
   }
 
   if (anyNote) {
-    h.push('<p style="margin-top:14px;font-size:12px;color:' + MUTED + ';line-height:1.5;">'
+    h.push('<p style="margin-top:14px;font-size:12px;color:' + SOFT + ';line-height:1.5;">'
       + esc(SPLIT_NOTE) + '</p>');
   }
 
   if (anyFlag) {
-    h.push('<p style="margin-top:10px;font-size:12px;color:' + MUTED + ';line-height:1.5;">'
+    h.push('<p style="margin-top:10px;font-size:12px;color:' + SOFT + ';line-height:1.5;">'
       + esc(FLAG_NOTE) + '</p>');
   }
 
   if (annual.rows.length) {
-    h.push('<div style="margin-top:26px;padding-top:14px;border-top:1px solid ' + RULE + ';">');
-    h.push('<div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:' + MUTED + ';">Guided once a year</div>');
-    h.push('<div style="font-size:14px;color:' + MUTED + ';margin-top:2px;">'
+    h.push('<div style="margin-top:26px;padding-top:14px;border-top:1px solid ' + LINE + ';">');
+    h.push('<div style="font-family:' + SERIF_HEAD + ';font-size:17px;color:' + INK + ';">Guided once a year</div>');
+    h.push('<div style="font-size:14px;color:' + SOFT + ';margin-top:2px;">'
       + 'Results from the company\'s own tagged filings, not from the release.</div>');
 
     h.push('<table role="presentation" cellpadding="0" cellspacing="0" border="0"'
-      + ' style="width:100%;margin-top:10px;border-collapse:collapse;font-family:' + MONO
+      + ' style="width:100%;margin-top:10px;border-collapse:collapse;font-family:' + SANS + ';font-variant-numeric:tabular-nums'
       + ';font-size:13px;">');
-    h.push('<tr>' + ANNUAL_HEADINGS.map(th).join("") + '</tr>');
-    for (const r of annual.rows) {
-      h.push('<tr>' + r.map((cell, i) => td(cell, i === 0 || i === 1 ? MUTED : INK)).join("") + '</tr>');
-    }
+    h.push(stackedRows(annual.rows));
     h.push('</table>');
 
     for (const n of annual.notes) {
-      h.push('<p style="margin-top:10px;font-size:12px;color:' + MUTED + ';line-height:1.5;">'
+      h.push('<p style="margin-top:10px;font-size:12px;color:' + SOFT + ';line-height:1.5;">'
         + esc(n) + '</p>');
     }
     h.push('</div>');
   }
 
   if (alsoRows.length) {
-    h.push('<div style="margin-top:26px;padding-top:14px;border-top:1px solid ' + RULE + ';">');
-    h.push('<div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:' + MUTED + ';">Also guided</div>');
-    h.push('<div style="font-size:14px;color:' + MUTED + ';margin-top:2px;">Too few closed periods to show a record yet.</div>');
+    h.push('<div style="margin-top:26px;padding-top:14px;border-top:1px solid ' + LINE + ';">');
+    h.push('<div style="font-family:' + SERIF_HEAD + ';font-size:17px;color:' + INK + ';">Also guided</div>');
+    h.push('<div style="font-size:14px;color:' + SOFT + ';margin-top:2px;">Too few closed periods to show a record yet.</div>');
     h.push('<table role="presentation" cellpadding="0" cellspacing="0" border="0"'
-      + ' style="width:100%;margin-top:10px;border-collapse:collapse;font-family:' + MONO
+      + ' style="width:100%;margin-top:10px;border-collapse:collapse;font-family:' + SANS + ';font-variant-numeric:tabular-nums'
       + ';font-size:13px;">');
-    h.push('<tr>' + ANNUAL_HEADINGS.map(th).join("") + '</tr>');
-    for (const r of alsoRows) {
-      h.push('<tr>' + r.map((cell, i) => td(cell, i === 0 || i === 1 ? MUTED : INK)).join("") + '</tr>');
-    }
+    h.push(stackedRows(alsoRows));
     h.push('</table></div>');
   }
 
   if (moreLine) {
-    h.push('<p style="margin-top:22px;font-size:14px;color:' + MUTED + ';">'
+    h.push('<p style="margin-top:22px;font-size:14px;color:' + SOFT + ';">'
       + esc(moreLine.charAt(0).toUpperCase() + moreLine.slice(1)) + '</p>');
   }
 
   h.push('<p style="margin-top:26px;font-size:15px;line-height:1.6;">Thanks,<br>Zahoor · Guidance Scorecard · hello@zahoorbhat.com</p>');
-  h.push('<p style="margin-top:26px;padding-top:14px;border-top:1px solid ' + RULE + ';font-size:13px;color:' + MUTED + ';line-height:1.6;">'
+  h.push('<p style="margin-top:26px;padding-top:14px;border-top:1px solid ' + LINE + ';font-size:13px;color:' + SOFT + ';line-height:1.6;">'
     + 'Questions, or something that looks wrong: reply to this, or write to '
-    + '<a href="mailto:hello@zahoorbhat.com" style="color:' + MUTED + ';">hello@zahoorbhat.com</a>. '
+    + '<a href="mailto:hello@zahoorbhat.com" style="color:' + SOFT + ';">hello@zahoorbhat.com</a>. '
     + 'Every figure is read from the company\'s own filings on EDGAR. Guidance comes from the'
     + ' earnings release; results from the release that reported the period, or from the'
     + ' company\'s tagged annual filings where a measure is guided once a year. A guide is'
     + ' only scored against the same period, on the same basis. Nothing here is a forecast.</p>');
 
   if (opts.unsubscribeUrl) {
-    h.push('<p style="margin-top:14px;font-size:12px;color:' + MUTED + ';">'
-      + '<a href="' + esc(opts.unsubscribeUrl) + '" style="color:' + MUTED + ';">Unsubscribe</a>'
+    h.push('<p style="margin-top:14px;font-size:12px;color:' + SOFT + ';">'
+      + '<a href="' + esc(opts.unsubscribeUrl) + '" style="color:' + SOFT + ';">Unsubscribe</a>'
       + (opts.postalAddress ? ' &middot; ' + esc(opts.postalAddress) : '') + '</p>');
   }
 
