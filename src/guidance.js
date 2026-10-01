@@ -918,7 +918,7 @@ async function secondLookGuides(env, filing, guides) {
  * ------------------------------------------------------------------ */
 
 /* Words that open a line without naming a part of the company. */
-const NOT_A_PART = /^(fiscal|full|year|years|quarter|first|second|third|fourth|q[1-4]|fy\d*|h[12]|guidance|outlook|update|updated|company|consolidated|total|enterprise|gaap|non|adjusted|reported|organic|comparable|net|the|our|we|expected|expectations|reaffirmed|raised|lowered|note|notes|and|of|for|in)$/i;
+const NOT_A_PART = /^(enterprise|fiscal|full|year|years|quarter|first|second|third|fourth|q[1-4]|fy\d*|h[12]|guidance|outlook|update|updated|company|consolidated|total|enterprise|gaap|non|adjusted|reported|organic|comparable|net|the|our|we|expected|expectations|reaffirmed|raised|lowered|note|notes|and|of|for|in)$/i;
 
 /* Abbreviations that name a measure or a unit, never a part. */
 const COMMON_ABBR = /^(GAAP|EPS|FCF|EBIT|EBITDA|EBITDAR|CEO|CFO|COO|US|USA|USD|UK|EU|FY|YOY|YTD|QTD|ROIC|ROE|ROA|CAPEX|SG|SGA|ASV|ARR|NII|NIM|RPM|TRASM|CASM|PRASM|ASM|RASM|AI|IT|ESG|LLC|INC|PLC|CORP|THE|WE|Q[1-4]|H[12])$/;
@@ -948,6 +948,12 @@ function prefixPart(text) {
  */
 export function partsNamed(guides, intro) {
   const names = new Set();
+  // Found only as the subject of "expects" - the company's own name can turn
+  // up that way, so these alone are checked against the top of the release.
+  // A part named as a heading ("Beer:") is a part even when the release's
+  // headline mentions it - Constellation's does, and its Beer guides were
+  // lost when every name in the headline was dropped.
+  const bySubject = new Set();
   for (const g of guides || []) {
     for (const t of [g.metric_as_written, g.quote]) {
       const p = prefixPart(t);
@@ -970,7 +976,7 @@ export function partsNamed(guides, intro) {
       const n = m[1].trim();
       if (/^(the|we|our|it|this|management|company|in|for|and)\b/i.test(n)) continue;
       if (COMMON_ABBR.test(n)) continue;
-      if (/^[A-Z]{2,5}$/.test(n) || isPartName(n)) names.add(n);
+      if ((/^[A-Z]{2,5}$/.test(n) || isPartName(n)) && !names.has(n)) bySubject.add(n);
     }
     // "Defense & Propulsion Technologies (DPT)": the name and its initials.
     const pair = /([A-Z][A-Za-z&' ]{2,48}?)\s*\(([A-Z]{2,5})\)/g;
@@ -984,10 +990,17 @@ export function partsNamed(guides, intro) {
      Corporation & plc: ..."). */
   const all = (guides || []).length;
   const top = String(intro || "");
-  return [...names].filter((n) => {
+  for (const n of bySubject) {
+    if (names.has(n)) continue;
     // The company itself, named at the top of its own release ("GE
     // Aerospace reports...", "GE expects..."): not a part of itself.
-    if (top && new RegExp("\\b" + escapeRe(n) + "\\b").test(top)) return false;
+    if (top && new RegExp("\\b" + escapeRe(n) + "\\b").test(top)) continue;
+    // Not the tail of a longer name: "Wine and Spirits Business expects"
+    // must not yield "Spirits Business".
+    if ((guides || []).some((g) => new RegExp("(and|&)\\s+" + escapeRe(n) + "\\b").test(String(g.quote || "")))) continue;
+    names.add(n);
+  }
+  return [...names].filter((n) => {
     if (/\b(inc|corp|corporation|company|plc|ltd|limited|holdings?|group)\b/i.test(n)) return false;
     const re = new RegExp("\\b" + escapeRe(n) + "\\b", "i");
     const on = (guides || []).filter((g) => re.test(String(g.quote || "")) || re.test(String(g.metric_as_written || ""))).length;

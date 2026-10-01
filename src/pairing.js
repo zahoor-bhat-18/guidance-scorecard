@@ -203,6 +203,7 @@ export function pairUp(guides, actuals) {
       quote: a.quote ?? null,
       second_look: a.second_look || null,
       stated_vs_guide: a.stated_vs_guide || null,
+      gaap_recheck: a.gaap_recheck || null,
     };
 
     const inGuideUnit = sameMoneyUnit(g, a);
