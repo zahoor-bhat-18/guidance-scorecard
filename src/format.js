@@ -65,7 +65,9 @@ function sign(n) {
  * prints as "$0.95bn to $1.05bn" rather than one end in each unit.
  */
 function moneyScale(n, unit, atLeast) {
-  if (unit === "USD billions") return { size: Math.abs(n), suffix: "bn" };
+  // To the nearest million here too: a median of two gaps ($0.3bn and
+  // $3.229bn) printed for Micron as "$1.7645bn".
+  if (unit === "USD billions") return { size: Number(Math.abs(n).toFixed(3)), suffix: "bn" };
   if (unit !== "USD millions") return null;
   const big = Math.abs(typeof atLeast === "number" ? atLeast : n) >= 1000;
   if (!big) return { size: Math.abs(n), suffix: "m" };
