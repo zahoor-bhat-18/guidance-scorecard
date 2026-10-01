@@ -120,7 +120,8 @@ export function formatFigure(guide, unit) {
 
   if (hasLow && hasHigh) {
     const larger = Math.max(Math.abs(g.low), Math.abs(g.high));
-    return formatInScale(g.low, unit, larger) + " to " + formatInScale(g.high, unit, larger);
+    const lo = Math.min(g.low, g.high), hi = Math.max(g.low, g.high);
+    return formatInScale(lo, unit, larger) + " to " + formatInScale(hi, unit, larger);
   }
   if (hasValue) return formatValue(g.value, unit);
   if (hasLow) return formatValue(g.low, unit);

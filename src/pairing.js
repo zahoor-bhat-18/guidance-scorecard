@@ -43,9 +43,18 @@ import { samePeriod, periodIsClosedBy } from "./period.js";
  * the pairs and the revision path read the guides separately.
  */
 function figureOf(g) {
-  const low = g.low ?? null;
-  const high = g.high ?? null;
+  let low = g.low ?? null;
+  let high = g.high ?? null;
   const value = g.value ?? null;
+
+  /* The ends in order. Constellation Brands guided fiscal 2026 net sales
+     "down 4% to 6%", read as low -4 and high -6. Every check that uses "low"
+     as the bottom then measured the -10.48% result from -4: "below by
+     6.48pp" instead of 4.48. A range is a range whichever end is written
+     first. */
+  if (typeof low === "number" && typeof high === "number" && low > high) {
+    [low, high] = [high, low];
+  }
 
   if (typeof low === "number" && typeof high === "number" && low === high) {
     return { low: null, high: null, value: low };

@@ -225,9 +225,19 @@ function flagsFor(pair, actual, low, high, value) {
      $289,322 thousand read as millions against a $295 million guide), and
      the exemption above was hiding it. */
   const absurd = Math.abs(actual) > 20 * Math.abs(bound);
+  /* Opposite signs are exempt only when the guide is the SMALLER side.
+     Carnival guided a $35m loss and earned $134m: a small guide, and the
+     company itself called it a beat. Constellation Brands guided $13.40 to
+     $13.70 of GAAP EPS and reported -$0.45 after an impairment: a large guide
+     wiped out by a one-off, which is exactly what the caution is for. */
   if (earnings && !deal && !absurd) {
     const sameSign = bound * actual > 0;
-    if (!sameSign || Math.abs(bound) < Math.abs(actual) * 0.5) return flags;
+    // ...or when the swing is within the width of the range guided:
+    // Carnival guided fiscal 2023 at a $50m to $150m loss and came in at
+    // about breakeven - $51m past a range $100m wide.
+    const width = typeof low === "number" && typeof high === "number" ? Math.abs(high - low) : 0;
+    if (!sameSign && (Math.abs(bound) <= Math.abs(actual) || gap <= width)) return flags;
+    if (sameSign && Math.abs(bound) < Math.abs(actual) * 0.5) return flags;
   }
   const limit = deal ? (earnings ? 0.25 : 0.05) : (earnings ? 0.5 : 0.25);
 
@@ -287,9 +297,14 @@ export function scorePair(pair, originalGuide) {
   if (!pair || !pair.comparable) return pair;
 
   const actual = pair.actual;
-  const low = pair.guide ? pair.guide.low : null;
-  const high = pair.guide ? pair.guide.high : null;
+  let low = pair.guide ? pair.guide.low : null;
+  let high = pair.guide ? pair.guide.high : null;
   const value = pair.guide ? pair.guide.value : null;
+  // Ends in order (see figureOf in pairing.js), for records built before.
+  if (typeof low === "number" && typeof high === "number" && low > high) {
+    [low, high] = [high, low];
+    pair = { ...pair, guide: { ...pair.guide, low, high } };
+  }
 
   if (typeof actual !== "number") return pair;
 
