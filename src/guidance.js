@@ -845,6 +845,21 @@ export function missedGuideLines(text, guides) {
     if (!GUIDE_SHAPED.test(line)) return;
     const nums = [...statedNumbers(line)].filter((n) => n !== 0 || /\b0(\.0+)?\s?%/.test(line));
     if (!nums.length) return;
+    /* A results row, not a guide row. FactSet's results table carries a
+       "guidance" column beside the year's actuals ("Revenues $535,797 ...
+       $2,085,508 ... $2.08 - $2.10B"), and Honeywell's sets last year's
+       results beside this year's guides on one line; read alone, the range
+       was given the wrong year. A guide row states one figure or one range
+       for each of at most two columns (GAAP and adjusted): four figures. */
+    if (nums.length > 4) return;
+    /* Not from a reconciliation. General Electric's January 2024 release
+       reconciles GE VERNOVA's free cash flow guide under its own heading,
+       and "CFOA (GAAP) $1.5 - $1.9" was taken for General Electric's own
+       cash flow. Reconciliations restate guides already given in the
+       outlook, often for a part of the company; the outlook is where a
+       skipped guide is looked for. */
+    const before = lines.slice(Math.max(0, i - 40), i).join(" ");
+    if (/reconcil/i.test(before)) return;
     if (nums.some(covered)) return;
     hits.push(i);
   });
