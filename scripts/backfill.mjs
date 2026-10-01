@@ -582,9 +582,27 @@ async function buildOne(ticker) {
    * A comparable pair always beats a refused one. Otherwise a late mislabel
    * that got refused would bury a good pair from the release before it.
    */
+  /* The basis is part of what a pair is. McCormick guides GAAP EPS ($2.46 to
+     $2.51) AND adjusted EPS ($2.62 to $2.67) for the same year, and the
+     measure key strips "adjusted" - so once both scored, one silently
+     replaced the other. GAAP and adjusted guides of one measure are two
+     pairs, not one. */
+  // Only an EXPLICIT GAAP guide is told apart: Delta's unlabelled "Earnings
+  // Per Share" table row and its "adjusted EPS" sentence are one measure,
+  // and must stay one pair.
+  const basisTag = (p) => {
+    const l = String(p.metric_as_written || "");
+    if (/adjusted|non-?gaap|comparable|\bcore\b|underlying/i.test(l)) return "adj";
+    // GAAP only when the label says so, or the GAAP re-check supplied the
+    // figure - never on the model's own basis guess, which varies run to run.
+    if (/\b(gaap|reported)\b/i.test(l) || (p.answer && p.answer.gaap_recheck)) return "gaap";
+    return "adj";
+  };
+  const pairKey = (p) => metricKey(p) + "|" + basisTag(p) + "|" + (p.guide_period || "");
+
   const bestByPeriod = new Map();
   for (const p of allPairs) {
-    const key = metricKey(p) + "|" + (p.guide_period || "");
+    const key = pairKey(p);
     const held = bestByPeriod.get(key);
 
     if (!held) { bestByPeriod.set(key, p); continue; }
@@ -623,10 +641,10 @@ async function buildOne(ticker) {
     if (previous) {
       const byKey = new Map();
       for (const p of collapsed) {
-        byKey.set(metricKey(p) + "|" + (p.guide_period || ""), p);
+        byKey.set(pairKey(p), p);
       }
       for (const p of previous.pairs || []) {
-        const key = metricKey(p) + "|" + (p.guide_period || "");
+        const key = pairKey(p);
         const fresh = byKey.get(key);
 
         /**
