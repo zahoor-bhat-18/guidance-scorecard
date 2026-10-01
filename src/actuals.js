@@ -290,6 +290,9 @@ export function requestsFrom(guides, cal) {
       periodWanted: describePeriod(g.period, cal),
       expect: expectedAnswer(g.shape, g.unit),
       expectBasis: expectedBasis(g),
+      // Not sent to the model. Read by recheckGaap: what the guide says it is
+      // measured from ("compared to $2.52 of earnings per share in 2023").
+      guideQuote: g.quote || null,
     });
   }
   return out;
@@ -487,7 +490,15 @@ function toActual(req, row, release, cal) {
      "Wine and Spirits net sales ... (7 %)" came back as +7, and a guided
      4%-6% decline scored as "above". When the quote shows the figure ONLY
      in parentheses, it is negative. */
-  if (typeof value === "number" && value > 0) {
+  /* ...except money that leaves the business. A cash flow statement prints
+     capital expenditure, dividends and buybacks in brackets because they are
+     outflows ("Capital expenditures (388.1)"), and companies guide them as
+     positive amounts. Conagra's capex turned negative on the first run of
+     this rule. */
+  const outflow = req.metric === "capex"
+    || /capital expend|capex|purchases? of|repurchas|buyback|dividend|paid|investments? in/i
+      .test(String(req.metric_as_written || "") + " " + String(row.found_as || ""));
+  if (typeof value === "number" && value > 0 && !outflow) {
     const q = String(row.quote || "").replace(/,/g, "");
     const v = String(value);
     const vs = [v, value.toFixed(1), value.toFixed(2)];
@@ -866,6 +877,96 @@ async function recheckAdjusted(env, requests, actuals, adjustedFor, text, releas
       adjusted_recheck: "replaced",
       replaced_figure: { found_as: before.found_as, value: before.value, quote: before.quote },
     };
+    replaced++;
+  });
+  return { asked: idx.length, replaced };
+}
+
+
+/* ------------------------------------------------------------------ *
+ * A GAAP guide answered with an adjusted figure: ask for the GAAP one
+ * ------------------------------------------------------------------ */
+
+/* Does the guide itself say it is the GAAP / reported figure? By its label
+   ("reported EPS", "Tax rate: reported", "GAAP diluted EPS"), or by the
+   prior-year figure it says it is measured from, when the result line found
+   shows a different one (McCormick: "compared to $2.52 of earnings per share
+   in 2023" - GAAP; the adjusted line shows $2.70). */
+function guideIsGaap(req, a) {
+  const label = String(req.metric_as_written || "");
+  if (/\b(reported|gaap)\b/i.test(label) && !/non-?gaap|adjusted|comparable/i.test(label)) return true;
+  const m = String(req.guideQuote || "").match(/compared\s+(?:to|with)\s+\$\s?(\d[\d,]*\.?\d*)/i);
+  if (m && a && typeof a.value === "number") {
+    const prior = Number(m[1].replace(/,/g, ""));
+    const nums = (String(a.quote || "").replace(/,/g, "").match(/\d+\.?\d*/g) || []).map(Number);
+    if (nums.length >= 2 && !nums.some((x) => Math.abs(x - prior) < 0.0051)) return true;
+  }
+  return false;
+}
+
+/**
+ * Ask once more, for the GAAP figure, where a GAAP guide was answered with
+ * an adjusted one.
+ *
+ * Until now such pairs were refused (pairing.js) - safe, but the guide went
+ * unscored though the release prints the GAAP figure plainly. A short,
+ * saved question for just those, the mirror of the adjusted re-check above.
+ * The new answer is used only if it is NOT itself labelled adjusted,
+ * comparable or non-GAAP, is for the guided period, and - when the guide
+ * names its prior-year figure - its line shows that figure.
+ */
+async function recheckGaap(env, requests, actuals, text, release, cal) {
+  const idx = [];
+  requests.forEach((req, i) => {
+    const a = actuals[i];
+    if (!a || a.value === null || a.period_open) return;
+    if (!guidePeriodClosed(req, release, cal)) return;
+    const took = markers(String(a.found_as || "") + " " + String(a.section || "") + " " + String(a.quote || "").slice(0, 80));
+    const comparable = /\bcomparable\b/i.test(String(a.found_as || "") + " " + String(a.quote || "").slice(0, 80));
+    if (!(took.adjusted || comparable)) return;
+    if (!guideIsGaap(req, a)) return;
+    idx.push(i);
+  });
+  if (!idx.length) return { asked: 0, replaced: 0 };
+
+  const again = idx.map((i) => ({
+    ...requests[i],
+    expectBasis: {
+      ...requests[i].expectBasis,
+      wantsAdjusted: false,
+      describe: "the GAAP / AS-REPORTED figure - NOT the adjusted, comparable, core or non-GAAP one."
+        + " Where the release prints both, take the GAAP line, and put the label that shows it in found_as",
+    },
+  }));
+
+  let rows;
+  try {
+    rows = await callModel(env, again, text);
+  } catch (e) {
+    console.log("GAAP re-check failed for " + release.accession + ": " + e.message);
+    return { asked: idx.length, replaced: 0 };
+  }
+  const byId = new Map();
+  for (const row of rows) {
+    if (row.id !== undefined && row.id !== null && !byId.has(Number(row.id))) byId.set(Number(row.id), row);
+  }
+
+  let replaced = 0;
+  idx.forEach((i, j) => {
+    const cand = toActual(again[j], byId.get(j) || {}, release, cal);
+    const where = String(cand.found_as || "") + " " + String(cand.section || "") + " " + String(cand.quote || "").slice(0, 80);
+    const stillAdjusted = markers(where).adjusted || /\bcomparable\b/i.test(where);
+    const m = String(requests[i].guideQuote || "").match(/compared\s+(?:to|with)\s+\$\s?(\d[\d,]*\.?\d*)/i);
+    const priorOk = !m || numberInQuote(Number(m[1].replace(/,/g, "")), String(cand.quote || "").replace(/,/g, ""));
+    const ok = cand.value !== null && !stillAdjusted && !cand.unit_mismatch && !cand.period_open
+      && Boolean(cand.period) && (!requests[i].guidePeriod || cand.period === requests[i].guidePeriod) && priorOk;
+    const before = actuals[i];
+    console.log("GAAP re-check " + release.accession + " " + (requests[i].guidePeriod || "?") + " "
+      + requests[i].metric_as_written + ": was " + JSON.stringify(before.found_as) + " " + before.value
+      + ", GAAP answer " + JSON.stringify(cand.found_as) + " " + cand.value + (ok ? " - REPLACED" : " - kept"));
+    if (!ok) return;
+    actuals[i] = { ...cand, basis_mismatch: null, gaap_recheck: "replaced",
+      replaced_figure: { found_as: before.found_as, value: before.value, quote: before.quote } };
     replaced++;
   });
   return { asked: idx.length, replaced };
@@ -1270,6 +1371,7 @@ export async function actualsFrom(env, cik, release, requests, cal) {
   // Any other adjusted guide answered with the as-reported line: ask for the
   // adjusted one explicitly (margins, EPS, operating expenses...).
   const adjusted = await recheckAdjusted(env, requests, actuals, recheck.adjustedFor, filing.text, release, cal);
+  const gaap = await recheckGaap(env, requests, actuals, filing.text, release, cal);
 
   // Anything still empty for a period that has ended: one more, shorter ask.
   const second = await secondLook(env, requests, actuals, filing.text, release, cal);
@@ -1304,6 +1406,8 @@ export async function actualsFrom(env, cik, release, requests, cal) {
     revenueReplaced: recheck.replaced,
     adjustedRechecked: adjusted.asked,
     adjustedReplaced: adjusted.replaced,
+    gaapAsked: gaap.asked,
+    gaapReplaced: gaap.replaced,
     secondLookAsked: second.asked,
     secondLookFound: second.found,
     growthAsked: growth.asked,

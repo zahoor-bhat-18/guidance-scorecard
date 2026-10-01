@@ -1709,9 +1709,39 @@ export function designOf(view, keys, sec) {
     // Like with like: a year's guide beside the year just reported, a
     // quarter's beside the quarter.
     const kindOf = (per) => /FY$/.test(String(per || "")) ? "FY" : "Q";
-    const just = reportedNow.find((p) => kindOf(p.period) === kindOf(r && r.period)
+    let just = reportedNow.find((p) => kindOf(p.period) === kindOf(r && r.period)
       && plainKey(p.metric) === plainKey((r && r.label) || o.measure)
       && basisOfLabel(p.metric) === rBasis);
+    /* A year's guide given mid-year has nothing "just reported" beside it.
+       McCormick's October release guides fiscal 2026 EPS at $3.05 to $3.13;
+       the year to compare it with, fiscal 2025 ($3.00), was reported in
+       January. The last full year in the record is used, and named. */
+    let sinceWhen = "just reported";
+    // Levels and margins only: a growth rate set beside last year's growth
+    // rate says nothing a reader can use.
+    // A percentage is compared only when it is a margin or a rate of
+    // something (Carnival's "net yields" and Nike's constant-currency
+    // growth are changes, not levels). Never across a share split.
+    const label0 = String((r && r.label) || o.measure);
+    const isRate = r && r.unit === "percent" && !/margin|as a percent|percent of|tax rate/i.test(label0);
+    const acrossSplit = r && /split/i.test(String(r.direction || ""));
+    if (!just && r && !isRate && !acrossSplit && /^(\d{4})FY$/.test(String(r.period || ""))) {
+      const prev = (Number(String(r.period).slice(0, 4)) - 1) + "FY";
+      just = keys.flatMap((g) => g.rows).find((p) => !p.notGuided && !p.unanswered && p.period === prev
+        && typeof p.actual === "number" && !p.flagged
+        && plainKey(p.metric) === plainKey((r && r.label) || o.measure)
+        && basisOfLabel(p.metric) === rBasis);
+      // A year-on-year jump past half or double is more likely a different
+      // measure than a guide (General Electric's $1.6bn-1.7bn "operating
+      // profit" set beside its $9.05bn company total). Left without a
+      // comparison rather than given a wrong one.
+      if (just) {
+        const lo = num(r.after && (r.after.low ?? r.after.value)), hi = num(r.after && (r.after.high ?? r.after.value));
+        const ratio = lo !== null && hi !== null && just.actual ? ((lo + hi) / 2) * unitScale(r.unit) / unitScale(just.unit) / just.actual : null;
+        if (ratio === null || ratio < 0.5 || ratio > 2) just = null;
+        else sinceWhen = "reported for " + periodLabel(prev);
+      }
+    }
     let compare = "";
     if (r && r.after && just && unitClass(r.unit) === unitClass(just.unit)) {
       const lo = num(r.after.low) !== null ? num(r.after.low) : num(r.after.value);
@@ -1725,12 +1755,12 @@ export function designOf(view, keys, sec) {
           const d = Math.round((mid - a) * 100) / 100;
           compare = (lo !== hi ? "Midpoint " + midText + ", " : "")
             + (d === 0 ? "level with" : Math.abs(d) + (Math.abs(d) === 1 ? " point " : " points ") + (d > 0 ? "above" : "below"))
-            + " the " + reported + " just reported";
+            + " the " + reported + " " + sinceWhen;
         } else if (a > 0) {
           const pct = Math.round((mid / a - 1) * 1000) / 10;
           compare = (lo !== hi ? "Midpoint " + midText + ", " : "")
             + (pct === 0 ? "level with" : (pct > 0 ? "up " : "down ") + Math.abs(pct) + "% on")
-            + " the " + reported + " just reported";
+            + " the " + reported + " " + sinceWhen;
         }
       }
     }
