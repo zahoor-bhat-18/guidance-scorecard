@@ -799,6 +799,94 @@ async function callModel(env, text) {
   return Array.isArray(parsed.guides) ? parsed.guides : [];
 }
 
+/* ------------------------------------------------------------------ *
+ * A second look at guidance lines the first reading skipped
+ * ------------------------------------------------------------------ */
+
+/* A line that carries a guide-shaped figure: a "±" band, or a range of
+   dollars or percentages ("$1.25 - $1.75", "0% - 4%", "$60 to $63 billion"). */
+const GUIDE_SHAPED = /±|(?:\$\s?\d[\d.,]*|\d[\d.,]*\s?%)\s*(?:-|–|—|to)\s*\$?\s?\d[\d.,]*\s?(?:%|billion|million)?/i;
+const OUTLOOK_WORD = /\b(outlook|guidance|expects?|expected|anticipates?|forecast|targets?)\b/i;
+const BOILERPLATE = /forward[-\s]looking statements?|safe harbor|private securities litigation/i;
+
+/* The figures a line states, without the width of a "±" band: "38.5% ± 1.0%"
+   states 38.5. */
+function statedNumbers(line) {
+  return quoteNumbers(String(line).replace(/±\s*\$?\s?[\d.,]+\s*(%|billion|million)?/gi, " "));
+}
+
+/**
+ * Guide-shaped lines in an outlook passage that no reported guide accounts
+ * for, each with the lines around it.
+ *
+ * Micron's September 2024 release printed its first-quarter outlook as a
+ * table: revenue, gross margin, operating expenses, EPS, each "X ± Y". The
+ * model reported three of the four rows and skipped gross margin, and the
+ * record showed "Q1 2025 not guided" for a guide the company had printed. A
+ * line is a candidate when it is guide-shaped, sits within a few dozen lines
+ * after an outlook word (not the safe-harbour paragraph), and none of its
+ * figures appears in any guide already reported. Free: no model involved.
+ */
+export function missedGuideLines(text, guides) {
+  const lines = String(text || "").split("\n");
+  const pool = new Set();
+  for (const g of guides || []) {
+    for (const n of quoteNumbers(g.quote)) pool.add(n);
+    for (const k of ["low", "high", "value"]) if (typeof g[k] === "number") pool.add(g[k]);
+  }
+  const covered = (n) => [...pool].some((x) => Math.abs(x - n) <= 0.0005);
+
+  let lastOutlook = -1000;
+  const hits = [];
+  lines.forEach((line, i) => {
+    if (BOILERPLATE.test(line)) { lastOutlook = -1000; return; }
+    if (OUTLOOK_WORD.test(line)) lastOutlook = i;
+    if (i - lastOutlook > 40) return;
+    if (!GUIDE_SHAPED.test(line)) return;
+    const nums = [...statedNumbers(line)].filter((n) => n !== 0 || /\b0(\.0+)?\s?%/.test(line));
+    if (!nums.length) return;
+    if (nums.some(covered)) return;
+    hits.push(i);
+  });
+  if (!hits.length) return [];
+
+  // Each hit with the twelve lines before it (the table's header and the
+  // row's label are usually there) and two after; overlapping windows merge.
+  const windows = [];
+  for (const i of hits) {
+    const a = Math.max(0, i - 12), b = Math.min(lines.length - 1, i + 2);
+    const last = windows[windows.length - 1];
+    if (last && a <= last[1] + 1) last[1] = Math.max(last[1], b);
+    else windows.push([a, b]);
+  }
+  return windows.map(([a, b]) => lines.slice(a, b + 1).join("\n"));
+}
+
+async function secondLookGuides(env, filing, guides) {
+  const snippets = missedGuideLines(filing.text, guides);
+  if (!snippets.length) return { asked: 0, found: [] };
+  const intro = String(filing.text).slice(0, 1200);
+  const text = "THE START OF THE RELEASE (for its date and the period it reports):\n" + intro
+    + "\n\nPASSAGES FROM THE SAME RELEASE THAT MAY CONTAIN GUIDANCE:\n"
+    + snippets.join("\n=====\n");
+  let extra = [];
+  try {
+    extra = await callModel(env, text);
+  } catch (e) {
+    console.log("Guidance second look failed for " + filing.accession + ": " + e.message);
+    return { asked: snippets.length, found: [] };
+  }
+  // Only what the first reading did not already have.
+  const pool = new Set();
+  for (const g of guides) for (const k of ["low", "high", "value"]) if (typeof g[k] === "number") pool.add(g[k]);
+  const found = extra.filter((g) => {
+    const v = [g.low, g.high, g.value].filter((x) => typeof x === "number");
+    return v.length && !v.every((x) => pool.has(x));
+  }).map((g) => ({ ...g, second_look: true }));
+  for (const g of found) console.log("Guidance second look " + filing.accession + ": found " + g.metric_as_written + " " + (g.period_text || "") + " " + JSON.stringify([g.low, g.high, g.value]));
+  return { asked: snippets.length, found };
+}
+
 /**
  * One release in, the guides it contains out.
  *
@@ -817,7 +905,11 @@ export async function guidanceFrom(env, cik, release, cal, readAlready) {
   const filing = readAlready || await readFiling(env, cik, release.accession);
   const calendar = cal ? refineCalendar(cal, filing.text) : null;
 
-  const raw = await callModel(env, filing.text);
+  const first = await callModel(env, filing.text);
+  // Guide-shaped lines the first reading skipped get one more, short ask.
+  // A NEW question, paid once and saved; the first answer is untouched.
+  const second = await secondLookGuides(env, { ...filing, accession: release.accession }, first);
+  const raw = first.concat(second.found);
 
   const withPeriods = raw.map(guardGuide).map((g) => {
     const r = calendar
@@ -846,6 +938,8 @@ export async function guidanceFrom(env, cik, release, cal, readAlready) {
       textChars: filing.chars,
     },
     calendar,
+    secondLookAsked: second.asked,
+    secondLookFound: second.found.length,
     guarded: guides.filter((g) => g.numbers_verified === false).length,
     recovered: guides.filter((g) => g.numbers_recovered).length,
     unresolvedPeriods: guides.filter((g) => !g.period).length,
