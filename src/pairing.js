@@ -226,6 +226,33 @@ export function pairUp(guides, actuals) {
       base.actual_matched_as = a.metric_as_written;
     }
 
+    /* A label that names no measure. Constellation's tax-rate line was
+       split, and one guide came back labelled just "comparable" - then
+       paired with comparable OPERATING MARGIN, 34% against an 18.5% tax
+       rate. A label that is only a basis word cannot be matched to anything
+       safely. */
+    if (/^\s*(comparable|adjusted|reported|gaap|non-?gaap|organic|core|underlying|as reported)\s*$/i
+      .test(String(g.metric_as_written || ""))) {
+      pairs.push({ ...base, comparable: false, why: "The guide's label names no measure, only a basis." });
+      continue;
+    }
+
+    /* "Reported" in the guide's own label is the GAAP figure. Constellation's
+       "Enterprise operating income growth: reported" (10%-12%) was scored
+       against COMPARABLE operating income growth (7%). A guide labelled
+       reported or GAAP is never scored against a result labelled
+       comparable, adjusted or non-GAAP. */
+    if (a.value !== null) {
+      const gl = String(g.metric_as_written || "");
+      const saysReported = /\b(reported|gaap)\b/i.test(gl) && !/non-?gaap|adjusted|comparable/i.test(gl);
+      const took = String(a.found_as || "") + " " + String(a.quote || "").slice(0, 80);
+      if (saysReported && /\b(comparable|adjusted|non-?gaap|core)\b/i.test(took)) {
+        pairs.push({ ...base, comparable: false,
+          why: "The guide is the reported (GAAP) figure; the result found is " + (a.found_as || "an adjusted figure") + "." });
+        continue;
+      }
+    }
+
     /* THE GUIDE'S OWN YARDSTICK. McCormick writes "2024 earnings per share
        to be in the range of $2.81 to $2.86, compared to $2.52 of earnings
        per share in 2023". $2.52 was its GAAP EPS for 2023; adjusted was

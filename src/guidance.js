@@ -1012,7 +1012,11 @@ async function scopeByModel(env, guides, accession) {
   const ask = [];
   guides.forEach((g, i) => {
     if (g.segment) return;
-    if (/\b(segments?|divisions?|business units?)\b/i.test(String(g.quote || ""))) ask.push(i);
+    /* "Segment margin" and "segment profit" are company-wide measures
+       (Honeywell guides its total segment margin), not a part: the word
+       only counts when it is not naming the measure itself. */
+    const q = String(g.quote || "").replace(/\bsegment\s+(margin|profit|income|ebitda|operating)/gi, " ");
+    if (/\b(segments?|divisions?|business units?)\b/i.test(q)) ask.push(i);
   });
   if (!ask.length) return { guides, asked: 0 };
   const list = ask.map((i, j) => ({ id: j, label: guides[i].metric_as_written, line: guides[i].quote }));
@@ -1044,6 +1048,9 @@ async function scopeByModel(env, guides, accession) {
     const i = ask[Number(a.id)];
     if (i === undefined || a.scope !== "part" || !a.part) continue;
     const part = String(a.part).trim();
+    // A real part's name, not a measure or a footnoted heading
+    // ("Segment Margin 2", "Segment").
+    if (!isPartName(part) || /^(segment|division|business|unit)s?$/i.test(part)) continue;
     // The part must be printed in the line itself; nothing is taken on trust.
     if (!new RegExp("\\b" + escapeRe(part) + "\\b", "i").test(String(out[i].quote || ""))) continue;
     out[i] = { ...out[i], segment: part, metric_as_written: part + ": " + out[i].metric_as_written, scope_from: "scope check" };

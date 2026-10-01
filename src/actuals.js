@@ -480,8 +480,27 @@ async function callModel(env, requests, text) {
  * answers through exactly the same checks as every other answer.
  */
 function toActual(req, row, release, cal) {
-  const value = typeof row.value === "number" ? row.value : null;
+  let value = typeof row.value === "number" ? row.value : null;
   const unit = row.unit || null;
+
+  /* A decline printed in parentheses and read as growth. Constellation's
+     "Wine and Spirits net sales ... (7 %)" came back as +7, and a guided
+     4%-6% decline scored as "above". When the quote shows the figure ONLY
+     in parentheses, it is negative. */
+  if (typeof value === "number" && value > 0) {
+    const q = String(row.quote || "").replace(/,/g, "");
+    const v = String(value);
+    const vs = [v, value.toFixed(1), value.toFixed(2)];
+    // A small whole number alone in brackets is a footnote marker - "Segment
+    // Margin (2)" - not a negative. Only a bracketed figure that carries a %
+    // or $ sign, a decimal point, or is ten or more counts.
+    const inParens = vs.some((x) => {
+      const m = q.match(new RegExp("\\(\\s*(\\$?)\\s*" + x.replace(".", "\\.") + "\\s*(%?)\\s*\\)"));
+      return m && (m[1] || m[2] || /\./.test(x) || value >= 10);
+    });
+    const bare = vs.some((x) => new RegExp("(^|[^(\\d.])\\$?\\s?" + x.replace(".", "\\.") + "(?![\\d.])(?!\\s*%?\\s*\\))").test(q));
+    if (inParens && !bare) value = -value;
+  }
 
   const wantedPercent = req.expect.unit === "percent";
   const gotPercent = unit === "percent";
