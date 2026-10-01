@@ -920,6 +920,9 @@ async function secondLookGuides(env, filing, guides) {
 /* Words that open a line without naming a part of the company. */
 const NOT_A_PART = /^(fiscal|full|year|years|quarter|first|second|third|fourth|q[1-4]|fy\d*|h[12]|guidance|outlook|update|updated|company|consolidated|total|enterprise|gaap|non|adjusted|reported|organic|comparable|net|the|our|we|expected|expectations|reaffirmed|raised|lowered|note|notes|and|of|for|in)$/i;
 
+/* Abbreviations that name a measure or a unit, never a part. */
+const COMMON_ABBR = /^(GAAP|EPS|FCF|EBIT|EBITDA|EBITDAR|CEO|CFO|COO|US|USA|USD|UK|EU|FY|YOY|YTD|QTD|ROIC|ROE|ROA|CAPEX|SG|SGA|ASV|ARR|NII|NIM|RPM|TRASM|CASM|PRASM|ASM|RASM|AI|IT|ESG|LLC|INC|PLC|CORP|THE|WE|Q[1-4]|H[12])$/;
+
 /* A measure, not a part: "Tax rate: reported approximately 20%" opens with
    what is guided, not with where. */
 const MEASURE_WORD = /\b(rate|sales|revenues?|income|margins?|eps|earnings|cash|flows?|costs?|expenses?|capex|capital|tax|shares?|dividends?|ebitda|profit|growth|outlook|guidance|appendix|summary|highlights?)\b/i;
@@ -943,7 +946,7 @@ function prefixPart(text) {
  * ("Beer: net sales growth of 0% - 3%") and from lines that call one a
  * segment or division ("for the Aerospace segment").
  */
-export function partsNamed(guides) {
+export function partsNamed(guides, intro) {
   const names = new Set();
   for (const g of guides || []) {
     for (const t of [g.metric_as_written, g.quote]) {
@@ -953,11 +956,38 @@ export function partsNamed(guides) {
     const re = /\b(?:the|our|its)\s+([A-Z][A-Za-z&' ]{1,48}?)\s+(?:segment|division|business unit)s?\b/g;
     let m;
     while ((m = re.exec(String(g.quote || "")))) if (isPartName(m[1])) names.add(m[1].trim());
+    /* A part named by its initials as the subject of the guide. General
+       Electric writes "DPT expects operating profit of $1.6-$1.7 billion" -
+       its Defense & Propulsion Technologies segment - and the guide was read
+       as the company's operating profit, then "revised" from $9.85bn to
+       $1.55bn as a scope change. Two to five capitals, not a common
+       accounting abbreviation, doing the expecting. */
+    // The subject doing the expecting: initials ("DPT expects") or a short
+    // proper name ("GE Vernova expects"). The company itself is removed
+    // below, by its name at the top of the release.
+    const subject = /\b((?:[A-Z][A-Za-z&]*\s+){0,2}[A-Z][A-Za-z&]*)\s+(?:now\s+|still\s+|also\s+)?(?:continues to\s+)?expects?\b/g;
+    while ((m = subject.exec(String(g.quote || "")))) {
+      const n = m[1].trim();
+      if (/^(the|we|our|it|this|management|company|in|for|and)\b/i.test(n)) continue;
+      if (COMMON_ABBR.test(n)) continue;
+      if (/^[A-Z]{2,5}$/.test(n) || isPartName(n)) names.add(n);
+    }
+    // "Defense & Propulsion Technologies (DPT)": the name and its initials.
+    const pair = /([A-Z][A-Za-z&' ]{2,48}?)\s*\(([A-Z]{2,5})\)/g;
+    for (const t of [g.metric_as_written, g.quote]) {
+      while ((m = pair.exec(String(t || "")))) {
+        if (isPartName(m[1]) && !COMMON_ABBR.test(m[2])) { names.add(m[1].trim()); names.add(m[2]); }
+      }
+    }
   }
   /* A name on most of the guides is the company, not a part of it ("Carnival
      Corporation & plc: ..."). */
   const all = (guides || []).length;
+  const top = String(intro || "");
   return [...names].filter((n) => {
+    // The company itself, named at the top of its own release ("GE
+    // Aerospace reports...", "GE expects..."): not a part of itself.
+    if (top && new RegExp("\\b" + escapeRe(n) + "\\b").test(top)) return false;
     if (/\b(inc|corp|corporation|company|plc|ltd|limited|holdings?|group)\b/i.test(n)) return false;
     const re = new RegExp("\\b" + escapeRe(n) + "\\b", "i");
     const on = (guides || []).filter((g) => re.test(String(g.quote || "")) || re.test(String(g.metric_as_written || ""))).length;
@@ -979,8 +1009,8 @@ const escapeRe = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
  * and Spirits decline of 17% - 20%" gives each range its own part).
  * Deterministic and free.
  */
-export function scopeByName(guides) {
-  const parts = partsNamed(guides);
+export function scopeByName(guides, intro) {
+  const parts = partsNamed(guides, intro);
   if (!parts.length) return guides;
   return guides.map((g) => {
     const label = String(g.metric_as_written || "");
@@ -1082,7 +1112,7 @@ export async function guidanceFrom(env, cik, release, cal, readAlready) {
   // A NEW question, paid once and saved; the first answer is untouched.
   const second = await secondLookGuides(env, { ...filing, accession: release.accession }, first);
   // Which part of the company each guide covers, when it is a part.
-  const named = scopeByName(first.concat(second.found));
+  const named = scopeByName(first.concat(second.found), String(filing.text || "").slice(0, 600));
   const scoped = await scopeByModel(env, named, release.accession);
   const raw = scoped.guides;
 
