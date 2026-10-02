@@ -918,7 +918,7 @@ async function secondLookGuides(env, filing, guides) {
  * ------------------------------------------------------------------ */
 
 /* Words that open a line without naming a part of the company. */
-const NOT_A_PART = /^(enterprise|fiscal|full|year|years|quarter|first|second|third|fourth|q[1-4]|fy\d*|h[12]|guidance|outlook|update|updated|company|consolidated|total|enterprise|gaap|non|adjusted|reported|organic|comparable|net|the|our|we|expected|expectations|reaffirmed|raised|lowered|note|notes|and|of|for|in)$/i;
+const NOT_A_PART = /^(now|also|still|currently|today|additionally|further|enterprise|fiscal|full|year|years|quarter|first|second|third|fourth|q[1-4]|fy\d*|h[12]|guidance|outlook|update|updated|company|consolidated|total|enterprise|gaap|non|adjusted|reported|organic|comparable|net|the|our|we|expected|expectations|reaffirmed|raised|lowered|note|notes|and|of|for|in)$/i;
 
 /* Abbreviations that name a measure or a unit, never a part. */
 const COMMON_ABBR = /^(GAAP|EPS|FCF|EBIT|EBITDA|EBITDAR|CEO|CFO|COO|US|USA|USD|UK|EU|FY|YOY|YTD|QTD|ROIC|ROE|ROA|CAPEX|SG|SGA|ASV|ARR|NII|NIM|RPM|TRASM|CASM|PRASM|ASM|RASM|AI|IT|ESG|LLC|INC|PLC|CORP|THE|WE|Q[1-4]|H[12])$/;
@@ -1046,6 +1046,104 @@ export function scopeByName(guides, intro) {
     }
     if (!best) return g;
     return { ...g, segment: best, metric_as_written: best + ": " + label, scope_from: "named in the line" };
+  });
+}
+
+
+/* A short line on its own that names something: a heading. */
+function isHeading(line) {
+  const t = String(line || "").trim();
+  if (!t || t.length > 70 || /\d/.test(t) || /[.;:]$/.test(t)) return false;
+  const words = t.split(/\s+/);
+  return words.length <= 8 && /^[A-Z]/.test(t);
+}
+
+/**
+ * Part names a release prints as headings: "Commercial Engines & Services
+ * (CES)", "Defense & Propulsion Technologies (DPT)". Both the name and the
+ * initials are parts.
+ */
+export function partsFromHeadings(text) {
+  const out = new Set();
+  for (const line of String(text || "").split("\n")) {
+    if (!isHeading(line)) continue;
+    const m = line.trim().match(/^([A-Z][A-Za-z&' ]{2,60}?)\s*\(([A-Z]{2,5})\)$/);
+    if (m && isPartName(m[1]) && !COMMON_ABBR.test(m[2])) { out.add(m[1].trim()); out.add(m[2]); }
+  }
+  return [...out];
+}
+
+/**
+ * The part a guide belongs to when its own line does not say, read from
+ * where the line sits in the release.
+ *
+ * General Electric's April 2026 release: under the heading "Commercial
+ * Engines & Services (CES)", one paragraph reads "In 2026, CES continues to
+ * expect revenue growth of mid-teens ... Operating profit continues to be
+ * expected in the range of $9.6-$9.9 billion." The guide's own sentence names
+ * no part, so the $9.6bn-9.9bn was read as GE's company operating profit and
+ * "cut" from $9.85bn-10.25bn. Two places are read, nearest first:
+ *   1. the same paragraph, before the guide's sentence - the last part named
+ *      there ("CES continues to expect ...");
+ *   2. the nearest heading above it. A heading naming a part gives that part;
+ *      any other heading ("2026 Guidance", "Outlook") stops the search with
+ *      no change - the guide is the company's.
+ * Only for parts the release itself names. Free and deterministic.
+ */
+export function scopeByPlace(guides, text) {
+  const lines = String(text || "").split("\n");
+  const intro = String(text || "").slice(0, 600);
+  // Not the company itself: a heading or subject that also names the company
+  // at the top of its own release ("GE Aerospace") is not a part.
+  const known = new Set([...partsNamed(guides, intro), ...partsFromHeadings(text)]
+    .filter((n) => !new RegExp("\\b" + escapeRe(n) + "\\b").test(intro)));
+  if (!known.size) return guides;
+  const parts = [...known];
+  const norm = (x) => String(x || "").replace(/\s+/g, " ").trim();
+  const lastPartIn = (t) => {
+    let best = null, at = -1;
+    for (const n of parts) {
+      const re = new RegExp("\\b" + escapeRe(n) + "\\b", "g");
+      let m;
+      while ((m = re.exec(t))) if (m.index > at) { best = n; at = m.index; }
+    }
+    return best;
+  };
+  return guides.map((g) => {
+    if (g.segment) return g;
+    const q = norm(g.quote);
+    if (q.length < 20) return g;
+    const probe = q.slice(0, 50);
+    const i = lines.findIndex((l) => norm(l).includes(probe));
+    if (i < 0) return g;
+    const line = norm(lines[i]);
+    // 1. Same paragraph, before the guide's own sentence - and only where the
+    //    part is the subject of a guiding verb ("CES continues to expect"),
+    //    not merely the row before in a flattened table.
+    const before = line.slice(0, line.indexOf(probe));
+    let part = null;
+    if (before) {
+      const cand = lastPartIn(before);
+      if (cand && new RegExp("\\b" + escapeRe(cand) + "\\b[^.]{0,40}\\b(expects?|continues|affirm\\w*|reaffirm\\w*|guid\\w*|anticipates?|projects?|sees)\\b", "i").test(before)) {
+        part = cand;
+      }
+    }
+    // 2. The nearest heading above.
+    if (!part) {
+      for (let j = i - 1; j >= Math.max(0, i - 25); j--) {
+        if (!isHeading(lines[j])) continue;
+        // A row label inside a table ("Defense & Propulsion Technologies
+        // (DPT) Operating Profit") names a measure: the guide sits in a
+        // table, not under a part's heading. Nothing is taken from it.
+        if (MEASURE_WORD.test(lines[j])) break;
+        part = lastPartIn(lines[j]);
+        break;
+      }
+    }
+    if (!part) return g;
+    // A guide whose label already names some part keeps its own.
+    if (parts.some((n) => new RegExp("\\b" + escapeRe(n) + "\\b", "i").test(String(g.metric_as_written || "")))) return g;
+    return { ...g, segment: part, metric_as_written: part + ": " + g.metric_as_written, scope_from: "where it sits in the release" };
   });
 }
 
@@ -1273,7 +1371,9 @@ export async function guidanceFrom(env, cik, release, cal, readAlready) {
   // A NEW question, paid once and saved; the first answer is untouched.
   const second = await secondLookGuides(env, { ...filing, accession: release.accession }, first);
   // Which part of the company each guide covers, when it is a part.
-  const named = scopeByName(first.concat(second.found), String(filing.text || "").slice(0, 600));
+  const named = scopeByPlace(
+    scopeByName(first.concat(second.found), String(filing.text || "").slice(0, 600)),
+    filing.text);
   const scoped = await scopeByModel(env, named, release.accession);
   const raw = scoped.guides;
 
