@@ -1128,6 +1128,11 @@ function phraseRange(tierA, tierB, kind, decade) {
   return null;
 }
 
+/* Two-sided phrases written out in full, read before the single ones:
+   RPM's "high-single to low-double-digit" (7-13%) and "low-single- to
+   mid-single-digit" (1-6%). Read as one phrase, never as their second half. */
+const SPAN_PHRASE = /\b(low|mid|high)[-\s]*single[-\s]*(?:digit)?[-\s]*(?:to|and)[-\s]+(?:(low|mid|high)[-\s]*single[-\s]*digits?|(low)[-\s]*double[-\s]*digits?)/gi;
+
 const WORD_PHRASE = new RegExp(
   "\\b(flat)\\b(?:\\s+to\\s+(up|down)\\s+)?"
   + "|\\b(low|mid|high)(?:[-\\s]+(?:to|and)[-\\s]+(low|mid|high))?[-\\s]*"
@@ -1156,8 +1161,17 @@ export function rangeFromWords(g) {
   const quote = String(g.quote || "");
   const found = [];
   let m;
+  const taken = [];
+  SPAN_PHRASE.lastIndex = 0;
+  while ((m = SPAN_PHRASE.exec(quote))) {
+    const a = TIER[m[1].toLowerCase()];
+    const r = m[2] ? [a[0], TIER[m[2].toLowerCase()][1]] : [a[0], 13];
+    found.push({ at: m.index, text: m[0].trim(), r, flat: false, flatTo: null, isLevel: false });
+    taken.push([m.index, m.index + m[0].length]);
+  }
   WORD_PHRASE.lastIndex = 0;
   while ((m = WORD_PHRASE.exec(quote))) {
+    if (taken.some(([x, y]) => m.index >= x && m.index < y)) continue;
     let r = null, flat = false, flatTo = null;
     if (m[1]) { flat = true; flatTo = m[2] ? m[2].toLowerCase() : null; }
     else if (m[5]) r = phraseRange(m[3], m[4], "single");
@@ -1167,11 +1181,15 @@ export function rangeFromWords(g) {
     found.push({ at: m.index, text: m[0].trim(), r, flat, flatTo, isLevel: Boolean(m[8] || m[9]) });
   }
   if (!found.length) return g;
+  found.sort((x, y) => x.at - y.at);
 
   // "flat to up low-single digits" is one phrase: 0 to the top of the next.
   const merged = [];
   for (let i = 0; i < found.length; i++) {
     const f = found[i];
+    /* "Flat to up slightly" has no second phrase to read: Walmart's capex
+       guide. The whole guide stays as words rather than become "flat". */
+    if (f.flat && f.flatTo && !(found[i + 1] && found[i + 1].r)) return g;
     if (f.flat && f.flatTo && found[i + 1] && found[i + 1].r) {
       const n = found[i + 1];
       merged.push({ at: f.at, text: quote.slice(f.at, n.at + n.text.length), r: f.flatTo === "up" ? [0, n.r[1]] : [-n.r[1], 0], signed: true, isLevel: false });
@@ -1194,6 +1212,14 @@ export function rangeFromWords(g) {
     if (at < 0) return g;
     const after = merged.filter((f) => f.at > at).sort((a, b) => a.at - b.at);
     if (!after.length) return g;
+    /* A table row with several phrases side by side - General Electric's
+       "Adjusted Revenue Growth  +10%  $35.1B  +Mid-teens  +High-teens" -
+       is columns, not clauses: which column is the guide in force is not
+       in the words. Left as words. */
+    if (after.length > 1) {
+      const between = quote.slice(after[0].at + after[0].text.length, after[1].at);
+      if (!/[a-z]{3,}/i.test(between)) return g;
+    }
     pick = after[0];
   }
 
