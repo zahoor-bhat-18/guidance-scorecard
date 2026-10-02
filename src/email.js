@@ -855,8 +855,12 @@ function landing(p) {
   return { word: d > 0 ? "above" : d < 0 ? "below" : "at", gap: Math.abs(d) };
 }
 
+/* A range read from the company's words is always shown WITH the words:
+   "high-single digits decline (read as -9% to -7%)". The reader sees what
+   was said and how it was read, and can disagree with the reading. */
 function guideWords(p) {
-  return boundText(p) || formatFigure(p.guide, p.unit);
+  const fig = boundText(p) || formatFigure(p.guide, p.unit);
+  return p.guideWords ? "\u201c" + p.guideWords + "\u201d (read as " + fig + ")" : fig;
 }
 
 /**
@@ -1442,7 +1446,7 @@ export function sectionsOf(view, keys) {
         measure,
         first: i === 0,
         period: periodLabel(r.period),
-        guide: r.after ? formatFigure(r.after, r.unit) : "",
+        guide: r.after ? (r.words ? "\u201c" + r.words + "\u201d (read as " + formatFigure(r.after, r.unit) + ")" : formatFigure(r.after, r.unit)) : "",
         change: changeWords(r),
       });
     });
@@ -2027,7 +2031,8 @@ export function renderEmail(view, options) {
       h.push('<div style="padding:8px 0;">'
         + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>'
         + '<td style="font-size:15px;vertical-align:top;">' + esc(o.measure) + '<div style="font-size:12px;color:' + SOFT + ';">' + esc(o.period) + '</div></td>'
-        + '<td align="right" style="font-size:15px;font-weight:600;white-space:nowrap;vertical-align:top;padding-left:10px;">' + esc(o.guide) + '</td></tr></table>'
+        + '<td align="right" style="font-size:15px;font-weight:600;vertical-align:top;padding-left:10px;'
+        + (o.guide.length > 22 ? 'width:58%;line-height:1.35;' : 'white-space:nowrap;') + '">' + esc(o.guide) + '</td></tr></table>'
         + (o.line ? '<div style="font-size:13px;color:' + SOFT + ';margin-top:2px;">' + esc(o.line) + '</div>' : '')
         + '</div>');
     }

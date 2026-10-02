@@ -178,6 +178,7 @@ export function forEmail(record) {
       unit: r.unit || null,
       before: r.before || null,
       after: r.after || null,
+      words: r.words || null,
       // The sentence is BUILT HERE, from the untrimmed revision, and not read
       // off the record.
       //
@@ -238,6 +239,7 @@ function trim(p) {
     basis: p.basis,
     unit: p.unit,
     guide: p.guide,
+    guideWords: p.guide_words || null,
     // Where the guide for this period STARTED, and every distinct figure on
     // the way to where it ended. A company inside its final full-year range
     // may have held that range all year or raised twice to reach it, and the

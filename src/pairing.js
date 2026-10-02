@@ -152,6 +152,9 @@ export function pairUp(guides, actuals) {
       unit: g.unit,
       shape: g.shape,
       guide: figureOf(g),
+      // The company's own words when the range was read from them
+      // ("decline high-single digits"), so the email can show both.
+      guide_words: g.from_words || null,
       guide_period: g.period,
       guide_period_text: g.period_text,
       // Set when a mid-quarter 8-K replaced the release's guide. The pair is

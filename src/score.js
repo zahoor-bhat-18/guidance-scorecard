@@ -122,6 +122,23 @@ function flagsFor(pair, actual, low, high, value) {
   // The same, found anywhere in the release rather than only in the line the
   // figure was taken from (actuals.js looks; see statedAgainstGuide there).
   if (pair.answer && pair.answer.stated_vs_guide) return flags;
+  /* A range read from words ("high-single digits") has soft edges: 9.4% is
+     "high-single digits" to some and "around 10%" to others. A result
+     outside such a range by half a point or less is cautioned, not called. */
+  if (pair.guide_words) {
+    const lo0 = pair.guide ? (pair.guide.low ?? pair.guide.value) : null;
+    const hi0 = pair.guide ? (pair.guide.high ?? pair.guide.value) : null;
+    const a0 = pair.actual;
+    if (typeof a0 === "number" && typeof lo0 === "number" && typeof hi0 === "number") {
+      const lo = Math.min(lo0, hi0), hi = Math.max(lo0, hi0);
+      const off = a0 < lo ? lo - a0 : a0 > hi ? a0 - hi : 0;
+      if (off > 0 && off <= 0.5) {
+        flags.push("The range was read from the company's words (\u201c" + pair.guide_words
+          + "\u201d), and the result is just outside it - close enough that the words may fairly cover it.");
+        return flags;
+      }
+    }
+  }
   /* A completed acquisition or disposal between the guide and the result
      brings back the stricter size test that applied before 30 Sep 2026. Not
      a caution on every such pair: Carnival filed one in May 2026 for a

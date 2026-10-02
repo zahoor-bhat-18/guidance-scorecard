@@ -385,6 +385,7 @@ export function revisionsBetween(rawBefore, rawAfter, opts) {
         direction: "new",
         after: n,
         quote: g.quote,
+        words: g.from_words || null,
       };
       row.summary = revisionSentence(row);
       out.push(row);
@@ -397,7 +398,7 @@ export function revisionsBetween(rawBefore, rawAfter, opts) {
     // dollar figure - is not a revision of it: there is nothing to compare.
     if (b === null) {
       const row = { metric: g.metric, metric_as_written: g.metric_as_written, period: g.period, unit: g.unit,
-        direction: "new", after: n, quote: g.quote };
+        direction: "new", after: n, quote: g.quote, words: g.from_words || null };
       row.summary = revisionSentence(row);
       out.push(row);
       continue;
@@ -414,6 +415,7 @@ export function revisionsBetween(rawBefore, rawAfter, opts) {
       direction: dir,
       before: b,
       after: n,
+      words: g.from_words || null,
       moveLow: b.low !== null && n.low !== null ? tidy(n.low - b.low) : null,
       moveHigh: b.high !== null && n.high !== null ? tidy(n.high - b.high) : null,
       movePoint: b.value !== null && n.value !== null ? tidy(n.value - b.value) : null,

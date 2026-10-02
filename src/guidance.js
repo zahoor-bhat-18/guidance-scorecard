@@ -1102,6 +1102,128 @@ async function scopeByModel(env, guides, accession) {
   return { guides: out, asked: ask.length };
 }
 
+
+/* ------------------------------------------------------------------ *
+ * Guidance in words: "high-single digits", "mid-teens", "mid-20s"
+ * ------------------------------------------------------------------ */
+
+/* The street convention, fixed in code (approved 1 Oct 2026). The model
+   never chooses a range: the same words give the same range every time. */
+const TIER = { low: [1, 3], mid: [4, 6], high: [7, 9] };
+const TEENS = { low: [11, 13], mid: [14, 16], high: [17, 19] };
+
+/* One phrase as a range of whole percentages, or null. */
+function phraseRange(tierA, tierB, kind, decade) {
+  const a = String(tierA || "").toLowerCase();
+  const b = String(tierB || a).toLowerCase();
+  if (!TIER[a] || !TIER[b]) return null;
+  if (kind === "single") return [TIER[a][0], TIER[b][1]];
+  if (kind === "double") return a === "low" && b === "low" ? [10, 13] : null;
+  if (kind === "teens") return [TEENS[a][0], TEENS[b][1]];
+  if (kind === "decade") {
+    const d = Number(decade);
+    if (!d || d < 20 || d > 90) return null;
+    return [d + TIER[a][0] - (a === "low" ? 1 : 0), d + TIER[b][1]];
+  }
+  return null;
+}
+
+const WORD_PHRASE = new RegExp(
+  "\\b(flat)\\b(?:\\s+to\\s+(up|down)\\s+)?"
+  + "|\\b(low|mid|high)(?:[-\\s]+(?:to|and)[-\\s]+(low|mid|high))?[-\\s]*"
+  + "(?:(single)[-\\s]*digits?|(double)[-\\s]*digits?|(teens)|(20|30|40|50)s|(20|30|40|50)[-\\s]*(?:percent|%))",
+  "gi");
+
+const DOWN = /\b(declin\w*|decreas\w*|down|lower|drop\w*|fall\w*|contract\w*|negative)\b/i;
+const UP = /\b(grow\w*|growth|increas\w*|up|rise|rising|higher|expan\w*|positive)\b/i;
+
+/**
+ * Read a guide given in words as a range, the way the street reads it.
+ *
+ * Nike's October 2026 release: "Revenues are expected to decline high-single
+ * digits in fiscal 2027"; "Effective tax rate ... in the mid-20 percent
+ * range". Neither had a number, so neither was scored. Read by the fixed
+ * table above: decline 7%-9%, and 24%-26%.
+ *
+ * Only for a guide with NO figures of its own, only for a rate or a change
+ * (a percentage), and only when the sentence is clear: one phrase - or the
+ * phrase nearest the measure's own name - and, for a change, a direction.
+ * Anything less clear is left as words. The words are kept on the guide
+ * (from_words) so the email always shows what the company actually said.
+ */
+export function rangeFromWords(g) {
+  if ([g.low, g.high, g.value].some((x) => typeof x === "number")) return g;
+  const quote = String(g.quote || "");
+  const found = [];
+  let m;
+  WORD_PHRASE.lastIndex = 0;
+  while ((m = WORD_PHRASE.exec(quote))) {
+    let r = null, flat = false, flatTo = null;
+    if (m[1]) { flat = true; flatTo = m[2] ? m[2].toLowerCase() : null; }
+    else if (m[5]) r = phraseRange(m[3], m[4], "single");
+    else if (m[6]) r = phraseRange(m[3], m[4], "double");
+    else if (m[7]) r = phraseRange(m[3], m[4], "teens");
+    else if (m[8] || m[9]) r = phraseRange(m[3], m[4], "decade", m[8] || m[9]);
+    found.push({ at: m.index, text: m[0].trim(), r, flat, flatTo, isLevel: Boolean(m[8] || m[9]) });
+  }
+  if (!found.length) return g;
+
+  // "flat to up low-single digits" is one phrase: 0 to the top of the next.
+  const merged = [];
+  for (let i = 0; i < found.length; i++) {
+    const f = found[i];
+    if (f.flat && f.flatTo && found[i + 1] && found[i + 1].r) {
+      const n = found[i + 1];
+      merged.push({ at: f.at, text: quote.slice(f.at, n.at + n.text.length), r: f.flatTo === "up" ? [0, n.r[1]] : [-n.r[1], 0], signed: true, isLevel: false });
+      i++;
+    } else if (f.flat) {
+      merged.push({ at: f.at, text: f.text, r: [0, 0], signed: true, isLevel: false });
+    } else if (f.r) merged.push(f);
+  }
+  if (!merged.length) return g;
+
+  // Which phrase belongs to this guide: the only one, or the one nearest
+  // AFTER the measure's own name in the sentence.
+  let pick = null;
+  if (merged.length === 1) pick = merged[0];
+  else {
+    const word = String(g.metric_as_written || "").toLowerCase()
+      .replace(/\b(adjusted|reported|gaap|non-gaap|organic|diluted|net|total|fiscal|full[- ]year)\b/g, " ")
+      .trim().split(/\s+/).find((w) => w.length > 2);
+    const at = word ? quote.toLowerCase().indexOf(word) : -1;
+    if (at < 0) return g;
+    const after = merged.filter((f) => f.at > at).sort((a, b) => a.at - b.at);
+    if (!after.length) return g;
+    pick = after[0];
+  }
+
+  // A level ("tax rate in the mid-20 percent range") or a change.
+  const rate = /\b(rate|margin)\b/i.test(String(g.metric_as_written || "")) && !UP.test(quote) && !DOWN.test(quote);
+  // "Gross margin about flat" means unchanged from last year - a level we
+  // do not have here. Left as words.
+  if (pick.signed && /\b(rate|margin)\b/i.test(String(g.metric_as_written || ""))) return g;
+  let lo = pick.r[0], hi = pick.r[1];
+  if (!pick.signed && !(rate || pick.isLevel)) {
+    // The direction word can sit before the phrase ("decline high-single
+    // digits") or just after it ("low-single-digit organic revenue growth").
+    const before = quote.slice(Math.max(0, pick.at - 70), pick.at + pick.text.length + 40);
+    const down = DOWN.test(before), up = UP.test(before);
+    if (down === up) return g;           // no direction, or both: leave as words
+    if (down) [lo, hi] = [-hi, -lo];
+  }
+  const isChange = !(rate || pick.isLevel);
+  return {
+    ...g,
+    low: lo === hi ? null : lo,
+    high: lo === hi ? null : hi,
+    value: lo === hi ? lo : null,
+    unit: "percent",
+    shape: isChange ? (lo === hi ? "growth_point" : "growth_range") : (lo === hi ? "point" : "range"),
+    from_words: pick.text,
+    numbers_verified: true,
+  };
+}
+
 /**
  * One release in, the guides it contains out.
  *
@@ -1129,7 +1251,7 @@ export async function guidanceFrom(env, cik, release, cal, readAlready) {
   const scoped = await scopeByModel(env, named, release.accession);
   const raw = scoped.guides;
 
-  const withPeriods = raw.map(guardGuide).map((g) => {
+  const withPeriods = raw.map(guardGuide).map(rangeFromWords).map((g) => {
     const r = calendar
       ? resolvePeriod(g.period_text, calendar, { referenceDate: release.filed, direction: "future" })
       : { period: null, why: "No fiscal calendar was supplied." };
