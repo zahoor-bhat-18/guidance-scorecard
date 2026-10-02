@@ -920,6 +920,33 @@ async function secondLookGuides(env, filing, guides) {
 /* Words that open a line without naming a part of the company. */
 const NOT_A_PART = /^(now|also|still|currently|today|additionally|further|enterprise|fiscal|full|year|years|quarter|first|second|third|fourth|q[1-4]|fy\d*|h[12]|guidance|outlook|update|updated|company|consolidated|total|enterprise|gaap|non|adjusted|reported|organic|comparable|net|the|our|we|expected|expectations|reaffirmed|raised|lowered|note|notes|and|of|for|in)$/i;
 
+
+/* The company's own name, from its headline: "GE ANNOUNCES FOURTH QUARTER
+   2023 RESULTS", "GE AEROSPACE REPORTS ...". Null when the headline does not
+   say. */
+function companyFromIntro(intro) {
+  const t = String(intro || "").replace(/=====[^=]*=====/g, " ")
+    .replace(/\bEX-99[\.\d]*\b|\bDocument\b|\bFOR IMMEDIATE RELEASE\b|\bNEWS RELEASE\b|\bPRESS RELEASE\b/gi, " ")
+    .replace(/\s+/g, " ");
+  const m = t.match(/\b([A-Z][A-Za-z&.'\-]*(?:\s+[A-Z][A-Za-z&.'\-]*){0,3})\s+(?:ANNOUNCES|REPORTS|POSTS|DELIVERS|Announces|Reports|Posts|Delivers)\b/);
+  return m ? m[1].trim() : null;
+}
+
+/* Is this name the company itself? By its headline name when there is one -
+   "GE" and "GE Aerospace" are General Electric, "GE Vernova" (its business
+   being spun off) is not. Without a headline, any name in the opening lines
+   is taken as the company, as before. */
+function isTheCompany(name, intro) {
+  const co = companyFromIntro(intro);
+  const n = String(name || "").toLowerCase().trim();
+  if (co) {
+    const c = co.toLowerCase();
+    // "McCormick" in "McCORMICK REPORTS"; "GE" in "GE AEROSPACE REPORTS".
+    return n === c || c.startsWith(n + " ") || c.endsWith(" " + n);
+  }
+  return Boolean(intro) && new RegExp("\\b" + escapeRe(String(name)) + "\\b").test(String(intro));
+}
+
 /* Abbreviations that name a measure or a unit, never a part. */
 const COMMON_ABBR = /^(GAAP|EPS|FCF|EBIT|EBITDA|EBITDAR|CEO|CFO|COO|US|USA|USD|UK|EU|FY|YOY|YTD|QTD|ROIC|ROE|ROA|CAPEX|SG|SGA|ASV|ARR|NII|NIM|RPM|TRASM|CASM|PRASM|ASM|RASM|AI|IT|ESG|LLC|INC|PLC|CORP|THE|WE|Q[1-4]|H[12])$/;
 
@@ -994,7 +1021,7 @@ export function partsNamed(guides, intro) {
     if (names.has(n)) continue;
     // The company itself, named at the top of its own release ("GE
     // Aerospace reports...", "GE expects..."): not a part of itself.
-    if (top && new RegExp("\\b" + escapeRe(n) + "\\b").test(top)) continue;
+    if (top && isTheCompany(n, top)) continue;
     // Not the tail of a longer name: "Wine and Spirits Business expects"
     // must not yield "Spirits Business".
     if ((guides || []).some((g) => new RegExp("(and|&)\\s+" + escapeRe(n) + "\\b").test(String(g.quote || "")))) continue;
@@ -1096,7 +1123,7 @@ export function scopeByPlace(guides, text) {
   // Not the company itself: a heading or subject that also names the company
   // at the top of its own release ("GE Aerospace") is not a part.
   const known = new Set([...partsNamed(guides, intro), ...partsFromHeadings(text)]
-    .filter((n) => !new RegExp("\\b" + escapeRe(n) + "\\b").test(intro)));
+    .filter((n) => !isTheCompany(n, intro)));
   if (!known.size) return guides;
   const parts = [...known];
   const norm = (x) => String(x || "").replace(/\s+/g, " ").trim();
@@ -1116,6 +1143,24 @@ export function scopeByPlace(guides, text) {
     const probe = q.slice(0, 50);
     const i = lines.findIndex((l) => norm(l).includes(probe));
     if (i < 0) return g;
+    // The guide's own sentence says the company is speaking ("GE Aerospace
+    // expects ..."): it is the company's guide, whatever came before it.
+    {
+      const own = /\b((?:[A-Z][A-Za-z&]*\s+){0,2}[A-Z][A-Za-z&]*)\s+(?:now\s+|still\s+|also\s+)?(?:continues to\s+)?expects?\b/g;
+      let om;
+      while ((om = own.exec(q))) {
+        const who = om[1].trim();
+        if (isTheCompany(who, intro)) return g;
+        // ...or a part speaking in the guide's own sentence: that part, and
+        // not whichever part a sentence earlier named. ("GE Aerospace
+        // expects adjusted revenue..." after a sentence on GE Vernova.)
+        const own2 = parts.find((n) => n.toLowerCase() === who.toLowerCase());
+        if (own2) {
+          if (parts.some((n) => new RegExp("\\b" + escapeRe(n) + "\\b", "i").test(String(g.metric_as_written || "")))) return g;
+          return { ...g, segment: own2, metric_as_written: own2 + ": " + g.metric_as_written, scope_from: "named in the line" };
+        }
+      }
+    }
     const line = norm(lines[i]);
     // 1. Same paragraph, before the guide's own sentence - and only where the
     //    part is the subject of a guiding verb ("CES continues to expect"),
@@ -1124,8 +1169,19 @@ export function scopeByPlace(guides, text) {
     let part = null;
     if (before) {
       const cand = lastPartIn(before);
-      if (cand && new RegExp("\\b" + escapeRe(cand) + "\\b[^.]{0,40}\\b(expects?|continues|affirm\\w*|reaffirm\\w*|guid\\w*|anticipates?|projects?|sees)\\b", "i").test(before)) {
-        part = cand;
+      const verb = "[^.]{0,40}\\b(expects?|continues|affirm\\w*|reaffirm\\w*|guid\\w*|anticipates?|projects?|sees)\\b";
+      if (cand && new RegExp("\\b" + escapeRe(cand) + "\\b" + verb, "i").test(before)) {
+        /* ...unless the company itself speaks AFTER that part and before the
+           guide. GE's January 2024 paragraph gives GE Vernova's outlook,
+           then "GE Aerospace expects adjusted revenue to grow low double
+           digits" - the nearest subject is GE Aerospace, the company. */
+        const candAt = before.lastIndexOf(cand);
+        const subj = /\b((?:[A-Z][A-Za-z&]*\s+){0,2}[A-Z][A-Za-z&]*)\s+(?:now\s+|still\s+|also\s+)?(?:continues to\s+)?expects?\b/g;
+        let sm, companyLater = false;
+        while ((sm = subj.exec(before))) {
+          if (sm.index > candAt && isTheCompany(sm[1].trim(), intro)) companyLater = true;
+        }
+        if (!companyLater) part = cand;
       }
     }
     // 2. The nearest heading above.
