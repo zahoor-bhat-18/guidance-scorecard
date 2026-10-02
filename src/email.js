@@ -2202,7 +2202,7 @@ export function renderNothingToScore(input, options) {
   const link = input.cik && acc
     ? "https://www.sec.gov/Archives/edgar/data/" + Number(input.cik) + "/" + acc.replace(/-/g, "") + "/"
     : null;
-  const when = input.filed ? " on " + input.filed : "";
+  const when = input.filed ? " on " + longDate(input.filed) : "";
 
   const lines = [];
   lines.push(company + " (" + input.ticker + ") filed its earnings release" + when + ".");
@@ -2216,7 +2216,10 @@ export function renderNothingToScore(input, options) {
     + " to a reported result - fewer than the three a scorecard needs. You will get a note like"
     + " this each time it reports, and the full scorecard once there is something to score.";
 
-  const subject = company + " reported - no guidance to score this time";
+  // The same words as the full email's subject for the same situation.
+  const subject = shortName(company) + (guided.length
+    ? " reported: new guidance, nothing to score yet"
+    : " reported: no guidance in figures");
 
   const t = [];
   t.push(lines[0]);
@@ -2232,24 +2235,38 @@ export function renderNothingToScore(input, options) {
   t.push("Zahoor · Guidance Scorecard · hello@zahoorbhat.com");
   if (o.unsubscribeUrl) { t.push(""); t.push("Unsubscribe: " + o.unsubscribeUrl); }
 
+  /* The same look as the full email: the grey "nothing to score" hero, the
+     guides under a left rule, then why and where to read the release. */
+  const H = HERO.none;
   const h = [];
-  h.push('<div style="margin:0;padding:24px 0;background:' + CREAM + ';">');
-  h.push('<div style="max-width:560px;margin:0 auto;padding:0 20px;font-family:Georgia,\'Times New Roman\',serif;color:' + INK + ';font-size:16px;line-height:1.5;">');
-  h.push('<div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:' + MUTED + ';">Guidance record</div>');
-  h.push('<h1 style="margin:6px 0 2px;font-size:24px;font-weight:normal;color:' + GREEN + ';">' + esc(company) + '</h1>');
-  h.push('<div style="font-size:14px;color:' + MUTED + ';">' + esc(input.ticker) + '</div>');
-  h.push('<p style="margin:20px 0 0;font-size:17px;">' + esc(lines[0]) + '</p>');
-  h.push('<p style="margin:12px 0 0;">' + esc(lines[1]) + '</p>');
-  for (const g of guided) h.push('<p style="margin:6px 0 0;font-size:15px;">' + esc(g) + '</p>');
-  if (moreGuided) h.push('<p style="margin:6px 0 0;font-size:14px;color:' + MUTED + ';">and ' + moreGuided + ' more</p>');
-  h.push('<p style="margin:16px 0 0;font-size:14px;color:' + MUTED + ';">' + esc(why) + '</p>');
-  if (link) h.push('<p style="margin:12px 0 0;font-size:14px;"><a href="' + esc(link) + '" style="color:' + GREEN + ';">The release on EDGAR</a></p>');
+  h.push('<div style="margin:0;padding:20px 0;background:' + PAGE + ';">');
+  h.push('<div style="max-width:600px;margin:0 auto;background:#ffffff;font-family:' + SANS + ';color:' + INK + ';font-size:15px;line-height:1.45;">');
+  h.push('<div style="background:' + H.bg + ';color:' + H.fg + ';padding:24px 22px 22px;">');
+  h.push('<div style="font-size:13px;color:' + H.sub + ';">' + esc(company + " (" + input.ticker + ")")
+    + (input.filed ? " \u00b7 filed " + esc(longDate(input.filed)) : "") + '</div>');
+  h.push('<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:12px;"><tr>'
+    + '<td style="font-size:50px;font-weight:700;line-height:1;letter-spacing:-1px;padding-right:16px;color:' + H.fg + ';">0</td>'
+    + '<td style="font-size:15px;line-height:1.35;color:' + H.fg + ';">key measures to score<br>in this release</td></tr></table>');
+  h.push('<div style="font-size:15px;line-height:1.45;margin-top:14px;color:' + H.fg + ';">' + esc(guided.length
+    ? "It guided in figures, but nothing it has guided has a result on record to compare yet."
+    : lines[1]) + '</div>');
+  h.push('</div>');
+  h.push('<div style="padding:0 22px 26px;">');
+  if (guided.length) {
+    h.push('<div style="margin-top:24px;padding:2px 0 2px 16px;border-left:3px solid ' + GREEN + ';">');
+    h.push('<div style="font-family:' + SERIF_HEAD + ';font-size:19px;margin:0 0 6px;">What they guide now</div>');
+    for (const g of guided) h.push('<div style="padding:6px 0;font-size:15px;">' + esc(g) + '</div>');
+    if (moreGuided) h.push('<div style="font-size:13px;color:' + SOFT + ';">and ' + moreGuided + ' more</div>');
+    h.push('</div>');
+  }
+  h.push('<p style="margin:22px 0 0;font-size:14px;color:' + SOFT + ';">' + esc(why) + '</p>');
+  if (link) h.push('<p style="margin:14px 0 0;font-size:15px;"><a href="' + esc(link) + '" style="color:' + GREEN + ';font-weight:600;">Read the release on EDGAR</a></p>');
   h.push('<p style="margin-top:26px;font-size:15px;line-height:1.6;">Thanks,<br>Zahoor · Guidance Scorecard · hello@zahoorbhat.com</p>');
   if (o.unsubscribeUrl) {
-    h.push('<p style="margin-top:14px;font-size:12px;color:' + MUTED + ';"><a href="' + esc(o.unsubscribeUrl)
-      + '" style="color:' + MUTED + ';">Unsubscribe</a>' + (o.postalAddress ? ' · ' + esc(o.postalAddress) : '') + '</p>');
+    h.push('<p style="margin-top:14px;font-size:12px;color:' + SOFT + ';"><a href="' + esc(o.unsubscribeUrl)
+      + '" style="color:' + SOFT + ';">Unsubscribe</a>' + (o.postalAddress ? ' · ' + esc(o.postalAddress) : '') + '</p>');
   }
-  h.push('</div></div>');
+  h.push('</div></div></div>');
 
   return { subject, text: t.join("\n"), html: h.join("") };
 }
