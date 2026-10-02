@@ -542,8 +542,22 @@ function toActual(req, row, release, cal) {
     }
   }
 
+  /* THE PERIOD COMPARED AGAINST IS NOT THE PERIOD REPORTED. United's "TRASM
+     up 0.6% compared to first-quarter 2023" came back with the period
+     "first-quarter 2023" - the base of the comparison - and a Q1 2024 guide
+     was refused as "different periods". When the stated period is the one
+     the figure is compared WITH, it is set aside and the release's own
+     period is used instead (below), exactly as for an unreadable one. */
+  let periodText = row.period_text;
+  if (periodText) {
+    const esc = String(periodText).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp("\\b(compared\\s+(?:to|with)|versus|vs\\.?|from|over)\\s+(?:the\\s+)?(?:prior[-\\s]year\\s+)?" + esc, "i")
+      .test(String(row.quote || ""))) {
+      periodText = null;
+    }
+  }
   let resolved = cal
-    ? resolvePeriod(row.period_text, cal, { referenceDate: release.filed, direction: "past" })
+    ? resolvePeriod(periodText, cal, { referenceDate: release.filed, direction: "past" })
     : { period: null, why: "No fiscal calendar was supplied." };
 
   /* The period the release must be reporting, when the stated one cannot be
