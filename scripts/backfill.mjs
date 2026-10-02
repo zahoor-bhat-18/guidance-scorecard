@@ -614,7 +614,57 @@ async function buildOne(ticker) {
       bestByPeriod.set(key, p);
     }
   }
-  const collapsed = Array.from(bestByPeriod.values());
+  let collapsed = Array.from(bestByPeriod.values());
+
+  /**
+   * A REBUILD DOES NOT FORGET A RESULT IT CANNOT FIND AGAIN.
+   *
+   * --rebuild re-scores everything with the current rules - but each rebuild
+   * that changed the questions lost a few results the model had found before:
+   * Carnival's cost per ALBD for 2023, MSC's operating margin, Conagra's
+   * pension income. The model is not more right the second time, only
+   * different, and "no figure found" is not new information.
+   *
+   * So where this run found NO figure for a guide, and the stored record had
+   * scored the same guide (same label, period and figures), the stored answer
+   * is put back through the CURRENT pairing and scoring rules. If today's
+   * rules refuse it, it stays refused; refusals, and anything this run did
+   * find, are untouched. Marked kept_from_previous_build.
+   */
+  if (REBUILD) {
+    const previous = await storedRecord(ticker);
+    if (previous) {
+      const same = (a, b) => JSON.stringify(a || null) === JSON.stringify(b || null);
+      let restored = 0;
+      collapsed = collapsed.map((fresh) => {
+        if (fresh.comparable || !/No reported figure was found/.test(String(fresh.why || ""))) return fresh;
+        const old = (previous.pairs || []).find((o) => o.comparable
+          && o.metric_as_written === fresh.metric_as_written
+          && o.guide_period === fresh.guide_period && same(o.guide, fresh.guide));
+        if (!old || typeof old.actual !== "number") return fresh;
+        const g = {
+          metric: fresh.metric, metric_as_written: fresh.metric_as_written, basis: fresh.basis,
+          unit: fresh.unit, shape: fresh.shape, period: fresh.guide_period, period_text: fresh.guide_period_text,
+          low: fresh.guide.low, high: fresh.guide.high, value: fresh.guide.value,
+          quote: fresh.guide_quote, segment: fresh.segment, from_words: fresh.guide_words,
+        };
+        const a = {
+          metric_as_written: fresh.metric_as_written, guide_period: fresh.guide_period,
+          period: old.actual_period || fresh.guide_period, period_text: old.actual_period_text || null,
+          value: old.actual, unit: old.actual_unit || old.unit, quote: old.quote,
+          found_as: old.actual_found_as || null, basis: old.basis,
+        };
+        const redone = pairUp([g], [a])[0];
+        if (!redone || !redone.comparable) return fresh;
+        const scored = scoreAll([{ ...fresh, ...redone, fromRelease: fresh.fromRelease, answeredBy: fresh.answeredBy,
+          answeredByFiled: fresh.answeredByFiled, guidePath: fresh.guidePath, guide_filed: fresh.guide_filed,
+          kept_from_previous_build: true, why: undefined }], null).pairs[0];
+        restored++;
+        return scored;
+      });
+      if (restored) console.log("  " + ticker + ": " + restored + " result(s) this run could not find kept from the previous build");
+    }
+  }
 
   /**
    * A BACKFILL MAY ONLY ADD.
