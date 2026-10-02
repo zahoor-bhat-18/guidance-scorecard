@@ -623,7 +623,10 @@ async function buildOne(ticker) {
    * that changed the questions lost a few results the model had found before:
    * Carnival's cost per ALBD for 2023, MSC's operating margin, Conagra's
    * pension income. The model is not more right the second time, only
-   * different, and "no figure found" is not new information.
+   * different, and "no figure found" is not new information. The same holds
+   * for an answer refused this time but right last time: Constellation's
+   * fiscal 2025 GAAP EPS (-$0.45) came back as the adjusted figure on one
+   * rebuild and was refused.
    *
    * So where this run found NO figure for a guide, and the stored record had
    * scored the same guide (same label, period and figures), the stored answer
@@ -637,7 +640,12 @@ async function buildOne(ticker) {
       const same = (a, b) => JSON.stringify(a || null) === JSON.stringify(b || null);
       let restored = 0;
       collapsed = collapsed.map((fresh) => {
-        if (fresh.comparable || !/No reported figure was found/.test(String(fresh.why || ""))) return fresh;
+        // Not found, or found but refused for the ANSWER it got (an adjusted
+        // figure for a GAAP guide, and the like). Refusals about the guide
+        // itself - a period not yet ended, a share split, a change of scope -
+        // are never second-guessed.
+        if (fresh.comparable) return fresh;
+        if (/had not ended|split|scope|acquisition|disposal/i.test(String(fresh.why || ""))) return fresh;
         const old = (previous.pairs || []).find((o) => o.comparable
           && o.metric_as_written === fresh.metric_as_written
           && o.guide_period === fresh.guide_period && same(o.guide, fresh.guide));
