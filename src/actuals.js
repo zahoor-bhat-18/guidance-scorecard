@@ -535,7 +535,13 @@ function toActual(req, row, release, cal) {
   if (value !== null && row.found_as) {
     if (req.expectBasis.wantsAdjusted && !found.adjusted && !needsNoLabel(req)) {
       basisMismatch = "The guide is on an adjusted basis and the figure taken is as reported.";
-    } else if (!req.expectBasis.wantsAdjusted && !req.expectBasis.exempt && found.adjusted) {
+    } else if (!req.expectBasis.wantsAdjusted && !req.expectBasis.exempt && found.adjusted
+      /* The figure's OWN label outranks the section it sits in. Constellation
+         prints "EPS (GAAP) $(0.45)" inside a table headed for comparable
+         measures; the section said adjusted, the line said GAAP, and the
+         right GAAP figure was refused. */
+      && !(/\b(gaap|reported)\b/i.test(String(row.found_as || "") + " " + String(row.quote || "").slice(0, 60))
+        && !/non-?gaap|adjusted|comparable/i.test(String(row.found_as || "") + " " + String(row.quote || "").slice(0, 60)))) {
       basisMismatch = "The guide is on a GAAP basis and the figure taken is adjusted.";
     } else if (req.expectBasis.wantsCC && !found.cc) {
       basisMismatch = "The guide is in constant currency and the figure taken is not.";
