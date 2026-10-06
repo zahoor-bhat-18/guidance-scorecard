@@ -15,7 +15,7 @@ import { metricKey } from "./metrics.js";
 
 const MODEL = "deepseek-chat";
 const ENDPOINT = "https://api.deepseek.com/chat/completions";
-const MAX_CHARS = 80000;
+export const MAX_CHARS = 80000;
 
 /* Two filings closer together than this are one event reported twice. A real
    quarter is about ninety days, so nothing legitimate is merged. */
@@ -37,21 +37,83 @@ const SAME_EVENT_DAYS = 45;
  * One rule fixes both. Filings within six weeks are one event and the LATER
  * wins. What was dropped is reported, so a wrong merge is visible.
  */
-export async function earningsReleases(env, cik, limit) {
+/**
+ * Every 8-K the company has filed in the last few years.
+ *
+ * EDGAR's submissions file lists only the latest thousand or so filings of
+ * any kind. For most companies that is years. JPMorgan files about two
+ * thousand documents a MONTH (prospectus supplements for structured notes),
+ * so its list reached back twelve months and held four earnings releases,
+ * where fourteen are wanted. Every large bank is the same.
+ *
+ * When the list is cut short like that - older pages exist, and the list
+ * does not reach back four years - EDGAR's own list of the company's 8-Ks
+ * alone is read as well: one request, a hundred 8-Ks, with their items.
+ * For everyone else nothing changes and nothing extra is fetched.
+ */
+const EIGHT_KS = new Map();
+async function eightKs(env, cik) {
+  const held = EIGHT_KS.get(cik);
+  if (held && Date.now() - held.at < 5 * 60 * 1000) return held.list;
+
   const subs = await secJson(env, "https://data.sec.gov/submissions/CIK" + cik + ".json");
   const r = (subs.filings && subs.filings.recent) || {};
   const forms = r.form || [];
+  const list = [];
+  const seen = new Set();
+  let oldest = null;
+  for (let i = 0; i < forms.length; i++) {
+    const filed = r.filingDate[i];
+    if (filed && (!oldest || filed < oldest)) oldest = filed;
+    if (!/^8-K/.test(String(forms[i]))) continue;
+    seen.add(r.accessionNumber[i]);
+    list.push({
+      form: forms[i],
+      accession: r.accessionNumber[i],
+      filed,
+      primaryDocument: (r.primaryDocument || [])[i],
+      items: String((r.items || [])[i] || ""),
+    });
+  }
+
+  const cutShort = ((subs.filings && subs.filings.files) || []).length > 0
+    && oldest && Date.parse(oldest) > Date.now() - 4 * 365 * 86400000;
+  if (cutShort) {
+    try {
+      const feed = await fetchDoc(env, "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=" + cik
+        + "&type=8-K&dateb=&owner=include&count=100&output=atom");
+      const entry = /<entry>([\s\S]*?)<\/entry>/g;
+      let m;
+      while ((m = entry.exec(feed))) {
+        const pick = (tag) => { const x = m[1].match(new RegExp("<" + tag + ">([^<]*)<")); return x ? x[1].trim() : ""; };
+        const accession = pick("accession-number");
+        const form = pick("filing-type");
+        if (!accession || seen.has(accession) || !/^8-K/.test(form)) continue;
+        seen.add(accession);
+        // "items 2.02 and 9.01" -> "2.02,9.01", as the submissions file writes it.
+        const items = (pick("items-desc").match(/\d+\.\d+/g) || []).join(",");
+        list.push({ form, accession, filed: pick("filing-date"), primaryDocument: undefined, items });
+      }
+    } catch (e) {
+      console.error("Older 8-Ks for " + cik + " could not be listed: " + e.message);
+    }
+  }
+
+  EIGHT_KS.set(cik, { at: Date.now(), list });
+  return list;
+}
+
+export async function earningsReleases(env, cik, limit) {
   const all = [];
 
-  for (let i = 0; i < forms.length; i++) {
-    if (forms[i] !== "8-K") continue;
-    const items = String((r.items || [])[i] || "");
-    if (!items.includes("2.02")) continue;
+  for (const f of await eightKs(env, cik)) {
+    if (f.form !== "8-K") continue;
+    if (!f.items.includes("2.02")) continue;
     all.push({
-      accession: r.accessionNumber[i],
-      filed: r.filingDate[i],
-      primaryDocument: r.primaryDocument[i],
-      items,
+      accession: f.accession,
+      filed: f.filed,
+      primaryDocument: f.primaryDocument,
+      items: f.items,
     });
   }
 
@@ -1598,7 +1660,9 @@ const MAX_COMPANIONS = 3;
  */
 export function looksLikeGuidance(text) {
   const t = String(text || "");
-  const word = /\b(guidance|outlook|forecast)\b/gi;
+  // A footnote mark may be stuck to the word: JPMorgan's slide is headed
+  // "Outlook1", and its April 2026 deck was passed over for that digit.
+  const word = /\b(guidance|outlook|forecast)\d{0,2}\b/gi;
   const figure = /(\d[\d,]*(\.\d+)?\s?(%|percent\b)|\$\s?\d)/i;
   let m;
   while ((m = word.exec(t))) {
@@ -1619,28 +1683,50 @@ export function looksLikeGuidance(text) {
  * submissions list the releases come from.
  */
 export async function completedDeals(env, cik) {
-  const subs = await secJson(env, "https://data.sec.gov/submissions/CIK" + cik + ".json");
-  const r = (subs.filings && subs.filings.recent) || {};
   const out = [];
-  for (let i = 0; i < (r.form || []).length; i++) {
-    if (!/^8-K/.test(String(r.form[i]))) continue;
-    const items = String((r.items || [])[i] || "");
-    if (!/(^|[^0-9.])2\.01([^0-9]|$)/.test(items)) continue;
-    out.push({ accession: r.accessionNumber[i], filed: r.filingDate[i], items });
+  for (const f of await eightKs(env, cik)) {
+    if (!/(^|[^0-9.])2\.01([^0-9]|$)/.test(f.items)) continue;
+    out.push({ accession: f.accession, filed: f.filed, items: f.items });
   }
   return out.sort((a, b) => String(a.filed).localeCompare(String(b.filed)));
 }
 
+/**
+ * The text of the other 8-Ks filed the same day as a release.
+ *
+ * For the RESULTS side of a company whose guidance lives beside its release
+ * (see guidanceFrom). JPMorgan guides "adjusted expense" and "net interest
+ * income excluding Markets" on a slide, and reports them on a slide: the
+ * press release never uses the first term at all. A guide read from the
+ * deck is answered from the next deck, with the release.
+ */
+export async function textBesideRelease(env, cik, release, room) {
+  let sameDay = [];
+  try {
+    sameDay = (await updateCandidates(env, cik)).filter((f) => f.filed === release.filed
+      && f.accession !== release.accession && !/(^|[^0-9.])2\.02([^0-9]|$)/.test(String(f.items || "")));
+  } catch {
+    return "";
+  }
+  let out = "";
+  for (const f of sameDay.slice(0, MAX_COMPANIONS)) {
+    try {
+      const beside = await readFiling(env, cik, f.accession);
+      if (out.length + beside.text.length > (room || 40000)) continue;
+      out += (out ? "\n\n" : "") + beside.text;
+    } catch (e) {
+      console.error("Filing beside the release " + f.accession + " could not be read: " + e.message);
+    }
+  }
+  return out;
+}
+
 /** Every 8-K that could carry a guidance update, oldest first. */
 export async function updateCandidates(env, cik) {
-  const subs = await secJson(env, "https://data.sec.gov/submissions/CIK" + cik + ".json");
-  const r = (subs.filings && subs.filings.recent) || {};
   const out = [];
-  for (let i = 0; i < (r.form || []).length; i++) {
-    if (!/^8-K/.test(String(r.form[i]))) continue;
-    const items = String((r.items || [])[i] || "");
-    if (!UPDATE_ITEMS.test(items)) continue;
-    out.push({ accession: r.accessionNumber[i], filed: r.filingDate[i], items });
+  for (const f of await eightKs(env, cik)) {
+    if (!UPDATE_ITEMS.test(f.items)) continue;
+    out.push({ accession: f.accession, filed: f.filed, items: f.items });
   }
   out.sort((a, b) => (a.filed < b.filed ? -1 : 1));
   return out;
@@ -1716,6 +1802,11 @@ function matchIn(update, g) {
     const exact = byKey.filter((u) => String(u.metric_as_written) === String(g.metric_as_written));
     return exact.length === 1 ? exact[0] : null;
   }
+  // "other" is not a class, it is everything without one. JPMorgan's February
+  // 2026 update gave one figure, "2026 expense outlook of ~$105B", and it
+  // replaced the guides for net interest income as well, all three being
+  // "other". Only a named class may be matched this way.
+  if (!g.metric || g.metric === "other") return null;
   const byClass = same.filter((u) => u.metric && u.metric === g.metric);
   return byClass.length === 1 ? byClass[0] : null;
 }
