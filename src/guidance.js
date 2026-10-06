@@ -137,7 +137,44 @@ async function collectExhibits(env, cik, accession) {
     };
   }
 
-  const biggest = items.slice().sort((a, b) => Number(b.size || 0) - Number(a.size || 0))[0];
+  /* "R1.htm", "R2.htm" are pages EDGAR generates from the cover page's tags.
+     They are never the release, and they can be the largest file: for seven
+     of McCormick's fourteen releases R1.htm (44 KB) outweighed the press
+     release (42 KB), so the generated page was read and the release was not. */
+  const real = items.filter((f) => !/^R\d+\.html?$/i.test(f.name));
+  const pool = real.length ? real : items;
+  const biggest = pool.slice().sort((a, b) => Number(b.size || 0) - Number(a.size || 0))[0];
+
+  /* And the largest of the rest is not always the exhibit either. JPMorgan's
+     earnings presentation (27 KB of slide text) is smaller than the 8-K
+     cover page it is attached to. The filing's own index page says which
+     document is which ("EX-99"). It is asked only here, where the names did
+     not say, and it changes what is read only when the largest file is NOT
+     an exhibit: then the exhibits are read first and the largest file after
+     them, because an 8-K sometimes carries its news in its own body (Delta's
+     March 2025 guidance cut). Where the largest is the exhibit, what is read
+     is exactly as before. */
+  try {
+    const page = await fetchDoc(env, base + "/" + accession + "-index.html");
+    const typed = [];
+    const row = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+    let m;
+    while ((m = row.exec(page))) {
+      const file = m[1].match(/href="(?:\/ix\?doc=)?\/Archives\/edgar\/data\/\d+\/\d+\/([^"\/]+\.html?)"/i);
+      if (!file || !/<td[^>]*>\s*EX-99[^<]*<\/td>/i.test(m[1])) continue;
+      const known = items.find((f) => f.name === file[1]);
+      if (!typed.some((f) => f.name === file[1])) typed.push({ name: file[1], size: known ? known.size : 0 });
+    }
+    if (typed.length && !typed.some((f) => f.name === biggest.name)) {
+      return {
+        pickedBy: "the exhibits the filing index marks EX-99, then the largest HTML",
+        files: typed.slice(0, 3).concat([biggest]).map((f) => ({ name: f.name, url: base + "/" + f.name, bytes: Number(f.size || 0) })),
+      };
+    }
+  } catch (e) {
+    // The index page could not be read: the size rule stands.
+  }
+
   return {
     pickedBy: "largest HTML in the filing",
     files: [{ name: biggest.name, url: base + "/" + biggest.name, bytes: Number(biggest.size || 0) }],
@@ -1458,6 +1495,47 @@ export async function guidanceFrom(env, cik, release, cal, readAlready) {
   const twins = gaapTwins(asExtracted);
   const guides = asExtracted.filter((g) => !isEffectGuide(g) && !twins.has(g));
 
+  /* THE OUTLOOK FILED BESIDE THE RELEASE.
+   *
+   * JPMorgan's earnings release carries no outlook at all. Its outlook is a
+   * slide in the earnings presentation, filed the same day as an 8-K of its
+   * own (item 7.01) - and readable, because the filing carries the slides'
+   * text. Reading only the 2.02 filing, the company looked as though it gave
+   * no guidance.
+   *
+   * So when a release has NO guide with a figure, the other 8-Ks filed that
+   * day are read as part of it. Only then: a release that guides on its own
+   * is left exactly as it was, with the same questions and saved answers.
+   * Not for an update filing (readAlready), which is one of these itself.
+   */
+  const companions = [];
+  if (!readAlready && !guides.some(hasFigure)) {
+    let sameDay = [];
+    try {
+      sameDay = (await updateCandidates(env, cik)).filter((f) => f.filed === release.filed
+        && f.accession !== release.accession && !/(^|[^0-9.])2\.02([^0-9]|$)/.test(String(f.items || "")));
+    } catch {
+      sameDay = [];
+    }
+    for (const f of sameDay.slice(0, MAX_COMPANIONS)) {
+      try {
+        const beside = await readFiling(env, cik, f.accession);
+        if (!looksLikeGuidance(beside.text)) continue;
+        const g = await guidanceFrom(env, cik, f, calendar || cal, beside);
+        // A figure for a period already over is a result on a slide, not a guide.
+        const open = (x) => !(x.period && (calendar || cal) && periodIsClosedBy(x.period, f.filed, calendar || cal));
+        const tag = (x) => ({ ...x, filed_beside: f.accession });
+        const add = (g.guides || []).filter(open).map(tag);
+        if (!add.length) continue;
+        guides.push(...add);
+        asExtracted.push(...(g.asExtracted || []).filter(open).filter((x) => !isEffectGuide(x)).map(tag));
+        companions.push({ accession: f.accession, items: f.items, guides: add.length });
+      } catch (e) {
+        console.error("Filing beside the release " + f.accession + " could not be read: " + e.message);
+      }
+    }
+  }
+
   return {
     release: {
       accession: release.accession,
@@ -1466,6 +1544,7 @@ export async function guidanceFrom(env, cik, release, cal, readAlready) {
       pickedBy: filing.pickedBy,
       files: filing.files,
       textChars: filing.chars,
+      companions,
     },
     calendar,
     scopeAsked: scoped.asked,
@@ -1503,6 +1582,8 @@ export async function guidanceFrom(env, cik, release, cal, readAlready) {
 
 const UPDATE_ITEMS = /(^|[^0-9.])(2\.02|7\.01|8\.01)([^0-9]|$)/;
 const MAX_UPDATES_PER_GAP = 6;
+// Other 8-Ks filed the same day as a release that carries no guidance itself.
+const MAX_COMPANIONS = 3;
 
 /**
  * Does this filing talk about guidance WITH numbers?
