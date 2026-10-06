@@ -34,6 +34,7 @@
  */
 
 import { revisionSentence } from "./summary.js";
+import { labelAsCompany, namesSaidBy } from "./metrics.js";
 
 /* Metric labels drift between releases even at the same company. Walmart wrote
    "Adj. operating income (cc)" in one and "Operating income (cc)" in the next,
@@ -334,13 +335,16 @@ export function revisionsBetween(rawBefore, rawAfter, opts) {
    * for the same reason the after side prefers one: a point is usually half of
    * a range with the other end lost.
    */
+  const laterNames = namesSaidBy(rawAfter);
   const index = new Map();
   for (const g of rawBefore || []) {
     const n = numbersOf(g);
     if (n.low === null && n.high === null && n.value === null) continue;
     if (!g.period) continue;
 
-    const key = labelKey(g) + "|" + g.period;
+    // A part that is the company by the later release's name is the same
+    // line as the company's (GE Aerospace, January 2024) - labelAsCompany.
+    const key = labelKey({ metric_as_written: labelAsCompany(g, laterNames) }) + "|" + g.period;
     if (!index.has(key)) index.set(key, []);
     index.get(key).push(g);
   }
