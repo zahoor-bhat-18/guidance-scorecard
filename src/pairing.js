@@ -681,7 +681,13 @@ export function oneGuidePerFigure(pairs) {
        does not. */
     const found = String((p.answer && p.answer.found_as) || p.actual_found_as || "");
     const line = /\borganic\b|constant[-\s]currency|\bcomparable\b|same[-\s]store|\bcomps?\b/i.exec(found);
-    const key = [p.answeredBy || "", p.guide_period || "", p.metric, p.unit || "", Number(p.actual.toFixed(6)),
+    /* Money in one scale. UnitedHealth's revenue was guided in billions in
+       one release and millions in another, and its $448,086m was scored
+       against both; its operating cash flow against a withdrawn $32-33bn
+       guide and the $16,000m that replaced it. */
+    const money = /millions|billions/i.test(String(p.actual_unit || p.unit || ""));
+    const amount = money && /millions/i.test(String(p.actual_unit || p.unit || "")) ? p.actual / 1000 : p.actual;
+    const key = [p.answeredBy || "", p.guide_period || "", p.metric, money ? "money" : (p.unit || ""), money ? Number(amount.toPrecision(3)) : Number(amount.toFixed(6)),
       line ? line[0].toLowerCase().replace(/[-\s]/g, "") : ""].join("|");
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(p);
@@ -716,7 +722,24 @@ export function oneGuidePerFigure(pairs) {
     // then by the date the carried guide was filed.
     const rank = (p) => (p.carried_from ? String(p.guide_filed || "0000") : "9999");
     const sorted = left.slice().sort((a, b) => (rank(a) < rank(b) ? 1 : rank(a) > rank(b) ? -1 : 0));
-    if (rank(sorted[0]) === rank(sorted[1])) continue;   // no telling which is later
+    if (rank(sorted[0]) === rank(sorted[1])) {
+      /* No telling which is later - unless they are the SAME guide, printed
+         once in billions and once in millions (UnitedHealth's revenue). Then
+         one is enough. */
+      const inBn = (p) => {
+        const k = /millions/i.test(String(p.unit || "")) ? 0.001 : 1;
+        return [p.guide && p.guide.low, p.guide && p.guide.high, p.guide && p.guide.value]
+          .map((n) => (typeof n === "number" ? Number((n * k).toPrecision(6)) : null)).join(",");
+      };
+      const firstOf = new Map();
+      for (const p of left) {
+        const k = inBn(p);
+        if (!firstOf.has(k)) { firstOf.set(k, p); continue; }
+        refuse(p, "The same guide is stated twice in the release; it is scored once.");
+        removed++;
+      }
+      continue;
+    }
     for (const p of sorted.slice(1)) {
       refuse(p, "A later guide for the same figure replaced this one.");
       removed++;
