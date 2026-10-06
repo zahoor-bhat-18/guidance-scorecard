@@ -674,7 +674,15 @@ export function oneGuidePerFigure(pairs) {
   for (const p of pairs || []) {
     if (!p || !p.comparable || typeof p.actual !== "number") continue;
     if (!p.metric || p.metric === "other") continue;
-    const key = [p.answeredBy || "", p.guide_period || "", p.metric, p.unit || "", Number(p.actual.toFixed(6))].join("|");
+    /* The same NUMBER is not always the same LINE. General Electric's 2023
+       organic revenues and adjusted revenues both grew 17%, on two lines of
+       one table, answering two different guides. A figure the release labels
+       organic, comparable or constant-currency is kept apart from one it
+       does not. */
+    const found = String((p.answer && p.answer.found_as) || p.actual_found_as || "");
+    const line = /\borganic\b|constant[-\s]currency|\bcomparable\b|same[-\s]store|\bcomps?\b/i.exec(found);
+    const key = [p.answeredBy || "", p.guide_period || "", p.metric, p.unit || "", Number(p.actual.toFixed(6)),
+      line ? line[0].toLowerCase().replace(/[-\s]/g, "") : ""].join("|");
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(p);
   }
