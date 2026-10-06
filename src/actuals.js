@@ -73,6 +73,14 @@ const NO_ADJUSTED_VERSION = new Set(["revenue", "capex", "operating_cash_flow"])
 
 function exemptFromAdjustment(metric, label) {
   if (NO_ADJUSTED_VERSION.has(metric)) return true;
+  /* A bank's net interest income and charge-off rate have no "adjusted"
+     twin to be mistaken for. JPMorgan's were asked for as "the ADJUSTED
+     version", and the plain "Net interest income" line was then refused as
+     "the figure taken is as reported" - or not returned at all. A label that
+     says adjusted or excluding ("adjusted expense", "NII excluding Markets")
+     is not touched by this: it still asks for what it says. */
+  if (/\bnet interest income\b|\bnii\b|net charge-?off|\bnco\b/i.test(String(label || ""))
+    && !/adjusted|excluding|\bex\b|\bcore\b/i.test(String(label || ""))) return true;
   return /comparable sales|comp sales|net sales|\brevenue\b|capacity|capital expenditure/i
     .test(String(label || ""));
 }
@@ -1130,6 +1138,87 @@ async function secondLook(env, requests, actuals, text, release, cal) {
 }
 
 /* ------------------------------------------------------------------ *
+ * A figure read straight from a table whose columns are periods
+ * ------------------------------------------------------------------ */
+
+/**
+ * Netflix prints one table: a row per measure, a column per quarter, the
+ * last column the forecast.
+ *
+ *   (in millions except per share data) Q2'25 Q3'25 Q4'25 Q1'26 Q2'26 Q3'26 Forecast
+ *   Operating Income $ 3,775 $ 3,248 $ 2,957 $ 3,957 $ 4,193 $ 4,268
+ *
+ * The forecast is read from it as a guide - and three months later the
+ * result sits in the same row, one column to the left. The model, asked for
+ * "operating income for the second quarter", came back empty for twenty-two
+ * such guides. No reading is needed: the header names each column's period
+ * and the row carries the measure's own label.
+ *
+ * Used only where every other step left the answer empty, only where the row
+ * has exactly one figure per column, and only for the column whose heading
+ * is the period guided. Returns a row in the shape the model returns, so it
+ * passes through the same checks as any other answer.
+ */
+const COLUMN_PERIOD = /\bQ([1-4])\s?['\u2019]?\s?(\d{2}|\d{4})\b|\b([1-4])Q\s?['\u2019]?(\d{2}|\d{4})\b|\bFY\s?['\u2019]?(\d{2}|\d{4})\b/g;
+function columnPeriods(line) {
+  const out = [];
+  for (const m of String(line).matchAll(COLUMN_PERIOD)) {
+    const q = m[1] || m[3] || null;
+    const yy = m[2] || m[4] || m[5];
+    const year = yy.length === 2 ? 2000 + Number(yy) : Number(yy);
+    out.push({ period: year + (q ? "Q" + q : "FY"), text: m[0] });
+  }
+  return out;
+}
+export function fromPeriodTable(text, req) {
+  const want = req && req.guidePeriod;
+  const name = String((req && req.metric_as_written) || "").toLowerCase().replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
+  if (!want || !name || !text) return null;
+  const lines = String(text).split("\n");
+  const hits = [];
+  for (let h = 0; h < lines.length; h++) {
+    if (lines[h].length > 300) continue;
+    const cols = columnPeriods(lines[h]);
+    if (cols.length < 3) continue;
+    const at = cols.findIndex((c) => c.period === want);
+    if (at < 0 || cols.filter((c) => c.period === want).length !== 1) continue;
+    const scale = /in billions/i.test(lines[h]) ? "USD billions" : /in thousands/i.test(lines[h]) ? "USD thousands"
+      : /in millions/i.test(lines[h] + " " + (lines[h - 1] || "")) ? "USD millions" : null;
+    for (let r = h + 1; r < Math.min(lines.length, h + 40); r++) {
+      const raw = lines[r];
+      if (!raw.trim()) continue;
+      if (columnPeriods(raw).length >= 3) break;             // the next table
+      const firstDigit = raw.search(/[$(]?\s?-?\d/);
+      if (firstDigit < 1) continue;
+      const head = raw.slice(0, firstDigit).toLowerCase().replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
+      if (head !== name) continue;
+      const cells = raw.slice(firstDigit).replace(/(\d),(?=\d{3})/g, "$1").match(/\(\s?\d+\.?\d*\s?\)|-?\d+\.?\d*/g) || [];
+      if (cells.length !== cols.length) continue;            // one figure per column, or not this table
+      const cell = cells[at];
+      const value = (/^\(/.test(cell) ? -1 : 1) * Number(cell.replace(/[()\s]/g, ""));
+      const percent = /%/.test(raw);
+      const perShare = /per share|\beps\b/i.test(name);
+      hits.push({
+        id: 0,
+        metric: req.query,
+        found_as: raw.slice(0, firstDigit).trim(),
+        section: lines[h].replace(/\s+/g, " ").trim().slice(0, 120),
+        period_text: cols[at].text,
+        period_exact: want,
+        value,
+        unit: percent ? "percent" : perShare ? "USD per share" : scale,
+        quote: raw.replace(/\s+/g, " ").trim(),
+      });
+      break;
+    }
+  }
+  // Two tables that disagree settle nothing.
+  if (!hits.length) return null;
+  if (hits.some((x) => x.value !== hits[0].value)) return null;
+  return hits[0];
+}
+
+/* ------------------------------------------------------------------ *
  * Growth guides: computed from two printed amounts
  * ------------------------------------------------------------------ */
 
@@ -1422,6 +1511,30 @@ export async function actualsFrom(env, cik, release, requests, cal) {
 
   // Anything still empty for a period that has ended: one more, shorter ask.
   const second = await secondLook(env, requests, actuals, filing.text, release, cal);
+
+  // Still empty, and the release has a table with a column per period: the
+  // figure is read from the guide's own row. No model call.
+  let fromTable = 0;
+  requests.forEach((req, i) => {
+    const a = actuals[i];
+    if (!a || a.value !== null || a.period_open) return;
+    if (!req.guidePeriod || !guidePeriodClosed(req, release, cal)) return;
+    const row = fromPeriodTable(filing.text, req);
+    if (!row || !row.unit) return;
+    const cand = toActual(req, row, release, cal);
+    // The column heading IS the period, in the company's own labels.
+    const placed = { ...cand, period: row.period_exact, period_assumed: false, period_open: false,
+      period_how: "the column headed " + row.period_text + " in the release's own table" };
+    /* Same row label as the guide, in the table the guide is read from: the
+       basis is the same by construction, whatever word is or is not on it. */
+    const labelSaysBasis = /adjusted|non-?gaap|\bgaap\b|\bcore\b/i.test(String(req.metric_as_written || ""));
+    if (placed.basis_mismatch && !labelSaysBasis) placed.basis_mismatch = null;
+    if (placed.value === null || placed.basis_mismatch || placed.unit_mismatch) return;
+    console.log("Table " + release.accession + " " + req.guidePeriod + " " + req.metric_as_written + ": "
+      + JSON.stringify(row.quote.slice(0, 80)) + " column " + row.period_text + " = " + placed.value + " - USED");
+    actuals[i] = { ...placed, from_table: true };
+    fromTable++;
+  });
 
   // Any growth guide still without a usable answer: build it from two amounts.
   const growth = await growthFromLevels(env, requests, actuals, recheck.adjustedFor, filing.text, release, cal);
