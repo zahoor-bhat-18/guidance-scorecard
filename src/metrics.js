@@ -106,3 +106,34 @@ export function displayLabel(labels) {
    */
   return chosen.charAt(0).toUpperCase() + chosen.slice(1);
 }
+
+/**
+ * A guide's label without the name of its part, when that part has since
+ * become the company itself.
+ *
+ * In January 2024 General Electric guided "GE Aerospace: operating profit" of
+ * $6.0bn to $6.5bn, GE Aerospace then being one of its businesses. From April
+ * 2024 GE Aerospace WAS the company, and its releases raised "operating
+ * profit" three times. The labels differed, so the January guide was never
+ * seen as replaced, and it was scored against the year's result as the guide
+ * in force.
+ *
+ * `laterNames` holds the headline names of the releases filed AFTER the
+ * guide (lower case). Only an exact match counts: "GE Vernova", spun off and
+ * never the name on a later GE release, stays a part.
+ */
+export function labelAsCompany(g, laterNames) {
+  const label = String((g && g.metric_as_written) || "");
+  const part = String((g && g.segment) || "").trim();
+  if (!part || !laterNames || !laterNames.has(part.toLowerCase())) return label;
+  const esc = part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const rest = label.replace(new RegExp("^\\s*" + esc + "\\s*:?\\s*", "i"), "").trim();
+  return rest || label;
+}
+
+/** The headline names carried on a set of guides, lower case. */
+export function namesSaidBy(guides, into) {
+  const out = into || new Set();
+  for (const g of guides || []) if (g && g.said_by) out.add(String(g.said_by).toLowerCase().trim());
+  return out;
+}
