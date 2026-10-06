@@ -641,3 +641,78 @@ export function guidesToCarry(older, inForce, answerFiled, priorFiled, cal) {
 function hasFigure(g) {
   return typeof g.low === "number" || typeof g.high === "number" || typeof g.value === "number";
 }
+
+/**
+ * ONE REPORTED FIGURE ANSWERS ONE GUIDE.
+ *
+ * UnitedHealth's 2025 adjusted earnings of $16.35 a share were scored three
+ * times: against its adjusted guide (at least $16.00 - right), against its
+ * GAAP guide (at least $14.90 - a different measure), and against the GAAP
+ * guide it had given in January and since withdrawn ($28.15 to $28.65 - a
+ * "miss" by twelve dollars). Elevance, Abbott, Netflix and Fastenal each had
+ * the same: an old guide scored beside the one that replaced it, because the
+ * two releases worded the label differently ("FCF", "free cash flow").
+ *
+ * Where a release's one figure has been paired with several guides of the
+ * same kind for the same period:
+ *   1. If the company guides the measure both adjusted and not, and the
+ *      figure's own label says which it is, only the guides on that basis
+ *      keep it. The basis is read from the LABELS, never from the model's
+ *      basis guess.
+ *   2. Of the guides left, the latest stands - the one from the release just
+ *      before, else the most recently filed. The earlier ones were replaced.
+ *
+ * Only ever removes a pair; never makes one. Measures with no named kind
+ * ("other") are left alone: two different measures can print the same number
+ * (JPMorgan's fourth-quarter net interest income and expense, both $23.9bn).
+ * Works in place, on every pair answered by the same release.
+ */
+const SAYS_ADJUSTED = /\badj(?:\.|usted)?\b|non-?gaap|\bcore\b|\bunderlying\b|\bcomparable\b/i;
+const SAYS_GAAP = /\b(gaap|reported)\b/i;
+export function oneGuidePerFigure(pairs) {
+  const groups = new Map();
+  for (const p of pairs || []) {
+    if (!p || !p.comparable || typeof p.actual !== "number") continue;
+    if (!p.metric || p.metric === "other") continue;
+    const key = [p.answeredBy || "", p.guide_period || "", p.metric, p.unit || "", Number(p.actual.toFixed(6))].join("|");
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(p);
+  }
+  const refuse = (p, why) => { p.comparable = false; p.why = why; p.score = null; p.set_aside = "one figure, one guide"; };
+  let removed = 0;
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    let left = group;
+
+    const found = String((group[0].answer && group[0].answer.found_as) || group[0].actual_found_as || "");
+    const figure = SAYS_ADJUSTED.test(found) ? "adj" : SAYS_GAAP.test(found) ? "gaap" : null;
+    const basisOf = (p) => {
+      const l = String(p.metric_as_written || "");
+      return SAYS_ADJUSTED.test(l) ? "adj" : "plain";
+    };
+    const adj = group.filter((p) => basisOf(p) === "adj");
+    if (figure && adj.length && adj.length < group.length) {
+      const keep = figure === "adj" ? "adj" : "plain";
+      for (const p of group) {
+        if (basisOf(p) === keep) continue;
+        refuse(p, figure === "adj"
+          ? "The company guides this measure both adjusted and as reported; the figure found is the adjusted one, and it is scored against the adjusted guide."
+          : "The company guides this measure both adjusted and as reported; the figure found is the reported one, and it is scored against the reported guide.");
+        removed++;
+      }
+      left = group.filter((p) => basisOf(p) === keep);
+    }
+
+    if (left.length < 2) continue;
+    // Latest first: the guide from the release just before (not carried),
+    // then by the date the carried guide was filed.
+    const rank = (p) => (p.carried_from ? String(p.guide_filed || "0000") : "9999");
+    const sorted = left.slice().sort((a, b) => (rank(a) < rank(b) ? 1 : rank(a) > rank(b) ? -1 : 0));
+    if (rank(sorted[0]) === rank(sorted[1])) continue;   // no telling which is later
+    for (const p of sorted.slice(1)) {
+      refuse(p, "A later guide for the same figure replaced this one.");
+      removed++;
+    }
+  }
+  return removed;
+}
