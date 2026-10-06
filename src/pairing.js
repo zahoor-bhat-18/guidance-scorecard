@@ -21,7 +21,7 @@
  * than being an invisible assumption.
  */
 
-import { metricKey } from "./metrics.js";
+import { metricKey, labelAsCompany, namesSaidBy } from "./metrics.js";
 import { samePeriod, periodIsClosedBy } from "./period.js";
 
 /**
@@ -614,11 +614,15 @@ export function guidesToCarry(older, inForce, answerFiled, priorFiled, cal) {
     if (!g.period) continue;
     has.add(replacedKey(g.metric_as_written || g.metric) + "|" + g.period);
   }
+  /* Names the company has gone by in the NEWER releases. An older guide for
+     a part by one of those names is a guide for the company - see
+     labelAsCompany. `older` runs newest first, so the set grows as it goes. */
+  const laterNames = namesSaidBy(inForce);
   const out = [];
   for (const src of older || []) {
     for (const g of src.guides || []) {
       if (!g.period) continue;
-      const key = replacedKey(g.metric_as_written || g.metric) + "|" + g.period;
+      const key = replacedKey(labelAsCompany(g, laterNames) || g.metric) + "|" + g.period;
       if (has.has(key)) continue;
       if (!hasFigure(g)) { has.add(key); continue; }
       let endsNow = false;
@@ -629,6 +633,7 @@ export function guidesToCarry(older, inForce, answerFiled, priorFiled, cal) {
       has.add(key);
       out.push({ ...g, filed_from: src.filed, carried_from: src.accession });
     }
+    namesSaidBy(src.guides, laterNames);
   }
   return out;
 }
