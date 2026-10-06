@@ -662,7 +662,7 @@ function recoverReaffirmed(g) {
  * A guide that cannot be scored is a small loss. A guide scored against a
  * number nobody wrote is the loss that ends the product.
  */
-function guardGuide(input) {
+export function guardGuide(input) {
   const g = input.shape === "reaffirmed" ? recoverReaffirmed(input) : input;
 
   const pool = quoteNumbers(g.quote);
@@ -684,7 +684,16 @@ function guardGuide(input) {
 
   if (!stated.length) return { ...g, numbers_verified: true };
 
-  const unsupported = stated.filter(([, v]) => !present(v, pool)).map(([k, v]) => k + "=" + v);
+  /* A YEAR IS NOT A FIGURE. UnitedHealth "affirmed the 2024 performance
+     objectives established at its November 29th Investor Conference", and
+     the guide came back as $29 to $2,024 a share: both numbers are in the
+     sentence, so both passed. A whole number that reads as a year counts as
+     the company's figure only where the sentence prints it as money or a
+     percentage ("$2,024 million", "2,024%"); otherwise it is the date. */
+  const plain = String(g.quote || "").replace(/(\d),(?=\d{3})/g, "$1");
+  const isYear = (v) => Number.isInteger(v) && v >= 1990 && v <= 2100 && g.unit !== "other"
+    && !new RegExp("\\$\\s?" + v + "\\b|\\b" + v + "\\s?(%|percent|million|billion|bn|bps|basis points)", "i").test(plain);
+  const unsupported = stated.filter(([, v]) => !present(v, pool) || isYear(v)).map(([k, v]) => k + "=" + v);
   if (!unsupported.length) return { ...g, numbers_verified: true };
 
   return {
