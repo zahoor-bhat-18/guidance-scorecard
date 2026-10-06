@@ -678,6 +678,13 @@ async function buildOne(ticker) {
     }
   }
 
+  /* Again, now that results kept from the previous build are back in: one of
+     those can be the second guide scored against a figure (it was, on the
+     first run of this rule - nothing was set aside, because the duplicate
+     arrived after the check). */
+  const setAsideLate = oneGuidePerFigure(collapsed);
+  if (setAsideLate) console.log("  " + ticker + ": " + setAsideLate + " more set aside after results were kept from the previous build");
+
   /**
    * A BACKFILL MAY ONLY ADD.
    *
