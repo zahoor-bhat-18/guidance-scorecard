@@ -13,7 +13,7 @@
  * out to be.
  */
 
-import { readFiling } from "./guidance.js";
+import { readFiling, textBesideRelease, MAX_CHARS } from "./guidance.js";
 import { resolvePeriod, periodReportedBy, periodIsClosedBy } from "./period.js";
 
 const MODEL = "deepseek-chat";
@@ -293,6 +293,9 @@ export function requestsFrom(guides, cal) {
       // Not sent to the model. Read by recheckGaap: what the guide says it is
       // measured from ("compared to $2.52 of earnings per share in 2023").
       guideQuote: g.quote || null,
+      // Not sent to the model either: the guide came from a filing beside
+      // its release, so the result is looked for beside the next one too.
+      beside: Boolean(g.filed_beside),
     });
   }
   return out;
@@ -1337,7 +1340,16 @@ async function growthFromLevels(env, requests, actuals, adjustedFor, text, relea
  * markers in the guide catches it.
  */
 export async function actualsFrom(env, cik, release, requests, cal) {
-  const filing = await readFiling(env, cik, release.accession);
+  let filing = await readFiling(env, cik, release.accession);
+  /* A guide read from a filing BESIDE its release (JPMorgan's outlook slide)
+     is answered from the filing beside this one as well: the measures on the
+     slide are reported on the slide. Put first, so the release's long tables
+     are what the character budget cuts. Only for those guides - every other
+     company's question is exactly as it was. */
+  if (requests.some((r) => r.beside)) {
+    const extra = await textBesideRelease(env, cik, release, MAX_CHARS / 2);
+    if (extra) filing = { ...filing, text: (extra + "\n\n" + filing.text).slice(0, MAX_CHARS), besideRead: true };
+  }
   const rows = await callModel(env, requests, filing.text);
 
   /**
