@@ -19,13 +19,14 @@
  */
 
 import { resolveCik, companyCalendar, shareCountChanges } from "../src/xbrl.js";
-import { earningsReleases, guidanceFrom, guidanceUpdatesBetween, applyUpdates, completedDeals } from "../src/guidance.js";
+import { earningsReleases, guidanceFrom, guidanceUpdatesBetween, applyUpdates, completedDeals, updateCandidates } from "../src/guidance.js";
 import { requestsFrom, actualsFrom } from "../src/actuals.js";
 import { pairUp, refuseAcrossSplit, markOpenAtAnswer, guidesToCarry, oneGuidePerFigure } from "../src/pairing.js";
 import { metricKey } from "../src/metrics.js";
 import { scoreAll } from "../src/score.js";
 import { revisionsBetween } from "../src/revisions.js";
 import { forEmail, headline } from "../src/records.js";
+import { displayName } from "../src/format.js";
 import { renderEmail, renderNothingToScore } from "../src/email.js";
 
 const env = {
@@ -196,7 +197,7 @@ async function handle(ticker) {
     console.log(ticker + ": no record yet - it is being set up, and the setup reads this release itself.");
     return { ticker, skipped: "no record yet (being set up; the setup reads this release)" };
   }
-  const record = JSON.parse(stored);
+  let record = JSON.parse(stored);
 
   const { cik, name } = await resolveCik(env, ticker);
   const calendar = await companyCalendar(env, cik);
@@ -207,8 +208,44 @@ async function handle(ticker) {
 
   // Already briefed. The feed keeps showing a filing for hours, and the other
   // product re-briefed a company because a failure left it unrecorded.
+  /* THE SECOND PASS, for a company whose outlook is filed BESIDE its release.
+   *
+   * JPMorgan's earnings release lands at about 6:30 New York time; its
+   * presentation - the only place it states an outlook, and the only place
+   * it reports "adjusted expense" - is filed as a separate 8-K some three
+   * and a half hours later. The first email cannot wait that long, and
+   * without the second filing it has no outlook and half the results.
+   *
+   * So when the first pass knows a filing is still to come (see `awaiting`
+   * below) it keeps the record as it stood BEFORE the release. The poller
+   * starts this script again for any new 8-K from the company; when one has
+   * arrived on the release's own date, the whole pass is simply done again
+   * from that earlier record, now with both filings to read, and a second
+   * email goes out marked as an update - if, and only if, it has more to say.
+   */
+  let secondPass = null;
   if ((record.releasesRead || []).some((r) => r.accession === current.accession)) {
-    return { ticker, skipped: "Already in the record: " + current.accession };
+    let waiting = null;
+    try { waiting = JSON.parse((await kvGet("awaiting:" + ticker)) || "null"); } catch { waiting = null; }
+    if (!waiting || waiting.accession !== current.accession || waiting.done || !waiting.record) {
+      return { ticker, skipped: "Already in the record: " + current.accession };
+    }
+    let beside = [];
+    try {
+      beside = (await updateCandidates(env, cik))
+        .filter((f) => f.filed === current.filed && f.accession !== current.accession
+          && !/(^|[^0-9.])2\.02([^0-9]|$)/.test(String(f.items || "")))
+        .map((f) => f.accession).sort();
+    } catch (e) {
+      console.error(ticker + ": the filings beside the release could not be listed - " + e.message);
+    }
+    const untried = beside.filter((a) => !(waiting.tried || []).includes(a));
+    if (!untried.length) {
+      return { ticker, skipped: "Already in the record, and nothing new has been filed beside " + current.accession };
+    }
+    secondPass = { waiting, beside, first: record };
+    record = waiting.record;
+    console.log(ticker + ": second pass - " + untried.join(", ") + " filed beside " + current.accession);
   }
 
   // The guides this release answers were extracted when the previous release
@@ -302,6 +339,25 @@ async function handle(ticker) {
     afterFiled: current.filed,
   });
 
+  /* Is a filing still to come? Only asked on the first pass, and only of a
+     company whose guides have come from a filing beside its release before:
+     its outlook is not missing, it has not been filed yet. */
+  const expectsBeside = [...(record.currentGuidance || []), ...(record.openGuides || [])].some((g) => g && g.filed_beside);
+  const gotBeside = ((nowGuiding.release && nowGuiding.release.companions) || []).length > 0;
+  const awaiting = !secondPass && expectsBeside && !gotBeside;
+  // "Not repeated" is not news when the outlook simply has not been filed.
+  const movedRevisions = awaiting ? moved.revisions.filter((r) => r.direction !== "not repeated") : moved.revisions;
+
+  const scoredNow = [...scored.pairs, ...carriedPairs].filter((p) => p.comparable).length;
+  if (secondPass) {
+    const scoredFirst = (secondPass.first.pairs || []).filter((p) => p.comparable && p.answeredBy === current.accession).length;
+    if (!gotBeside && scoredNow <= scoredFirst) {
+      // Nothing more to say. Remembered, so the same filing is not read again.
+      await kvPut("awaiting:" + ticker, JSON.stringify({ ...secondPass.waiting, tried: secondPass.beside }));
+      return { ticker, skipped: "The filing beside " + current.accession + " added no outlook and no result; no second email." };
+    }
+  }
+
   const updated = {
     ...record,
     company: name,
@@ -325,7 +381,7 @@ async function handle(ticker) {
       record.pairs || []
     ),
     revisions: [
-      ...moved.revisions.map((r) => ({ ...r, release: current.accession, filed: current.filed })),
+      ...movedRevisions.map((r) => ({ ...r, release: current.accession, filed: current.filed })),
       ...(record.revisions || []),
     ],
     currentGuidance: nowGuiding.guides,
@@ -338,7 +394,34 @@ async function handle(ticker) {
     ),
   };
 
+  // The record as it stood before this release, kept for the second pass.
+  if (awaiting) {
+    await kvPut("awaiting:" + ticker, JSON.stringify({ accession: current.accession, at: new Date().toISOString(), tried: [], record }));
+  }
   await kvPut("record:" + ticker, JSON.stringify(updated));
+  if (secondPass) {
+    await kvPut("awaiting:" + ticker, JSON.stringify({ accession: current.accession, done: true, at: new Date().toISOString() }));
+  }
+
+  const shortCo = displayName(updated.company || name || ticker);
+  const note = secondPass
+    ? "Update. This replaces the email sent earlier today: it adds what " + shortCo
+      + " filed after its release - its outlook, and the results its guides are measured against."
+    : awaiting
+      ? shortCo + " files its outlook separately, later the same day. A second email follows when it is filed."
+      : null;
+  const withNote = (mail) => {
+    if (!note) return mail;
+    const box = '<div style="padding:12px 22px;background:#f4f6f7;border-bottom:1px solid #e3e8e5;font-size:13px;line-height:1.45;color:#3b4a57;">'
+      + note.replace(/&/g, "&amp;").replace(/</g, "&lt;") + "</div>";
+    const anchor = /(<div style="max-width:600px[^>]*>)/;
+    return {
+      ...mail,
+      subject: (secondPass ? "Update: " : "") + mail.subject,
+      html: anchor.test(mail.html) ? mail.html.replace(anchor, "$1" + box) : box + mail.html,
+      text: note + "\n\n" + (mail.text || ""),
+    };
+  };
 
   /**
    * A company with no qualifying measure does not get an email.
@@ -365,7 +448,7 @@ async function handle(ticker) {
     const followers = Object.entries(subscribers)
       .filter(([, v]) => (v.tickers || []).includes(ticker))
       .map(([email]) => email);
-    const guided = (moved.revisions || [])
+    const guided = (movedRevisions || [])
       .filter((r) => ["new", "raised", "cut", "unchanged", "narrowed", "widened"].includes(r.direction))
       .map((r) => r.summary);
     let sent = 0;
@@ -382,7 +465,7 @@ async function handle(ticker) {
         matched: (updated.coverage && updated.coverage.matchedFigures) || 0,
         releasesRead: (updated.releasesRead || []).length,
       }, { unsubscribeUrl: unsub, postalAddress: process.env.POSTAL_ADDRESS });
-      await sendMail(email, mail, unsub);
+      await sendMail(email, withNote(mail), unsub);
       sent += 1;
     }
     return {
@@ -412,7 +495,7 @@ async function handle(ticker) {
       { ...view, headline: headline(view.landed) },
       { unsubscribeUrl: unsub, postalAddress: process.env.POSTAL_ADDRESS }
     );
-    await sendMail(email, mail, unsub);
+    await sendMail(email, withNote(mail), unsub);
     sent += 1;
   }
 
@@ -421,7 +504,8 @@ async function handle(ticker) {
     release: current.accession,
     filed: current.filed,
     newPairs: scored.pairs.filter((p) => p.comparable).length,
-    revisions: moved.revisions.length,
+    revisions: movedRevisions.length,
+    pass: secondPass ? "second (the filing beside the release)" : awaiting ? "first; a second follows when the outlook is filed" : undefined,
     followers: followers.length,
     sent,
   };
