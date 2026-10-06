@@ -801,7 +801,8 @@ const KEY_ORDER = [
   // "per common share" too: FactSet writes "Adjusted diluted earnings per
   // common share", and its FY2027 EPS guide was left out of the outlook.
   /\beps\b|earnings per (\w+ )?share/i,
-  /revenue|sales|net yield|comparable|organic/i,
+  // A bank's top line is its net interest income (JPMorgan, Wells Fargo).
+  /revenue|sales|net yield|comparable|organic|net interest income|\bnii\b/i,
   /operating (income|profit|margin)|ebitda|\bebit\b|net income|gross margin|segment margin/i,
   /free cash flow|\bfcf\b/i,
 ];
@@ -1769,7 +1770,9 @@ export function designOf(view, keys, sec) {
       }
     }
     const change = o.change === "new" ? "" : o.change.charAt(0).toUpperCase() + o.change.slice(1);
-    return { ...o, line: [change, compare].filter(Boolean).join(". ") };
+    // After a full stop the comparison starts a sentence: "Raised; was $105bn. Up 12.8% on ...".
+    const said = change && compare ? compare.charAt(0).toUpperCase() + compare.slice(1) : compare;
+    return { ...o, line: [change, said].filter(Boolean).join(". ") };
   });
 
   // The hero's one line - fixed templates, never free text.
@@ -1810,11 +1813,11 @@ export function designOf(view, keys, sec) {
   // A full-year guide makes the better headline than the next quarter's:
   // quarters are seasonal, and "guided down 9%" for a seasonally smaller
   // first quarter reads as bad news when it is not.
-  const moves = outlook.filter((o) => /(up|down) [\d.]+% on/.test(o.line));
+  const moves = outlook.filter((o) => /(up|down) [\d.]+% on/i.test(o.line));
   const firstMove = moves.find((o) => /^FY/.test(o.period)) || moves[0];
   if (firstMove && bits.length < 3) {
-    const m = firstMove.line.match(/(up|down) ([\d.]+)%/);
-    bits.push(firstMove.measure + " is guided " + m[1] + " " + m[2] + "% for " + firstMove.period + ".");
+    const m = firstMove.line.match(/(up|down) ([\d.]+)%/i);
+    bits.push(firstMove.measure + " is guided " + m[1].toLowerCase() + " " + m[2] + "% for " + firstMove.period + ".");
   }
 
   let big, side;
@@ -1853,6 +1856,8 @@ function shortName(name) {
   for (let i = 0; i < 3; i++) {
     n = n.replace(/,?\s+(&\s*co|inc|incorporated|corp|corporation|co|company|ltd|limited|plc|holdings?|group)\.?$/i, "").trim();
   }
+  // "Wells Fargo & Company" must not be left as "Wells Fargo &".
+  n = n.replace(/\s*(&|and)\s*$/i, "").trim();
   return n || String(name || "");
 }
 
