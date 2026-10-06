@@ -604,6 +604,9 @@ async function buildOne(ticker) {
   const setAside = oneGuidePerFigure(allPairs);
   if (setAside) console.log("  " + ticker + ": " + setAside + " pairs set aside - the same reported figure had been scored against more than one guide");
 
+  // Revision lines from releases older than the window - see the rebuild note below.
+  let olderRevisions = [];
+
   const bestByPeriod = new Map();
   for (const p of allPairs) {
     const key = pairKey(p);
@@ -675,6 +678,39 @@ async function buildOne(ticker) {
         return scored;
       });
       if (restored) console.log("  " + ticker + ": " + restored + " result(s) this run could not find kept from the previous build");
+
+      /**
+       * A REBUILD DOES NOT SHORTEN THE RECORD.
+       *
+       * The backfill reads the latest fourteen releases. Each new release
+       * pushes the oldest out of that window, so a rebuild the day after a
+       * company reported silently dropped its oldest quarter: Lamb Weston
+       * lost all seven fiscal 2023 rows and RPM its five Q4 2023 rows on
+       * 6 October 2026. History is the product; it has to grow.
+       *
+       * Whatever the stored record holds that was answered AT OR BEFORE the
+       * oldest release now in the window cannot be rebuilt - the guide it was
+       * scored against is in a release no longer read - so it is carried
+       * over as it stands. Anything inside the window is rebuilt as before.
+       */
+      const oldest = releases.length ? String(releases[releases.length - 1].filed) : "";
+      if (oldest) {
+        const have = new Set(collapsed.map(pairKey));
+        let carriedOver = 0;
+        for (const o of previous.pairs || []) {
+          if (!o.answeredByFiled || String(o.answeredByFiled) > oldest) continue;
+          const key = pairKey(o);
+          if (have.has(key)) continue;
+          have.add(key);
+          collapsed.push({ ...o, kept_beyond_window: true });
+          carriedOver++;
+        }
+        olderRevisions = (previous.revisions || []).filter((r) => r.filed && String(r.filed) <= oldest);
+        if (carriedOver || olderRevisions.length) {
+          console.log("  " + ticker + ": " + carriedOver + " pair(s) and " + olderRevisions.length
+            + " revision line(s) older than the fourteen releases read were kept from the stored record");
+        }
+      }
     }
   }
 
@@ -813,7 +849,7 @@ async function buildOne(ticker) {
       String(e.metric_as_written || "?") + " for " + periodLabel(e.period) + ": \""
       + String(e.quote || "").replace(/\s+/g, " ").slice(0, 140) + "\"")),
     annual,
-    revisions,
+    revisions: revisions.concat(olderRevisions),
     currentGuidance: guidanceByRelease[0].guides,
     // Guides from older releases for periods still running at the latest
     // release, which it did not restate - so a live send can carry them to
