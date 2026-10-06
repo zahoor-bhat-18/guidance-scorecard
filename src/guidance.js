@@ -350,25 +350,57 @@ export function htmlToText(html) {
 /** Every exhibit, read and joined, within the character budget. */
 export async function readFiling(env, cik, accession) {
   const chosen = await collectExhibits(env, cik, accession);
+  const docs = [];
+  for (const file of chosen.files) {
+    docs.push({ file, text: htmlToText(await fetchDoc(env, file.url)), header: "\n\n===== " + file.name + " =====\n\n" });
+  }
+
+  /* WHO GETS THE ROOM.
+   *
+   * The budget used to be spent in order: the first exhibit took what it
+   * needed, the second the rest, and a third got nothing. Wells Fargo files
+   * its release (99.1), a three-megabyte table supplement (99.2) and its
+   * presentation (99.3), where the outlook is. The supplement swallowed the
+   * budget and the presentation was never read - for all fourteen releases.
+   *
+   * Now, only when everything does not fit:
+   *   - the first exhibit still comes first, but leaves the others up to a
+   *     quarter of the budget if they need it;
+   *   - the others are served smallest first, so a short document is read
+   *     whole and the long tables are what gets cut;
+   *   - room nobody used goes back to the first.
+   * The text is still joined in exhibit order. When everything fits, or the
+   * only cut is to the last exhibit, the result is exactly what it was.
+   */
+  const need = docs.map((d) => d.header.length + d.text.length);
+  const give = need.slice();
+  if (need.reduce((a, b) => a + b, 0) > MAX_CHARS && docs.length) {
+    const others = need.slice(1).reduce((a, b) => a + b, 0);
+    give[0] = Math.min(need[0], MAX_CHARS - Math.min(others, MAX_CHARS / 4));
+    let room = MAX_CHARS - give[0];
+    const order = docs.map((_, k) => k).slice(1).sort((a, b) => need[a] - need[b]);
+    order.forEach((k, n) => {
+      const stillToCome = order.length - n - 1;
+      give[k] = Math.max(0, Math.min(need[k], room - 2000 * stillToCome));
+      room -= give[k];
+    });
+    if (room > 0) give[0] = Math.min(need[0], give[0] + room);
+  }
+
   const parts = [];
   const used = [];
   let spent = 0;
-
-  for (const file of chosen.files) {
-    const text = htmlToText(await fetchDoc(env, file.url));
-    const header = "\n\n===== " + file.name + " =====\n\n";
-    const room = MAX_CHARS - spent - header.length;
-
+  docs.forEach((d, k) => {
+    const room = give[k] - d.header.length;
     if (room <= 500) {
-      used.push({ file: file.name, chars: text.length, included: false, reason: "no room left in the character budget" });
-      continue;
+      used.push({ file: d.file.name, chars: d.text.length, included: false, reason: "no room left in the character budget" });
+      return;
     }
-
-    const slice = text.length > room ? text.slice(0, room) : text;
-    parts.push(header + slice);
-    spent += header.length + slice.length;
-    used.push({ file: file.name, chars: text.length, included: true, truncated: slice.length < text.length });
-  }
+    const slice = d.text.length > room ? d.text.slice(0, room) : d.text;
+    parts.push(d.header + slice);
+    spent += d.header.length + slice.length;
+    used.push({ file: d.file.name, chars: d.text.length, included: true, truncated: slice.length < d.text.length });
+  });
 
   return { text: parts.join(""), pickedBy: chosen.pickedBy, files: used, chars: spent };
 }
@@ -605,6 +637,33 @@ function present(value, pool) {
   return false;
 }
 
+/* A table row labelled as the guide is, whose last numbers are the guide's
+   figures - at the same scale, a thousand times larger or a thousand times
+   smaller ("$12,860" in millions for a guide of $12.86bn). */
+function rowEndingIn(text, label, values) {
+  const want = (values || []).filter((v) => typeof v === "number");
+  const name = String(label || "").toLowerCase().replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
+  if (!text || !name || !want.length || want.length > 2) return null;
+  for (const raw of String(text).split("\n")) {
+    if (raw.length > 400) continue;
+    const firstDigit = raw.search(/[$(]?\s?\d/);
+    if (firstDigit < 1) continue;
+    const head = raw.slice(0, firstDigit).toLowerCase().replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
+    if (head !== name) continue;
+    const nums = (raw.slice(firstDigit).replace(/(\d),(?=\d{3})/g, "$1").match(/\(?-?\d+\.?\d*\)?/g) || [])
+      .map((x) => (/^\(/.test(x) ? -1 : 1) * Number(x.replace(/[()]/g, "")));
+    if (nums.length < want.length + 1) continue;       // a row of one figure is not a table of periods
+    const tail = nums.slice(-want.length);
+    for (const scale of [1, 1000, 0.001]) {
+      const sorted = (a) => a.slice().sort((x, y) => x - y);
+      const t = sorted(tail.map((n) => n * scale));
+      const w = sorted(want);
+      if (t.every((n, i) => Math.abs(n - w[i]) <= Math.max(0.0005, Math.abs(w[i]) * 1e-6))) return raw.replace(/\s+/g, " ").trim();
+    }
+  }
+  return null;
+}
+
 /**
  * A reaffirmed guide, with its numbers and its shape put back.
  *
@@ -662,7 +721,7 @@ function recoverReaffirmed(g) {
  * A guide that cannot be scored is a small loss. A guide scored against a
  * number nobody wrote is the loss that ends the product.
  */
-export function guardGuide(input) {
+export function guardGuide(input, filingText) {
   const g = input.shape === "reaffirmed" ? recoverReaffirmed(input) : input;
 
   const pool = quoteNumbers(g.quote);
@@ -695,6 +754,20 @@ export function guardGuide(input) {
     && !new RegExp("\\$\\s?" + v + "\\b|\\b" + v + "\\s?(%|percent|million|billion|bn|bps|basis points)", "i").test(plain);
   const unsupported = stated.filter(([, v]) => !present(v, pool) || isYear(v)).map(([k, v]) => k + "=" + v);
   if (!unsupported.length) return { ...g, numbers_verified: true };
+
+  /* THE FIGURE IS IN THE TABLE, THE QUOTE IS THE SENTENCE ABOVE IT.
+     Netflix writes "Our summary results, and forecast for Q3, are below" and
+     then a table whose last column is the forecast. The model read the table
+     correctly - revenue $12,860m, operating income $4,268m, EPS $0.82 - and
+     quoted the sentence, which has no number in it, so all three guides were
+     stripped as unverified. Where the release has a row under the guide's
+     own label that ENDS in the guided figure (or the two ends of the range),
+     the figure is the company's and the row becomes the quote. Last column
+     only: an earlier column is a past result. */
+  const row = rowEndingIn(filingText, g.metric_as_written, stated.map(([, v]) => v));
+  if (row && !stated.some(([, v]) => isYear(v))) {
+    return { ...g, quote: row, quote_was: g.quote, numbers_verified: true, numbers_recovered: "table row" };
+  }
 
   return {
     ...g,
@@ -1541,7 +1614,7 @@ export async function guidanceFrom(env, cik, release, cal, readAlready) {
   const scoped = await scopeByModel(env, named, release.accession);
   const raw = scoped.guides;
 
-  const withPeriods = raw.map(guardGuide).map(rangeFromWords).map((g) => {
+  const withPeriods = raw.map((g) => guardGuide(g, filing.text)).map(rangeFromWords).map((g) => {
     const r = calendar
       ? resolvePeriod(g.period_text, calendar, { referenceDate: release.filed, direction: "future" })
       : { period: null, why: "No fiscal calendar was supplied." };
