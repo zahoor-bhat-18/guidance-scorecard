@@ -36,7 +36,7 @@ import { earningsReleases, guidanceFrom, updateCandidates, guidanceUpdatesBetwee
 import { requestsFrom, actualsFrom } from "../src/actuals.js";
 import { samePeriod } from "../src/period.js";
 import { scoreAll } from "../src/score.js";
-import { pairUp, refuseAcrossSplit, markOpenAtAnswer, guidesToCarry } from "../src/pairing.js";
+import { pairUp, refuseAcrossSplit, markOpenAtAnswer, guidesToCarry, oneGuidePerFigure } from "../src/pairing.js";
 import { periodLabel } from "../src/format.js";
 import { revisionsBetween } from "../src/revisions.js";
 import { startAnswers } from "./answers.mjs";
@@ -600,6 +600,10 @@ async function buildOne(ticker) {
   };
   const pairKey = (p) => metricKey(p) + "|" + basisTag(p) + "|" + (p.guide_period || "");
 
+  // One reported figure answers one guide - see oneGuidePerFigure.
+  const setAside = oneGuidePerFigure(allPairs);
+  if (setAside) console.log("  " + ticker + ": " + setAside + " pairs set aside - the same reported figure had been scored against more than one guide");
+
   const bestByPeriod = new Map();
   for (const p of allPairs) {
     const key = pairKey(p);
@@ -645,7 +649,7 @@ async function buildOne(ticker) {
         // itself - a period not yet ended, a share split, a change of scope -
         // are never second-guessed.
         if (fresh.comparable) return fresh;
-        if (/had not ended|split|scope|acquisition|disposal/i.test(String(fresh.why || ""))) return fresh;
+        if (/had not ended|split|scope|acquisition|disposal|later guide for the same figure|both adjusted and as reported/i.test(String(fresh.why || ""))) return fresh;
         const old = (previous.pairs || []).find((o) => o.comparable
           && o.metric_as_written === fresh.metric_as_written
           && o.guide_period === fresh.guide_period && same(o.guide, fresh.guide));
