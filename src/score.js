@@ -185,7 +185,14 @@ function flagsFor(pair, actual, low, high, value) {
      different number entirely. */
   if (isGrowth) {
     const ceiling = Math.abs(typeof high === "number" ? high : value);
-    if (ceiling > 0 && Math.abs(actual) > ceiling * 3) {
+    /* Unless the release prints the figure AS a rate. RPM's adjusted EBIT
+       grew 48.8% in a seasonally small quarter against a "mid- to
+       high-single-digit" guide: its row ends "48.8 %". That is a rate, and a
+       real beat, not a level mistaken for one. */
+    const shown = [String(Math.abs(actual)), Math.abs(actual).toFixed(1), Math.abs(actual).toFixed(2)]
+      .map((x) => x.replace(/\./g, "\\."));
+    const printedAsRate = new RegExp("(^|[^\\d.])(" + shown.join("|") + ")\\s?(%|percent|\\s?\\)\\s?%)").test(String(pair.quote || ""));
+    if (ceiling > 0 && Math.abs(actual) > ceiling * 3 && !printedAsRate) {
       flags.push("The figure is more than three times the guided rate. That usually means a"
         + " level has been reported where a rate was guided. Check the row before using it.");
     }

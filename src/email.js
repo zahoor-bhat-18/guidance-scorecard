@@ -1303,11 +1303,11 @@ function resultCell(p) {
 function changeWords(r) {
   const was = r.before ? formatFigure(r.before, r.unit) : "";
   switch (r.direction) {
-    case "raised": return "raised from " + was;
-    case "cut": return "cut from " + was;
+    case "raised": return "raised" + (was ? "; was " + was : "");
+    case "cut": return "cut" + (was ? "; was " + was : "");
     case "unchanged": return "held";
-    case "narrowed": return "narrowed from " + was;
-    case "widened": return "widened from " + was;
+    case "narrowed": return "narrowed" + (was ? "; was " + was : "");
+    case "widened": return "widened" + (was ? "; was " + was : "");
     case "new": return "new";
     default: return r.direction;
   }
@@ -1822,11 +1822,17 @@ export function designOf(view, keys, sec) {
     big = "0";
     side = "key measures to score<br>in this release";
   } else {
-    big = c.above + "/" + counted.length;
+    /* Lead with what happened. "0/2 key measures above" over two results
+       inside the range read as two misses (RPM, 6 Oct 2026). With nothing
+       above, the number shown is the within count - or the below count when
+       nothing was within either. */
+    const inside = c.within + c.at;
+    const lead = c.above ? "above" : inside ? "within" : "below";
+    big = (lead === "above" ? c.above : lead === "within" ? inside : c.below) + "/" + counted.length;
     const rest = [];
-    if (c.within + c.at) rest.push(c.within + c.at + " within");
-    if (c.below) rest.push(c.below + " below");
-    side = "key measures above the<br>company's own guide" + (rest.length ? "<br>" + rest.join(", ") : "");
+    if (lead !== "within" && inside) rest.push(inside + " within");
+    if (lead !== "below" && c.below) rest.push(c.below + " below");
+    side = "key measures " + (lead === "within" ? "within" : lead) + " the<br>company's own guide" + (rest.length ? "<br>" + rest.join(", ") : "");
   }
   if (kind === "none" && !bits.length) {
     bits.push(sec.outlook.length

@@ -637,6 +637,53 @@ function present(value, pool) {
   return false;
 }
 
+/* "+/- $50 billion" is "about $50 billion".
+   Wells Fargo: "Expect 2026 net interest income to be +/- $50 billion". The
+   model read a range from minus fifty to fifty, the minus fifty is not in the
+   sentence, and the guide was dropped. A plus-or-minus sign BEFORE a lone
+   figure means "approximately" - unlike Micron's "$2.64 ± $0.07", where the
+   figure comes first and the sign introduces a tolerance. */
+function aboutNotPlusMinus(g) {
+  const m = String(g.quote || "").replace(/(\d),(?=\d{3})/g, "$1")
+    .match(/(^|[^\d$.\s])\s*(?:\+\s?\/\s?-|\u00B1)\s*\$?\s?(\d+\.?\d*)/);
+  if (!m) return g;
+  const n = Number(m[2]);
+  const nums = [g.low, g.high, g.value].filter((x) => typeof x === "number");
+  if (!nums.length || !nums.every((x) => Math.abs(Math.abs(x) - n) < 1e-9)) return g;
+  if (!nums.some((x) => x < 0)) return g;
+  return { ...g, low: null, high: null, value: n, shape: "point", plus_minus_read_as: "about" };
+}
+
+/* THE EARLIER COLUMN IS NOT THE GUIDE.
+   Lamb Weston's outlook table has two columns, the previous outlook and the
+   updated one: "Net Sales 0.0% to 1.0% | Up Low Single Digits". Both came
+   back as guides for the year - the words (read as 1% to 3%) and the old
+   figures - and the email printed the old ones as "held" when the company
+   had just raised them. Where one row yields a worded guide and a figure
+   guide for the same measure and period, and the words come AFTER the
+   figures in that row, the figures are the earlier column and are dropped. */
+export function dropEarlierColumn(guides) {
+  const flat = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9.%$ ]/g, " ").replace(/\s+/g, " ").trim();
+  const drop = new Set();
+  for (const w of guides) {
+    if (!w.from_words || !w.period) continue;
+    const words = flat(w.from_words);
+    if (!words) continue;
+    for (const f of guides) {
+      if (f === w || f.from_words || f.period !== w.period) continue;
+      if (metricKey(f) !== metricKey(w)) continue;
+      const row = flat(f.quote);
+      const at = row.indexOf(words);
+      if (at < 0) continue;
+      const lastDigit = row.slice(0, at).search(/\d[^\d]*$/);
+      if (lastDigit < 0) continue;                       // no figure before the words
+      if (/\d/.test(row.slice(at + words.length))) continue; // figures after them too: not this shape
+      drop.add(f);
+    }
+  }
+  return drop.size ? guides.filter((g) => !drop.has(g)) : guides;
+}
+
 /* A table row labelled as the guide is, whose last numbers are the guide's
    figures - at the same scale, a thousand times larger or a thousand times
    smaller ("$12,860" in millions for a guide of $12.86bn). */
@@ -722,7 +769,7 @@ function recoverReaffirmed(g) {
  * number nobody wrote is the loss that ends the product.
  */
 export function guardGuide(input, filingText) {
-  const g = input.shape === "reaffirmed" ? recoverReaffirmed(input) : input;
+  const g = aboutNotPlusMinus(input.shape === "reaffirmed" ? recoverReaffirmed(input) : input);
 
   const pool = quoteNumbers(g.quote);
   for (const e of bandEnds(g.quote)) pool.add(e);
@@ -1614,12 +1661,13 @@ export async function guidanceFrom(env, cik, release, cal, readAlready) {
   const scoped = await scopeByModel(env, named, release.accession);
   const raw = scoped.guides;
 
-  const withPeriods = raw.map((g) => guardGuide(g, filing.text)).map(rangeFromWords).map((g) => {
+  const withPeriodsAll = raw.map((g) => guardGuide(g, filing.text)).map(rangeFromWords).map((g) => {
     const r = calendar
       ? resolvePeriod(g.period_text, calendar, { referenceDate: release.filed, direction: "future" })
       : { period: null, why: "No fiscal calendar was supplied." };
     return { ...g, period: r.period, period_how: r.how || null, period_why: r.why || null };
   });
+  const withPeriods = dropEarlierColumn(withPeriodsAll);
 
   // Every guide as extracted, in order - what the next release is ASKED
   // about. Kept unchanged so the backfill sends the model the same questions

@@ -418,13 +418,22 @@ export function resolvePeriod(text, cal, opts) {
 
 /* How long is the period? Companies state it in months or in weeks, and
    52/53-week filers use weeks because their year is not twelve months. */
-function classifySpan(t) {
+function classifySpan(text) {
+  /* Week counts spelled out. Lamb Weston heads its full-year column
+     "Fifty-Two Weeks Ended May 25, 2025"; only "52 weeks" was recognised, so
+     the column was read as the quarter that ended on that date and every
+     full-year guide for fiscal 2024 and 2025 was refused as "different
+     periods". */
+  const WEEK_WORDS = { twelve: 12, thirteen: 13, fourteen: 14, "twenty six": 26, "twenty seven": 27,
+    "thirty nine": 39, forty: 40, "fifty two": 52, "fifty three": 53 };
+  const t = String(text || "").replace(/\b(twelve|thirteen|fourteen|twenty[-\s]six|twenty[-\s]seven|thirty[-\s]nine|forty|fifty[-\s]two|fifty[-\s]three)(\s+weeks?\b)/gi,
+    (m, w, rest) => WEEK_WORDS[w.toLowerCase().replace(/[-\s]+/g, " ")] + rest);
   if (/\b(13|12|14)\s*weeks?\b/.test(t)) return "quarter";
   if (/\b(three|3)\s*months?\b/.test(t)) return "quarter";
   if (/\b(52|53)\s*weeks?\b/.test(t)) return "year";
   if (/\b(twelve|12)\s*months?\b/.test(t)) return "year";
   if (/\bfiscal year (ended|ending)\b/.test(t)) return "year";
-  if (/\b(26|39)\s*weeks?\b/.test(t)) return "ytd";
+  if (/\b(26|27|39|40)\s*weeks?\b/.test(t)) return "ytd";
   if (/\b(six|6|nine|9)\s*months?\b/.test(t)) return "ytd";
   if (/\byear[-\s]to[-\s]date\b/.test(t)) return "ytd";
   // A half is year-to-date too. "first half ended June 30" read as no length,
