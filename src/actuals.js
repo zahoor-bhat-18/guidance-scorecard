@@ -605,7 +605,22 @@ function toActual(req, row, release, cal) {
         .test(stated);
     const statedWrongSpan = namesYtd && !namesQuarter;
 
-    if (!statedWrongSpan) {
+    /* "TWELVE MONTHS", and nothing more, is the year. Johnson & Johnson's
+       fourth-quarter tables head the column just so; with no date beside it
+       the text could not be placed, the figure was given the QUARTER the
+       release reports, and a full-year guide was refused as "different
+       periods". In the release that reports the fourth quarter, a
+       twelve-month or full-year figure is the fiscal year just ended. */
+    const namesYear = /\b(twelve|12)\s+months\b|\bfull[-\s]year\b|\b(fiscal\s+)?year\s+ended\b|\b(52|53)\s+weeks\b/i.test(stated)
+      && !namesQuarter && !namesYtd;
+    const reported = namesYear ? periodReportedBy(release.filed, cal) : null;
+    if (reported && /Q4$/.test(reported)) {
+      resolved = {
+        period: reported.replace(/Q4$/, "FY"),
+        how: 'the stated period ("' + stated + '") names a full year and no date, and this release reports the fourth quarter, so it was taken as the fiscal year just ended',
+      };
+      periodAssumed = true;
+    } else if (!statedWrongSpan) {
       const fromFiling = periodReportedBy(release.filed, cal);
       if (fromFiling) {
         resolved = {
