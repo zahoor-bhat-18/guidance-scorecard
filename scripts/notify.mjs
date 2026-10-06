@@ -4,7 +4,8 @@
  * Run by the backfill workflow, only when the run was started by a signup on
  * the site (repository_dispatch "backfill-request"). For each ticker it reads
  * the record the backfill just wrote to out/, and emails everyone following
- * that ticker one of three short notes:
+ * that ticker one of three short notes - ONE email per follower, with a row
+ * per company when they asked for several (see combinedNote):
  *
  *   covered      - the company puts enough numeric guidance in its releases
  *                  to score, and the first email comes with its next release;
@@ -190,6 +191,73 @@ export function noteFor(s, unsub) {
   return { subject, text, html };
 }
 
+/**
+ * ONE note for everything a follower asked for.
+ *
+ * Someone who signed up for eight companies got eight emails, minutes apart.
+ * The content was right and the count was wrong: it is one answer to one
+ * signup. So the statuses are gathered per follower and sent as a single
+ * email with a row per company. One company still gets the plain note above,
+ * word for word.
+ */
+export function combinedNote(statuses, unsub) {
+  const list = (statuses || []).filter((s) => s.kind !== "not built");
+  if (!list.length) return null;
+  if (list.length === 1) return noteFor(list[0], unsub);
+
+  const figures = (n) => n + (n === 1 ? " guided figure" : " guided figures");
+  const order = { covered: 0, "too little": 1, "no releases": 2 };
+  const rows = list.slice().sort((x, y) => (order[x.kind] - order[y.kind]) || x.ticker.localeCompare(y.ticker))
+    .map((s) => {
+      if (s.kind === "covered") {
+        return { s, status: "Covered", detail: figures(s.matched) + " matched to what it then reported. First email at its next earnings release." };
+      }
+      if (s.kind === "too little") {
+        return { s, status: "Not enough guidance", detail: "Too little numeric guidance in its releases to score"
+          + (s.matched ? " (" + figures(s.matched) + " matched)" : "") + ". A short note each time it reports." };
+      }
+      return { s, status: "No releases found", detail: "Fewer than two earnings releases filed with the SEC. You hear from us only if that changes." };
+    });
+
+  const covered = list.filter((s) => s.kind === "covered").length;
+  const rest = list.length - covered;
+  const subject = covered === list.length ? "Now covering your " + list.length + " companies"
+    : covered === 0 ? "Your " + list.length + " companies: not enough guidance to score"
+    : "Now covering " + covered + " of your " + list.length + " companies";
+
+  const intro = "We have read the last fourteen earnings releases from each company you asked for. "
+    + (covered ? covered + (covered === 1 ? " has" : " have") + " enough numeric guidance to score"
+      + (rest ? ", " + rest + (rest === 1 ? " does" : " do") + " not." : ".")
+      : "None has enough numeric guidance to score yet.");
+  const after = [];
+  if (covered) after.push("For the covered companies, your first email comes when each files its next earnings release. The record so far is on " + SITE + ".");
+  if (rest) after.push("Many companies give their outlook only on the call or in slides, which are not filed with the SEC. You stay on the list for all of them, and get the full scorecard once there is something to score.");
+
+  const name = (s) => (s.company && s.company !== s.ticker ? displayName(s.company) + " (" + s.ticker + ")" : s.ticker);
+  const footer = "Unsubscribe: " + unsub + (POSTAL ? "\n" + POSTAL : "");
+  const text = intro + "\n\n"
+    + rows.map((r) => name(r.s) + " - " + r.status + ". " + r.detail).join("\n")
+    + "\n\n" + after.join("\n\n") + "\n\n" + footer + "\n";
+
+  const link = (l) => esc(l).replace(esc(SITE), '<a href="' + esc(SITE) + '">' + esc(SITE.replace(/^https?:\/\//, "")) + "</a>");
+  const cell = "padding:10px 8px;border-bottom:1px solid #E3E8E5;vertical-align:top;";
+  const html = '<div style="font-family:Georgia,serif;font-size:16px;line-height:1.55;color:#16281F;max-width:560px">'
+    + "<p>" + esc(intro) + "</p>"
+    + '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:14px;line-height:1.45;margin:6px 0 14px">'
+    + rows.map((r) => "<tr>"
+      + '<td style="' + cell + 'width:36%"><b>' + esc(r.s.ticker) + "</b>"
+      + (r.s.company && r.s.company !== r.s.ticker ? '<br><span style="color:#5B7166;font-size:12px">' + esc(displayName(r.s.company)) + "</span>" : "") + "</td>"
+      + '<td style="' + cell + '"><b style="color:' + (r.s.kind === "covered" ? "#1f4435" : "#5B7166") + '">' + esc(r.status) + "</b><br>"
+      + '<span style="color:#3b4a57;font-size:13px">' + esc(r.detail) + "</span></td></tr>").join("")
+    + "</table>"
+    + after.map((l) => "<p>" + link(l) + "</p>").join("")
+    + '<p style="font-family:Arial,sans-serif;font-size:12px;color:#5B7166;margin-top:28px">'
+    + '<a href="' + esc(unsub) + '" style="color:#5B7166">Unsubscribe</a>' + (POSTAL ? " · " + esc(POSTAL) : "")
+    + "</p></div>";
+
+  return { subject, text, html };
+}
+
 /** Was this ticker part of the run that just finished? */
 async function inThisRun(ticker) {
   try {
@@ -241,9 +309,12 @@ async function main() {
   const list = raw ? JSON.parse(raw) : {};
 
   const lines = [];
+
+  /* Every ticker's outcome first, then ONE email per follower covering all
+     of theirs - see combinedNote. */
+  const statuses = [];
   for (const ticker of tickers) {
     const s = await statusOf(ticker);
-
     // Still failing on a hand run: the owner already knows, and ran it.
     // Nothing more to send; the mark stays for the next try.
     if (owedOnly && s.kind === "not built") {
@@ -252,23 +323,39 @@ async function main() {
       lines.push(line);
       continue;
     }
-    const followers = Object.entries(list)
+    s.followers = Object.entries(list)
       .filter(([, v]) => (v.tickers || []).includes(ticker))
       .map(([email]) => email);
+    s.sent = 0;
+    statuses.push(s);
+  }
 
-    let sent = 0;
-    // A failure of ours: not one follower is written to.
-    const note = s.kind === "not built" ? [] : followers;
-    for (const email of note) {
-      const unsub = SITE + "/unsubscribe?e=" + encodeURIComponent(email)
-        + "&s=" + (await hmac(process.env.UNSUB_SECRET, email));
-      try {
-        await sendMail(email, noteFor(s, unsub), unsub);
-        sent += 1;
-      } catch (e) {
-        console.error(ticker + " to one follower: " + e.message);
-      }
+  // A failure of ours is left out: not one follower is written to about it.
+  const perFollower = new Map();
+  for (const s of statuses) {
+    if (s.kind === "not built") continue;
+    for (const email of s.followers) {
+      if (!perFollower.has(email)) perFollower.set(email, []);
+      perFollower.get(email).push(s);
     }
+  }
+  for (const [email, theirs] of perFollower) {
+    const unsub = SITE + "/unsubscribe?e=" + encodeURIComponent(email)
+      + "&s=" + (await hmac(process.env.UNSUB_SECRET, email));
+    try {
+      await sendMail(email, combinedNote(theirs, unsub), unsub);
+      for (const s of theirs) s.sent += 1;
+    } catch (e) {
+      console.error(theirs.map((s) => s.ticker).join(",") + " to one follower: " + e.message);
+    }
+  }
+  console.log("Emails sent: " + Array.from(perFollower.values()).filter((t) => t.every((s) => s.sent > 0)).length
+    + " of " + perFollower.size + " followers, one each.");
+
+  for (const s of statuses) {
+    const ticker = s.ticker;
+    const followers = s.followers;
+    const sent = s.sent;
     // The owner is the only one told about a failure of ours - with the
     // error, so the log need not be opened to know what happened.
     if (s.kind === "not built") {
