@@ -649,7 +649,7 @@ async function buildOne(ticker) {
         // itself - a period not yet ended, a share split, a change of scope -
         // are never second-guessed.
         if (fresh.comparable) return fresh;
-        if (/had not ended|split|scope|acquisition|disposal|later guide for the same figure|both adjusted and as reported/i.test(String(fresh.why || ""))) return fresh;
+        if (/had not ended|split|scope|acquisition|disposal|later guide for the same figure|both adjusted and as reported|stated twice in the release/i.test(String(fresh.why || ""))) return fresh;
         const old = (previous.pairs || []).find((o) => o.comparable
           && o.metric_as_written === fresh.metric_as_written
           && o.guide_period === fresh.guide_period && same(o.guide, fresh.guide));
