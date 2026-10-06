@@ -187,7 +187,8 @@ const KEEP_UPPER = new Set(["LLC", "PLC", "LP", "NV", "SA", "AG", "SE", "ASA", "
 export function displayName(name) {
   // SEC appends the state of incorporation to some names: "BERKSHIRE
   // HATHAWAY INC /DE/". A reader does not need it.
-  const s = String(name || "").replace(/\s*\/[A-Za-z]{2}\/\s*$/, "").trim();
+  // Also without the closing slash: "WELLS FARGO & COMPANY/MN".
+  const s = String(name || "").replace(/\s*\/[A-Za-z]{2,3}\/?\s*$/, "").trim();
   if (!s || /[a-z]/.test(s)) return s;
   return s.split(/(\s+|-)/).map((w) => {
     const bare = w.replace(/[^A-Za-z]/g, "");
