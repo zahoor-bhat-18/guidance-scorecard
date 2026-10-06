@@ -924,7 +924,7 @@ const NOT_A_PART = /^(now|also|still|currently|today|additionally|further|enterp
 /* The company's own name, from its headline: "GE ANNOUNCES FOURTH QUARTER
    2023 RESULTS", "GE AEROSPACE REPORTS ...". Null when the headline does not
    say. */
-function companyFromIntro(intro) {
+export function companyFromIntro(intro) {
   const t = String(intro || "").replace(/=====[^=]*=====/g, " ")
     .replace(/\bEX-99[\.\d]*\b|\bDocument\b|\bFOR IMMEDIATE RELEASE\b|\bNEWS RELEASE\b|\bPRESS RELEASE\b/gi, " ")
     .replace(/\s+/g, " ");
@@ -1443,7 +1443,15 @@ export async function guidanceFrom(env, cik, release, cal, readAlready) {
   // Every guide as extracted, in order - what the next release is ASKED
   // about. Kept unchanged so the backfill sends the model the same questions
   // it always has and reuses the saved answers.
-  const asExtracted = dedupeGuides(withPeriods);
+  /* The name the company goes by in THIS release's headline, kept on every
+     guide. A part of the company can later BECOME the company: in January
+     2024 "GE Aerospace" was one business inside GE, and from April 2024 it
+     was the whole company. Its January guide ("GE Aerospace: operating
+     profit") and the later ones ("operating profit") are then the same line,
+     and the later one replaces the earlier - see guidesToCarry and
+     revisionsBetween, which compare a part's name with this. */
+  const saidBy = companyFromIntro(String(filing.text || "").slice(0, 600));
+  const asExtracted = dedupeGuides(withPeriods).map((g) => (saidBy ? { ...g, said_by: saidBy } : g));
   // What is scored, tracked and revised: the same, without currency and deal
   // effects. Set aside rather than hidden - listed in the backfill summary.
   const effects = asExtracted.filter(isEffectGuide);
