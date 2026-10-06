@@ -21,7 +21,7 @@
 import { resolveCik, companyCalendar, shareCountChanges } from "../src/xbrl.js";
 import { earningsReleases, guidanceFrom, guidanceUpdatesBetween, applyUpdates, completedDeals } from "../src/guidance.js";
 import { requestsFrom, actualsFrom } from "../src/actuals.js";
-import { pairUp, refuseAcrossSplit, markOpenAtAnswer, guidesToCarry } from "../src/pairing.js";
+import { pairUp, refuseAcrossSplit, markOpenAtAnswer, guidesToCarry, oneGuidePerFigure } from "../src/pairing.js";
 import { metricKey } from "../src/metrics.js";
 import { scoreAll } from "../src/score.js";
 import { revisionsBetween } from "../src/revisions.js";
@@ -289,6 +289,9 @@ async function handle(ticker) {
       console.error(ticker + ": carried guides could not be checked - " + e.message);
     }
   }
+
+  // One reported figure answers one guide - see oneGuidePerFigure.
+  oneGuidePerFigure([...scored.pairs, ...carriedPairs]);
 
   // What they have just guided for next, and what moved.
   const nowGuiding = await guidanceFrom(env, cik, current, calendar);
