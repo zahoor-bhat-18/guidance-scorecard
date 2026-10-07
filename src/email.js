@@ -37,7 +37,10 @@ import { metricKey as exactKey, displayLabel } from "./metrics.js";
 function metricKey(x) {
   return exactKey(x)
     .replace(/\bu s\b/g, " ")
-    .replace(/\b(growth|change|diluted|common)\b/g, " ")
+    // "Decline", "increase" and "decrease" are growth with the sign in words:
+    // Constellation's "Beer: net sales growth" (2025) and "Beer: net sales
+    // decline" (2026) are one measure, and were two tables.
+    .replace(/\b(growth|change|decline|increase|decrease|diluted|common)\b/g, " ")
     .replace(/\bper share(\s+per share)+\b/g, "per share")
     .replace(/\s+/g, " ")
     .trim();
@@ -817,12 +820,21 @@ function keyRank(g) {
   for (let i = 0; i < KEY_ORDER.length; i++) if (KEY_ORDER[i].test(label)) return i;
   return 99;
 }
+/* A part of the company ("Beer: net sales", "Wine and Spirits: organic net
+   sales") comes after the company's own figure of the same kind. With five
+   places, Constellation's wine and spirits sales took the one that belonged
+   to its total organic sales. Every label the group has carries a part's
+   name in front, or it is not a part. */
+function isPart(g) {
+  const labels = (g.labels && g.labels.length ? g.labels : [g.metric || ""]).map(String);
+  return labels.every((l) => /^[A-Z][A-Za-z&' ]{1,40}:\s/.test(l) && !/^(Enterprise|Consolidated|Total|Company|Tax rate)\b/i.test(l));
+}
 
 export function keyMeasures(metrics) {
   const scored = metrics.filter((g) => g.rows.some((p) => !p.notGuided && !p.unanswered));
   const ranked = scored
     .map((g) => ({ g, rank: keyRank(g) }))
-    .sort((a, b) => a.rank - b.rank || b.g.total - a.g.total);
+    .sort((a, b) => a.rank - b.rank || (isPart(a.g) - isPart(b.g)) || b.g.total - a.g.total);
   // One table per measure among the key ones: where a measure is guided both
   // as an amount and as a growth rate, the amount leads and the rate goes to
   // the site with the rest.
@@ -1977,7 +1989,7 @@ function renderQuiet(view, opts, company, metrics, sec, quiet, subject) {
 
   const hist = metrics.map((g) => {
     const rec = (quiet.record || []).find((r) => r.measure === g.metric);
-    return { measure: g.metric, line: rec ? rec.line : "", rows: quietHistory(g) };
+    return { measure: g.metric, line: rec && /[a-z]/i.test(String(rec.line || "")) ? rec.line : "", rows: quietHistory(g) };
   }).filter((x) => x.rows.length);
   const anyFlag = hist.some((x) => x.rows.some((r) => /\u2020/.test(r.reported)));
   const when = view.latestRelease && view.latestRelease.filed ? " \u00b7 filed " + longDate(view.latestRelease.filed) : "";

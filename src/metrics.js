@@ -50,7 +50,8 @@ export function metricKey(guide) {
     .replace(/\badj(\.|usted)?\b/g, " ")
     .replace(/\bcore\b/g, " ")
     .replace(/\bconstant[-\s]currency\b/g, " ")
-    .replace(/\b(consolidated|total|company)\b/g, " ")
+    // "Enterprise" is Constellation's word for the whole company.
+    .replace(/\b(consolidated|total|company|enterprise)\b/g, " ")
     .replace(/\beps\b/g, "earnings per share")
     .replace(/[^a-z ]/g, " ")
     .replace(/\s+/g, " ")
