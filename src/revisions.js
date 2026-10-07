@@ -44,6 +44,12 @@ function labelKey(guide) {
     .toLowerCase()
     .replace(/\badj(\.|usted)?\b/g, "")
     .replace(/\(cc\)|constant[-\s]currency/g, "")
+    /* "comparable EPS" in July, "comparable EPS outlook" in October;
+       "operating cash flow", then "operating cash flow target". Constellation
+       held all four guides and the email showed four new ones and four that
+       had vanished - and no "held" beside its EPS, the line a reader looks
+       for first. The word for "this is a guide" is not part of the measure. */
+    .replace(/\b(outlook|target|targets|guidance|forecast|expectations?|projected|expected)\b/g, "")
     .replace(/[^a-z ]/g, " ")
     .replace(/\s+/g, " ")
     .trim();

@@ -1868,9 +1868,80 @@ function shortName(name) {
  *   miss  - "X came in below its own guide on 2 of 3 key measures"
  *   none  - "X reported: new guidance, nothing to score yet" / "X reported: nothing to score"
  */
+/**
+ * THE DAY WITH NOTHING TO SCORE.
+ *
+ * Most companies here guide the full year, so three releases in four report
+ * no guided period. On those days the email led with "0 key measures to
+ * score" and a year-on-year comparison, then ran three screens of history -
+ * and never said the one thing the release was news for: did the guidance
+ * move? Constellation's October 2026 release raised its reported EPS guide
+ * and held the rest, and its email showed neither word.
+ *
+ * So when nothing was scored, the guidance IS the email: what was raised,
+ * cut or held, each with its figure; then, per key measure, the last few
+ * periods of guided against reported, one line each.
+ *
+ * The colour is the direction of the change, as the scored day's colour is
+ * the outcome: green when guides were raised and none cut, the miss colour
+ * when cut and none raised, slate when held, new or both.
+ */
+const QUIET_ORDER = ["raised", "cut", "narrowed", "widened", "held", "new"];
+function quietDesign(sec, d) {
+  const rows = [];
+  const seen = new Set();
+  for (const o of sec.outlook) {
+    const r = o.r || {};
+    const k = o.measure + "|" + o.period;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const dir = r.direction === "unchanged" ? "held" : r.direction;
+    const was = r.before && dir !== "held" && dir !== "new" ? formatFigure(r.before, r.unit) : "";
+    rows.push({ measure: o.measure, period: o.period, guide: o.guide, dir: QUIET_ORDER.includes(dir) ? dir : "new", was });
+  }
+  const count = {};
+  for (const r of rows) count[r.dir] = (count[r.dir] || 0) + 1;
+  const parts = QUIET_ORDER.filter((k) => count[k]).map((k) => count[k] + " " + k);
+  const periods = Array.from(new Set(rows.map((r) => r.period)));
+  const title = !rows.length ? "No new guidance in this release"
+    : parts.length === 1 && count.new ? "New guidance" + (periods.length === 1 ? " for " + periods[0] : "")
+    : "Guidance: " + parts.join(", ");
+  // Two sentences: what moved first, then the first thing that did not.
+  const says = (r) => r.measure + " " + (r.dir === "new" ? "guided at" : r.dir === "held" ? "held at" : r.dir + " to") + " " + r.guide + ".";
+  const movedRows = rows.filter((r) => r.dir !== "held" && r.dir !== "new");
+  const stillRows = rows.filter((r) => r.dir === "held" || r.dir === "new");
+  const lines = movedRows.slice(0, 2).concat(stillRows.slice(0, movedRows.length ? 1 : 2)).slice(0, 2).map(says);
+  const kind = count.raised && !count.cut ? "beat" : count.cut && !count.raised ? "miss" : "mixed";
+  const allYear = rows.length > 0 && rows.every((r) => /^FY/.test(r.period));
+  const why = allYear && periods.length === 1
+    ? "Nothing to score in this release: the guide is for the full year, and is scored when " + periods[0] + " is reported."
+    : "Nothing in this release had a guide in force to score.";
+  return { rows, title, lines, kind, why, summary: parts.join(", "), record: d.record };
+}
+
+/* The last few periods of one key measure: period, guided, reported, verdict. */
+function quietHistory(g) {
+  const real = g.rows.filter((p) => !p.notGuided && !p.unanswered);
+  if (!real.length) return [];
+  const yearly = real.every((p) => /FY$/.test(String(p.period || "")));
+  return real.slice(0, yearly ? 4 : 6).map((p) => {
+    const c = rowCells(p);
+    const l = p.flagged ? null : landing(p);
+    // One line a period: the guide in force when it was reported, not the
+    // path it took to get there ("$12.60 to $12.90 \u2192 $11.30 to $11.60").
+    const last = String(c[1]).split("\u2192").pop().trim();
+    return { period: c[0], guided: last, reported: c[2], verdict: c[3], word: l ? l.word : null };
+  });
+}
+
 export function subjectOf(view, keys, sec, company) {
   const d = designOf(view, keys, sec);
   const name = shortName(company);
+  if (d.kind === "none") {
+    const q = quietDesign(sec, d);
+    if (!q.rows.length) return name + " reported: no new guidance, nothing to score";
+    return name + (/^Guidance: /.test(q.title) ? " guidance: " + q.title.slice(10) : ": " + q.title.charAt(0).toLowerCase() + q.title.slice(1));
+  }
   const counted = sec.quarter.filter((q) => !q.flagged);
   const n = counted.length;
   const above = counted.filter((q) => q.word === "above").length;
@@ -1884,6 +1955,137 @@ export function subjectOf(view, keys, sec, company) {
     return name + ": " + of(above) + " above its own guide, " + below + " below";
   }
   return name + (d.outlook.length ? " reported: new guidance, nothing to score yet" : " reported: nothing to score against guidance");
+}
+
+function renderQuiet(view, opts, company, metrics, sec, quiet, subject) {
+  // Every other guide in the release, by what happened to it: names only.
+  const latest = view.latestRelease && view.latestRelease.accession;
+  const shown = new Set(sec.outlook.map((o) => o.r));
+  const also = {};
+  for (const r of view.revisions || []) {
+    if (!latest || r.release !== latest || shown.has(r)) continue;
+    const dir = r.direction === "unchanged" ? "held" : r.direction;
+    if (!QUIET_ORDER.includes(dir)) continue;
+    const name = displayLabel([String(r.label || r.metric || "")]).replace(/\s+(outlook|target|guidance)\b/gi, "").trim();
+    if (!name || BRIDGE.test(name)) continue;
+    (also[dir] = also[dir] || new Set()).add(name);
+  }
+  const alsoLine = QUIET_ORDER.filter((k) => also[k]).map((k) =>
+    (k === "held" ? "Also held" : k === "new" ? "Also guided" : k.charAt(0).toUpperCase() + k.slice(1))
+    + ": " + Array.from(also[k]).slice(0, 6).join(", ")
+    + (also[k].size > 6 ? " and " + (also[k].size - 6) + " more" : "")).join(". ");
+
+  const hist = metrics.map((g) => {
+    const rec = (quiet.record || []).find((r) => r.measure === g.metric);
+    return { measure: g.metric, line: rec ? rec.line : "", rows: quietHistory(g) };
+  }).filter((x) => x.rows.length);
+  const anyFlag = hist.some((x) => x.rows.some((r) => /\u2020/.test(r.reported)));
+  const when = view.latestRelease && view.latestRelease.filed ? " \u00b7 filed " + longDate(view.latestRelease.filed) : "";
+
+  /* ---------------- plain text ---------------- */
+  const t = [];
+  t.push(company + " (" + view.ticker + ")" + when);
+  t.push("");
+  t.push(quiet.title);
+  for (const l of quiet.lines) t.push(l);
+  t.push("");
+  t.push(quiet.why);
+  t.push("");
+  if (quiet.rows.length) {
+    t.push("WHAT THEY GUIDE NOW");
+    for (const r of quiet.rows) {
+      t.push("- " + r.measure + ", " + r.period + ": " + r.guide + " - " + r.dir + (r.was ? ", was " + r.was : ""));
+    }
+    if (alsoLine) t.push(alsoLine + ".");
+    t.push("");
+  }
+  if (hist.length) {
+    t.push("DO THEY HIT THEIR GUIDE?");
+    for (const x of hist) {
+      t.push(x.measure + (x.line ? " - " + x.line : ""));
+      for (const r of x.rows) t.push("   " + r.period + ": guided " + r.guided + ", reported " + r.reported + (r.verdict ? " - " + r.verdict : ""));
+    }
+    t.push("Guided = the last guide in force before the period was reported.");
+    if (anyFlag) { t.push(""); t.push(FLAG_NOTE); }
+    t.push("");
+  }
+  t.push("Thanks,");
+  t.push("Zahoor \u00b7 Guidance Scorecard \u00b7 hello@zahoorbhat.com");
+  t.push("");
+  t.push("Every figure is read from the company's own filings on EDGAR. A guide is only");
+  t.push("scored against the same period, on the same basis. Nothing here is a forecast.");
+  if (opts.unsubscribeUrl) { t.push(""); t.push("Unsubscribe: " + opts.unsubscribeUrl); }
+
+  /* ---------------- html ---------------- */
+  const H = HERO[quiet.kind];
+  const label = (text) => '<div style="font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:' + SOFT
+    + ';font-weight:700;">' + esc(text) + '</div>';
+  const TONE = { raised: GREEN, cut: "#7a3b22", narrowed: INK, widened: INK };
+  const WORD = { above: GREEN, below: "#7a3b22", within: "#3b4a57", at: "#3b4a57" };
+  const h = [];
+  h.push('<div style="margin:0;padding:20px 0;background:' + PAGE + ';">');
+  h.push('<div style="max-width:600px;margin:0 auto;background:#ffffff;font-family:' + SANS + ';color:' + INK + ';font-size:15px;line-height:1.45;">');
+  h.push('<div style="background:' + H.bg + ';color:' + H.fg + ';padding:22px 22px 20px;">');
+  h.push('<div style="font-size:13px;color:' + H.sub + ';">' + esc(company + " (" + view.ticker + ")" + when) + '</div>');
+  h.push('<div style="font-size:25px;font-weight:700;line-height:1.2;margin-top:10px;color:' + H.fg + ';">' + esc(quiet.title) + '</div>');
+  if (quiet.lines.length) {
+    h.push('<div style="font-size:15px;line-height:1.45;margin-top:10px;color:' + H.fg + ';">' + quiet.lines.map(esc).join("<br>") + '</div>');
+  }
+  h.push('</div>');
+  h.push('<div style="padding:12px 22px;background:#f4f6f7;border-bottom:1px solid ' + LINE + ';font-size:13px;color:#3b4a57;">' + esc(quiet.why) + '</div>');
+
+  if (quiet.rows.length) {
+    h.push('<div style="padding:18px 22px 6px;">' + label("What they guide now"));
+    h.push('<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;margin-top:8px;font-size:14px;">');
+    for (const r of quiet.rows) {
+      const moved = r.dir !== "held";
+      const line = 'border-bottom:1px solid ' + LINE + ';';
+      const wide = r.guide.length > 22;
+      h.push('<tr><td style="padding:9px 8px 9px 0;vertical-align:top;' + (moved ? '' : line) + '">' + esc(r.measure)
+        + '<div style="font-size:12px;color:' + SOFT + ';">' + esc(r.period) + '</div></td>'
+        + '<td align="right" style="padding:9px 0;vertical-align:top;' + (wide ? 'width:58%;line-height:1.35;' : 'white-space:nowrap;') + (moved ? '' : line) + '">'
+        + '<b>' + esc(r.guide) + '</b>' + (moved ? '' : ' <span style="color:' + SOFT + ';font-size:13px;">held</span>') + '</td></tr>');
+      if (moved) {
+        h.push('<tr><td colspan="2" style="padding:0 0 9px;' + line + 'font-size:13px;color:' + (TONE[r.dir] || INK) + ';"><b>'
+          + esc(r.dir.charAt(0).toUpperCase() + r.dir.slice(1)) + '</b>'
+          + (r.was ? ' <span style="color:' + SOFT + ';">\u00b7 was ' + esc(r.was) + '</span>' : '') + '</td></tr>');
+      }
+    }
+    h.push('</table>');
+    if (alsoLine) h.push('<div style="font-size:13px;color:' + SOFT + ';margin-top:10px;">' + esc(alsoLine) + '.</div>');
+    h.push('</div>');
+  }
+
+  if (hist.length) {
+    h.push('<div style="padding:16px 22px 6px;">' + label("Do they hit their guide?"));
+    const cell = 'padding:7px 0;border-bottom:1px solid ' + LINE + ';vertical-align:top;';
+    for (const x of hist) {
+      h.push('<div style="margin-top:14px;font-size:14px;"><b>' + esc(x.measure) + '</b>'
+        + (x.line ? '<div style="color:' + SOFT + ';font-size:13px;">' + esc(x.line) + '</div>' : '') + '</div>');
+      h.push('<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;margin-top:4px;font-size:13px;font-variant-numeric:tabular-nums;">');
+      for (const r of x.rows) {
+        h.push('<tr><td style="' + cell + 'color:' + SOFT + ';white-space:nowrap;padding-right:8px;">' + esc(r.period) + '</td>'
+          + '<td style="' + cell + 'line-height:1.35;">' + esc(r.guided) + '</td>'
+          + '<td align="right" style="' + cell + 'white-space:nowrap;padding-left:8px;"><b>' + esc(r.reported) + '</b></td>'
+          + '<td align="right" style="' + cell + 'white-space:nowrap;padding-left:8px;color:' + (WORD[r.word] || SOFT) + ';">' + esc(r.verdict) + '</td></tr>');
+      }
+      h.push('</table>');
+    }
+    h.push('<div style="font-size:12px;color:' + SOFT + ';margin-top:10px;">Guided = the last guide in force before the period was reported.'
+      + (anyFlag ? ' ' + esc(FLAG_NOTE) : '') + '</div>');
+    h.push('</div>');
+  }
+
+  h.push('<div style="padding:16px 22px 20px;font-size:12px;line-height:1.5;color:' + SOFT + ';border-top:1px solid ' + LINE + ';margin-top:14px;">'
+    + 'Thanks,<br>Zahoor \u00b7 Guidance Scorecard \u00b7 hello@zahoorbhat.com<br><br>'
+    + 'Questions, or something that looks wrong: reply to this. Every figure is read from the company\'s own filings on EDGAR. '
+    + 'A guide is only scored against the same period, on the same basis. Nothing here is a forecast.'
+    + (opts.unsubscribeUrl ? '<br><br><a href="' + esc(opts.unsubscribeUrl) + '" style="color:' + SOFT + ';">Unsubscribe</a>' : '')
+    + (opts.postalAddress ? ' \u00b7 ' + esc(opts.postalAddress) : '')
+    + '</div>');
+  h.push('</div></div>');
+
+  return { subject, text: t.join("\n"), html: h.join("\n") };
 }
 
 export function renderEmail(view, options) {
@@ -1912,6 +2114,8 @@ export function renderEmail(view, options) {
 
   const t = [];
   const d = designOf(view, metrics, sec);
+  const quiet = d.kind === "none" ? quietDesign(sec, d) : null;
+  if (quiet) return renderQuiet(view, opts, company, metrics, sec, quiet, subject);
   const heroText = d.side.replace(/<br>/g, " ");
   t.push(company + " (" + view.ticker + ")");
   t.push("");

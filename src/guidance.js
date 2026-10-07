@@ -1214,7 +1214,12 @@ export function partsNamed(guides, intro) {
       const p = prefixPart(t);
       if (p) names.add(p);
     }
-    const re = /\b(?:the|our|its)\s+([A-Z][A-Za-z&' ]{1,48}?)\s+(?:segment|division|business unit)s?\b/g;
+    /* "Business" too, and at the start of a sentence. Constellation writes
+       "The Wine and Spirits Business expects organic net sales decline of
+       5 - 8%"; only "segment", "division" and "business unit" were known, and
+       only after a lower-case "the" - so the guide was read as the company's,
+       and scored against the company's sales as a 13-point beat. */
+    const re = /\b(?:[Tt]he|[Oo]ur|[Ii]ts)\s+([A-Z][A-Za-z&' ]{1,48}?)\s+(?:segment|division|business unit|[Bb]usiness)(?:es|s)?\b/g;
     let m;
     while ((m = re.exec(String(g.quote || "")))) if (isPartName(m[1])) names.add(m[1].trim());
     /* A part named by its initials as the subject of the guide. General
