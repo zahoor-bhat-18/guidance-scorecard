@@ -595,7 +595,9 @@ function replacedKey(label) {
     // then as "adjusted revenue growth" of "mid-teens" in July and October.
     // The later guides were the same measure in other words, and the April
     // 10% was still carried past them.
-    .replace(/\b(diluted|common|growth)\b/g, " ")
+    // "Decline" and the rest are "growth" with the sign said in words:
+    // Constellation's "Beer: net sales" and "Beer: net sales decline" are one guide.
+    .replace(/\b(diluted|common|growth|decline|increase|decrease|change)\b/g, " ")
     .replace(/\bper share(\s+per share)+\b/g, "per share")
     .replace(/\s+/g, " ")
     .trim();

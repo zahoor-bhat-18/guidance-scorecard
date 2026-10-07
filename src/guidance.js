@@ -768,8 +768,35 @@ function recoverReaffirmed(g) {
  * A guide that cannot be scored is a small loss. A guide scored against a
  * number nobody wrote is the loss that ends the product.
  */
+/**
+ * THE WORD THAT SAYS WHICH FIGURE, PUT BACK ON THE LABEL.
+ *
+ * Constellation: "Enterprise: organic net sales decline of 4% - 6%". The
+ * guide came back labelled "net sales", was asked for as net sales, and was
+ * scored against reported net sales - down 10.5% after a divestiture - as a
+ * miss of four and a half points. The organic figure was down 4%: within.
+ *
+ * Where the guide's own sentence puts organic, comparable, adjusted, core,
+ * underlying or constant-currency directly in front of the measure EVERY
+ * time it names it, and the label has dropped the word, the word goes back.
+ */
+const QUALIFIER = "organic|comparable|adjusted|core|underlying|constant[- ]currency";
+export function qualifierFromQuote(g) {
+  const label = String((g && g.metric_as_written) || "").trim();
+  const quote = String((g && g.quote) || "");
+  if (!label || !quote || new RegExp("\\b(" + QUALIFIER + "|non-?gaap|gaap|reported)\\b", "i").test(label)) return g;
+  const bare = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+  const all = quote.match(new RegExp("\\b" + bare + "\\b", "gi")) || [];
+  const withIt = Array.from(quote.matchAll(new RegExp("\\b(" + QUALIFIER + ")\\s+" + bare + "\\b", "gi")));
+  if (!all.length || withIt.length !== all.length) return g;
+  const words = new Set(withIt.map((m) => m[1].toLowerCase().replace(/-/g, " ")));
+  if (words.size !== 1) return g;
+  const word = [...words][0];
+  return { ...g, metric_as_written: word + " " + label, label_was: label };
+}
+
 export function guardGuide(input, filingText) {
-  const g = aboutNotPlusMinus(input.shape === "reaffirmed" ? recoverReaffirmed(input) : input);
+  const g = aboutNotPlusMinus(qualifierFromQuote(input.shape === "reaffirmed" ? recoverReaffirmed(input) : input));
 
   const pool = quoteNumbers(g.quote);
   for (const e of bandEnds(g.quote)) pool.add(e);
