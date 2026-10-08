@@ -23,6 +23,15 @@ on:
 permissions:
   contents: read
 
+# One run at a time per set of tickers. The Worker polls every minute and KV
+# takes up to a minute to show its "already dispatched" mark everywhere, so
+# the same release can be dispatched twice in the same second (PepsiCo, 8 Oct
+# 2026: two identical emails three seconds apart). Queued behind the first,
+# the second run finds the release already in the record and sends nothing.
+concurrency:
+  group: send-${{ github.event.client_payload.tickers || inputs.tickers }}
+  cancel-in-progress: false
+
 jobs:
   send:
     runs-on: ubuntu-latest
