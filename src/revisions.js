@@ -508,6 +508,44 @@ export function revisionsBetween(rawBefore, rawAfter, opts) {
    * relabelled: earnings really may have been cut as well, and the reader is
    * told what is uncertain rather than having it decided for him.
    */
+  /* LEFTOVERS: a guide "new" this release and one "not repeated" from the
+   * last, for the same period, that differ only in how the basis is written.
+   * Helen of Troy wrote "Net Income (GAAP)", "Adjusted EBITDA (Non-GAAP)" and
+   * "Free Cash Flow" in July and "Net Income", "Adjusted EBITDA" and "Free
+   * cash flow (non-GAAP)" in October; each read as one guide dropped and
+   * another begun. Matched only when exactly one of each is left over, the
+   * adjusted/GAAP side agrees (free cash flow, EBITDA and organic growth are
+   * non-GAAP by definition and carry no side), and the units can be compared.
+   */
+  const sideOf = (label) => {
+    const l = String(label || "");
+    if (/free cash flow|\bfcf\b|ebitda|organic/i.test(l)) return "";
+    return /adjusted|\badj\b|non-?gaap|\bcore\b|comparable/i.test(l) ? " adj" : "";
+  };
+  const looseKey = (label) => labelKey({ metric_as_written: label }).replace(/\b(gaap|non|basis)\b/g, " ")
+    .replace(/\s+/g, " ").trim() + sideOf(label);
+  const fresh = out.filter((r) => r.direction === "new");
+  const dropped = out.filter((r) => r.direction === "not repeated");
+  const matchedOld = new Set();
+  for (const r of fresh) {
+    const k = looseKey(r.metric_as_written);
+    if (fresh.some((x) => x !== r && x.period === r.period && looseKey(x.metric_as_written) === k)) continue;
+    const olds = dropped.filter((o) => !matchedOld.has(o) && o.period === r.period && looseKey(o.metric_as_written) === k);
+    if (olds.length !== 1) continue;
+    const o = olds[0];
+    const before = inUnitOf(o.before, o.unit, r.unit);
+    if (!before || !r.after) continue;
+    matchedOld.add(o);
+    r.before = before;
+    r.direction = direction(before, r.after);
+    if (r.direction === "unchanged" || r.direction === "changed") r.direction = r.direction === "changed" ? "changed" : "unchanged";
+    r.relabelled_from = o.metric_as_written;
+    r.summary = revisionSentence(r) || r.summary;
+  }
+  if (matchedOld.size) {
+    for (let i = out.length - 1; i >= 0; i--) if (matchedOld.has(out[i])) out.splice(i, 1);
+  }
+
   const scoped = out.some((r) => r.direction === "scope change");
   if (scoped) {
     for (const r of out) {

@@ -1905,13 +1905,32 @@ function shortName(name) {
  * the outcome: green when guides were raised and none cut, the miss colour
  * when cut and none raised, slate when held, new or both.
  */
+/* Which basis a label states: "adj", "gaap", or "" when it says neither. */
+function basisOfLabel(label) {
+  const l = String(label || "");
+  if (/\b(adjusted|non-?gaap|core|comparable|organic|underlying|excluding)\b/i.test(l)) return "adj";
+  if (/\b(gaap|reported)\b/i.test(l)) return "gaap";
+  return "";
+}
 const QUIET_ORDER = ["raised", "cut", "narrowed", "widened", "held", "new"];
 function quietDesign(sec, d) {
   const rows = [];
   const seen = new Set();
+  let group = -1, lastBase = null;
   for (const o of sec.outlook) {
     const r = o.r || {};
-    const k = o.measure + "|" + o.period;
+    /* The table's name can be of another basis or unit than this guide.
+       Helen of Troy's GAAP and adjusted EPS guides both took the name
+       "Diluted EPS (GAAP)", and the adjusted one - raised to $3.60-$4.15 -
+       was dropped as a repeat; its net sales guide in dollars was shown as
+       "Net sales (%)". The guide's own label is used where they differ. */
+    const own = String(r.label || r.metric_as_written || "");
+    let measure = o.measure;
+    if (own && (basisOfLabel(own) !== basisOfLabel(measure)
+      || (/%/.test(measure) && r.unit && r.unit !== "percent"))) measure = displayLabel([own]);
+    const base = o.measure;
+    if (base !== lastBase) { group++; lastBase = base; }
+    const k = measure + "|" + o.period;
     if (seen.has(k)) continue;
     seen.add(k);
     const dir = r.direction === "unchanged" ? "held" : r.direction;
@@ -1928,8 +1947,12 @@ function quietDesign(sec, d) {
         else if (al === bl && ah < bh) end = "bottom";
       }
     }
-    rows.push({ measure: o.measure, period: o.period, guide: o.guide, dir: QUIET_ORDER.includes(dir) ? dir : "new", was, end });
+    rows.push({ measure, period: o.period, guide: o.guide, dir: QUIET_ORDER.includes(dir) ? dir : "new", was, end,
+      group, adj: basisOfLabel(own || measure) !== "gaap" && /adjusted|non-?gaap|\bcore\b|comparable/i.test(own || measure) });
   }
+  // Within one measure, the adjusted guide first: it is the one the company
+  // and the market judge the year on.
+  rows.sort((a, b) => (a.group - b.group) || ((b.adj ? 1 : 0) - (a.adj ? 1 : 0)));
   const count = {};
   for (const r of rows) count[r.dir] = (count[r.dir] || 0) + 1;
   const parts = QUIET_ORDER.filter((k) => count[k]).map((k) => count[k] + " " + k);
