@@ -35,7 +35,14 @@ import { metricKey as exactKey, displayLabel } from "./metrics.js";
  * a guide with a result still uses the exact key (metrics.js).
  */
 function metricKey(x) {
-  return exactKey(x)
+  /* Constant currency is its own measure in the email: PepsiCo's "core
+     constant currency EPS" (+1% to +2%) and "core EPS" (+2.5% to +3.5%) are
+     two guides, and grouped as one the email showed the core EPS figure under
+     the constant-currency name. The shared key strips the words, so they are
+     carried through it as a token of their own. */
+  const label = typeof x === "string" ? x : (x && (x.metric_as_written || x.metric)) || "";
+  const cc = /constant[-\s]currency|\(cc\)/i.test(label);
+  return (exactKey(label) + (cc ? " ccy" : ""))
     .replace(/\bu s\b/g, " ")
     // "Decline", "increase" and "decrease" are growth with the sign in words:
     // Constellation's "Beer: net sales growth" (2025) and "Beer: net sales
