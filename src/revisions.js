@@ -43,7 +43,18 @@ function labelKey(guide) {
   return String(guide.metric_as_written || "")
     .toLowerCase()
     .replace(/\badj(\.|usted)?\b/g, "")
-    .replace(/\(cc\)|constant[-\s]currency/g, "")
+    /* Constant currency is a DIFFERENT measure, not a different word for
+       the same one. PepsiCo guides "core constant currency EPS" (+1% to +2%)
+       and "core EPS" (+2.5% to +3.5%) side by side; with the words stripped
+       the two were one key, one was dropped, and the email reported the core
+       EPS figure under the constant-currency name. "(cc)" is written out so
+       Walmart's "(cc)" and "constant currency" still match each other. */
+    .replace(/\(cc\)/g, " constant currency ")
+    .replace(/constant[-\s]currency/g, " constant currency ")
+    // Growth with the sign in words, and the words for "all of it":
+    // PepsiCo's "net revenue growth" became "Net Revenue", and "Total cash
+    // returns to shareholders" became "Cash Returns to Shareholders".
+    .replace(/\b(growth|decline|increase|decrease|change|total|consolidated|enterprise)\b/g, " ")
     /* "comparable EPS" in July, "comparable EPS outlook" in October;
        "operating cash flow", then "operating cash flow target". Constellation
        held all four guides and the email showed four new ones and four that
