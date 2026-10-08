@@ -1909,7 +1909,19 @@ function quietDesign(sec, d) {
     seen.add(k);
     const dir = r.direction === "unchanged" ? "held" : r.direction;
     const was = r.before && dir !== "held" && dir !== "new" ? formatFigure(r.before, r.unit) : "";
-    rows.push({ measure: o.measure, period: o.period, guide: o.guide, dir: QUIET_ORDER.includes(dir) ? dir : "new", was });
+    // Narrowed to which end? "Approximately 6.0%" from "5.5% to 6.0%" is the
+    // top of the earlier range; "approximately 7.0%" from "7.0% to 7.5%" the
+    // bottom. That is the news in a narrowing.
+    let end = "";
+    if (dir === "narrowed" && r.before && r.after) {
+      const ends = (g) => [g.low !== null && g.low !== undefined ? g.low : g.value, g.high !== null && g.high !== undefined ? g.high : g.value];
+      const [bl, bh] = ends(r.before), [al, ah] = ends(r.after);
+      if ([bl, bh, al, ah].every((x) => typeof x === "number")) {
+        if (ah === bh && al > bl) end = "top";
+        else if (al === bl && ah < bh) end = "bottom";
+      }
+    }
+    rows.push({ measure: o.measure, period: o.period, guide: o.guide, dir: QUIET_ORDER.includes(dir) ? dir : "new", was, end });
   }
   const count = {};
   for (const r of rows) count[r.dir] = (count[r.dir] || 0) + 1;
@@ -1919,7 +1931,8 @@ function quietDesign(sec, d) {
     : parts.length === 1 && count.new ? "New guidance" + (periods.length === 1 ? " for " + periods[0] : "")
     : "Guidance: " + parts.join(", ");
   // Two sentences: what moved first, then the first thing that did not.
-  const says = (r) => r.measure + " " + (r.dir === "new" ? "guided at" : r.dir === "held" ? "held at" : r.dir + " to") + " " + r.guide + ".";
+  const says = (r) => r.measure + " " + (r.dir === "new" ? "guided at" : r.dir === "held" ? "held at"
+    : r.dir + " to" + (r.end ? " the " + r.end + " of its range," : "")) + " " + r.guide + ".";
   const movedRows = rows.filter((r) => r.dir !== "held" && r.dir !== "new");
   const stillRows = rows.filter((r) => r.dir === "held" || r.dir === "new");
   const lines = movedRows.slice(0, 2).concat(stillRows.slice(0, movedRows.length ? 1 : 2)).slice(0, 2).map(says);
@@ -2006,7 +2019,7 @@ function renderQuiet(view, opts, company, metrics, sec, quiet, subject) {
   if (quiet.rows.length) {
     t.push("WHAT THEY GUIDE NOW");
     for (const r of quiet.rows) {
-      t.push("- " + r.measure + ", " + r.period + ": " + r.guide + " - " + r.dir + (r.was ? ", was " + r.was : ""));
+      t.push("- " + r.measure + ", " + r.period + ": " + r.guide + " - " + r.dir + (r.end ? " to the " + r.end + " of the range" : "") + (r.was ? ", was " + r.was : ""));
     }
     if (alsoLine) t.push(alsoLine + ".");
     t.push("");
@@ -2059,7 +2072,7 @@ function renderQuiet(view, opts, company, metrics, sec, quiet, subject) {
         + '<b>' + esc(r.guide) + '</b>' + (moved ? '' : ' <span style="color:' + SOFT + ';font-size:13px;">held</span>') + '</td></tr>');
       if (moved) {
         h.push('<tr><td colspan="2" style="padding:0 0 9px;' + line + 'font-size:13px;color:' + (TONE[r.dir] || INK) + ';"><b>'
-          + esc(r.dir.charAt(0).toUpperCase() + r.dir.slice(1)) + '</b>'
+          + esc(r.dir.charAt(0).toUpperCase() + r.dir.slice(1) + (r.end ? " to the " + r.end + " of the range" : "")) + '</b>'
           + (r.was ? ' <span style="color:' + SOFT + ';">\u00b7 was ' + esc(r.was) + '</span>' : '') + '</td></tr>');
       }
     }

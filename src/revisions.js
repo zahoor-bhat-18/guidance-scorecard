@@ -185,6 +185,9 @@ function tidy(n) {
  * and a percentage is not a level.
  */
 function looksLikeScopeChange(before, after, unit, label) {
+  // A movement in basis points can be any size: Levi's gross margin guide went
+  // from up 10 to up 130. That is a raise, not a change of what is measured.
+  if (unit === "basis points") return false;
   if (unit === "percent" || !unit || unit === "other") return false;
 
   // Earnings are exempt. United cut adjusted earnings per share from $12-14 to
@@ -210,6 +213,24 @@ function direction(before, after) {
     if (lowMove <= 0 && highMove <= 0) return "cut";
     if (lowMove > 0 && highMove < 0) return "narrowed";
     if (lowMove < 0 && highMove > 0) return "widened";
+    return "changed";
+  }
+
+  /* A RANGE AGAINST A SINGLE FIGURE. Levi cut its reported revenue growth
+     guide from "7.0% to 7.5%" to "approximately 7.0%" and raised organic
+     growth from "5.5% to 6.0%" to "approximately 6.0%". Only the low ends
+     were compared, so the first read as unchanged; the second was not seen
+     at all. A figure inside the earlier range has narrowed it (the email
+     says to which end); outside it, the guide was raised or cut. And the
+     reverse, for a figure that became a range. */
+  const span = (g) => (g.low !== null && g.high !== null ? [g.low, g.high]
+    : g.value !== null ? [g.value, g.value] : null);
+  const sb = span(before), sa = span(after);
+  if (sb && sa && (sb[0] !== sb[1]) !== (sa[0] !== sa[1])) {
+    if (sa[0] >= sb[0] && sa[1] <= sb[1]) return "narrowed";
+    if (sb[0] >= sa[0] && sb[1] <= sa[1]) return "widened";
+    if (sa[0] >= sb[1]) return "raised";
+    if (sa[1] <= sb[0]) return "cut";
     return "changed";
   }
 

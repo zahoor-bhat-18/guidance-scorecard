@@ -637,6 +637,26 @@ function present(value, pool) {
   return false;
 }
 
+/* A CHANGE GUIDED IN BASIS POINTS keeps its unit.
+   Levi: "Gross margin: Raised to up 130 basis points to prior year". The
+   guide came back as the bare number 130, unit "other", and the email
+   printed "Gross margin FY2026: 130 - raised, was 10". Where every figure of
+   the guide is written with "basis points" or "bps" straight after it, that
+   is its unit; "down", "decline" or "contraction" just before makes it
+   negative. */
+function inBasisPoints(g) {
+  const nums = [g.low, g.high, g.value].filter((x) => typeof x === "number");
+  const q = String(g.quote || "");
+  if (!nums.length || g.unit === "basis points") return g;
+  if (g.unit && !/^(other|percent)$/i.test(String(g.unit))) return g;
+  const esc = (n) => String(Math.abs(n)).replace(".", "\\.");
+  const after = (n) => new RegExp("(?<![\\d.])" + esc(n) + "\\s*(?:(?:-|to)\\s*\\d+\\s*)?(basis\\s+points|bps)\\b", "i");
+  if (!nums.every((n) => after(n).test(q))) return g;
+  const down = new RegExp("\\b(down|declin\\w*|contract\\w*|decreas\\w*|lower)\\b[^.\\d]{0,24}" + esc(nums[0]), "i").test(q);
+  const sgn = (x) => (typeof x === "number" ? (down ? -Math.abs(x) : x) : x);
+  return { ...g, unit: "basis points", low: sgn(g.low), high: sgn(g.high), value: sgn(g.value), unit_was: g.unit || null };
+}
+
 /* "+/- $50 billion" is "about $50 billion".
    Wells Fargo: "Expect 2026 net interest income to be +/- $50 billion". The
    model read a range from minus fifty to fifty, the minus fifty is not in the
@@ -662,26 +682,72 @@ function aboutNotPlusMinus(g) {
    had just raised them. Where one row yields a worded guide and a figure
    guide for the same measure and period, and the words come AFTER the
    figures in that row, the figures are the earlier column and are dropped. */
-export function dropEarlierColumn(guides) {
-  const flat = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9.%$ ]/g, " ").replace(/\s+/g, " ").trim();
+/* Which column of a two-column guidance table is the current one?
+   "Metric | Updated FY 2026 Guidance | Previous FY 2026 Guidance" (Levi) and
+   "Previous | Updated" (Lamb Weston) both occur. The table's own heading
+   says, and it is the last such heading above the row. Null when no heading
+   names both. */
+function columnOrder(text, quote) {
+  const t = String(text || "");
+  const key = String(quote || "").replace(/\s+/g, " ").trim().slice(0, 28);
+  if (!t || key.length < 8) return null;
+  const flatText = t.replace(/[ \t]+/g, " ");
+  const at = flatText.indexOf(key);
+  if (at < 0) return null;
+  const above = flatText.slice(Math.max(0, at - 2500), at).split("\n").reverse();
+  const NOW = /\b(updated|current|revised|new)\b/i;
+  const WAS = /\b(previous|prior|previously)\b/i;
+  for (const line of above) {
+    if (line.length > 200 || !NOW.test(line) || !WAS.test(line)) continue;
+    return line.search(NOW) < line.search(WAS) ? "updated-first" : "previous-first";
+  }
+  return null;
+}
+
+/* Where in its row a guide's own expression starts: the range "5.5 ... 6",
+   the single figure "6.0", or the words it was read from. */
+function placeInRow(row, g) {
+  const num = (n) => String(Math.abs(n)).replace(".", "\\.") + "(?:\\.0+)?";
+  const edge = (re) => { const m = new RegExp("(?<![\\d.])" + re + "(?!\\d)").exec(row); return m ? m.index : -1; };
+  if (g.from_words) {
+    const w = String(g.from_words).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    return row.toLowerCase().replace(/[^a-z0-9.%$ ]/g, " ").indexOf(w);
+  }
+  if (typeof g.low === "number" && typeof g.high === "number") return edge(num(g.low) + "\\D{1,14}" + num(g.high));
+  const v = typeof g.value === "number" ? g.value : typeof g.low === "number" ? g.low : g.high;
+  return typeof v === "number" ? edge(num(v)) : -1;
+}
+
+export function dropEarlierColumn(guides, text) {
   const drop = new Set();
-  for (const w of guides) {
-    if (!w.from_words || !w.period) continue;
-    const words = flat(w.from_words);
-    if (!words) continue;
-    for (const f of guides) {
-      if (f === w || f.from_words || f.period !== w.period) continue;
-      if (metricKey(f) !== metricKey(w)) continue;
-      const row = flat(f.quote);
-      const at = row.indexOf(words);
-      if (at < 0) continue;
-      const lastDigit = row.slice(0, at).search(/\d[^\d]*$/);
-      if (lastDigit < 0) continue;                       // no figure before the words
-      if (/\d/.test(row.slice(at + words.length))) continue; // figures after them too: not this shape
-      drop.add(f);
+  const list = guides || [];
+  for (let a = 0; a < list.length; a++) {
+    for (let b = a + 1; b < list.length; b++) {
+      const x = list[a], y = list[b];
+      if (drop.has(x) || drop.has(y) || !x.period || x.period !== y.period) continue;
+      if (metricKey(x) !== metricKey(y)) continue;
+      // The same row: one quote holds the other, or they begin alike.
+      const qx = String(x.quote || "").replace(/\s+/g, " ").trim();
+      const qy = String(y.quote || "").replace(/\s+/g, " ").trim();
+      if (!qx || !qy) continue;
+      const row = qx.length >= qy.length ? qx : qy;
+      if (!(row.includes(qx) && row.includes(qy)) && qx.slice(0, 24) !== qy.slice(0, 24)) continue;
+      const px = placeInRow(row, x), py = placeInRow(row, y);
+      if (px < 0 || py < 0 || px === py) continue;
+      const first = px < py ? x : y, second = px < py ? y : x;
+      const order = columnOrder(text, row);
+      if (order) {
+        drop.add(order === "updated-first" ? second : first);
+        continue;
+      }
+      /* No heading to go by. Words after figures have always meant the
+         figures were the earlier column ("0.0% to 1.0% | Up Low Single
+         Digits"); nothing else is assumed. */
+      if (second.from_words && !first.from_words
+        && !/\d/.test(row.slice(placeInRow(row, second) + String(second.from_words).length))) drop.add(first);
     }
   }
-  return drop.size ? guides.filter((g) => !drop.has(g)) : guides;
+  return drop.size ? list.filter((g) => !drop.has(g)) : list;
 }
 
 /* A table row labelled as the guide is, whose last numbers are the guide's
@@ -796,7 +862,7 @@ export function qualifierFromQuote(g) {
 }
 
 export function guardGuide(input, filingText) {
-  const g = aboutNotPlusMinus(qualifierFromQuote(input.shape === "reaffirmed" ? recoverReaffirmed(input) : input));
+  const g = inBasisPoints(aboutNotPlusMinus(qualifierFromQuote(input.shape === "reaffirmed" ? recoverReaffirmed(input) : input)));
 
   const pool = quoteNumbers(g.quote);
   for (const e of bandEnds(g.quote)) pool.add(e);
@@ -1699,7 +1765,7 @@ export async function guidanceFrom(env, cik, release, cal, readAlready) {
       : { period: null, why: "No fiscal calendar was supplied." };
     return { ...g, period: r.period, period_how: r.how || null, period_why: r.why || null };
   });
-  const withPeriods = dropEarlierColumn(withPeriodsAll);
+  const withPeriods = dropEarlierColumn(withPeriodsAll, filing.text);
 
   // Every guide as extracted, in order - what the next release is ASKED
   // about. Kept unchanged so the backfill sends the model the same questions

@@ -42,6 +42,9 @@ export function formatValue(n, unit) {
     // the same way. Printed bare, "2 to 3" beside a column of percentages and
     // dollar figures reads as a number missing its unit.
     case "multiple": return sign(n) + size + "x";
+    // A change against last year, in basis points: Levi's gross margin "up
+    // 130 basis points". The plus is said, because the figure is a movement.
+    case "basis points": return (n > 0 ? "+" : sign(n)) + size + " bps";
     default: return String(n);
   }
 }
