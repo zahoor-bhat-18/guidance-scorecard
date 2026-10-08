@@ -1982,7 +1982,32 @@ export function subjectOf(view, keys, sec, company) {
   return name + (d.outlook.length ? " reported: new guidance, nothing to score yet" : " reported: nothing to score against guidance");
 }
 
-function renderQuiet(view, opts, company, metrics, sec, quiet, subject) {
+/* THE SCORED DAY, in the same shape as the quiet one.
+   The quiet-day email (7 Oct 2026) replaced range bars, beat strips and
+   three screens of tables with one screen a reader can act on. The day a
+   guided period is reported gets the same: the outcome in the header, one
+   line per figure scored, what they guide now, and the record - so every
+   email from the product reads the same way. */
+function scoredDesign(sec, d) {
+  const parts = String(d.side || "").split(/<br>/).map((x) => x.trim()).filter(Boolean);
+  const title = (d.big + " " + parts.slice(0, 2).join(" ")).replace(/\s+/g, " ").trim();
+  const lines = [];
+  if (parts.length > 2) lines.push(parts.slice(2).join(", ").replace(/^./, (c) => c.toUpperCase()) + ".");
+  /* The headline's "EPS is guided up 44% for Q3" compares next quarter's
+     guide with this quarter's result - seasonal, and not news on a day the
+     scores are the news. Kept on quiet days only. */
+  if (d.line) {
+    const keep = String(d.line).split(/(?<=\.)\s+/).filter((x) => !/ is guided (up|down) /.test(x)).join(" ").trim();
+    if (keep) lines.push(keep);
+  }
+  const rows = sec.quarter.map((q) => ({
+    measure: q.measure, period: q.period, guided: q.guided, reported: q.reported,
+    verdict: gapWords(q.p), word: q.flagged ? null : q.word,
+  }));
+  return { title, lines, kind: d.kind, rows };
+}
+
+function renderQuiet(view, opts, company, metrics, sec, quiet, subject, scored) {
   // Every other guide in the release, by what happened to it: names only.
   const latest = view.latestRelease && view.latestRelease.accession;
   const shown = new Set(sec.outlook.map((o) => o.r));
@@ -2011,11 +2036,17 @@ function renderQuiet(view, opts, company, metrics, sec, quiet, subject) {
   const t = [];
   t.push(company + " (" + view.ticker + ")" + when);
   t.push("");
-  t.push(quiet.title);
-  for (const l of quiet.lines) t.push(l);
+  t.push(scored ? scored.title : quiet.title);
+  for (const l of (scored ? scored.lines : quiet.lines)) t.push(l);
   t.push("");
-  t.push(quiet.why);
-  t.push("");
+  if (scored) {
+    t.push("THIS RELEASE AGAINST THE GUIDE");
+    for (const r of scored.rows) t.push("- " + r.measure + ", " + r.period + ": " + r.reported + " (guided " + r.guided + ") - " + r.verdict);
+    t.push("");
+  } else {
+    t.push(quiet.why);
+    t.push("");
+  }
   if (quiet.rows.length) {
     t.push("WHAT THEY GUIDE NOW");
     for (const r of quiet.rows) {
@@ -2042,7 +2073,7 @@ function renderQuiet(view, opts, company, metrics, sec, quiet, subject) {
   if (opts.unsubscribeUrl) { t.push(""); t.push("Unsubscribe: " + opts.unsubscribeUrl); }
 
   /* ---------------- html ---------------- */
-  const H = HERO[quiet.kind];
+  const H = HERO[scored ? scored.kind : quiet.kind];
   const label = (text) => '<div style="font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:' + SOFT
     + ';font-weight:700;">' + esc(text) + '</div>';
   const TONE = { raised: GREEN, cut: "#7a3b22", narrowed: INK, widened: INK };
@@ -2052,12 +2083,26 @@ function renderQuiet(view, opts, company, metrics, sec, quiet, subject) {
   h.push('<div style="max-width:600px;margin:0 auto;background:#ffffff;font-family:' + SANS + ';color:' + INK + ';font-size:15px;line-height:1.45;">');
   h.push('<div style="background:' + H.bg + ';color:' + H.fg + ';padding:22px 22px 20px;">');
   h.push('<div style="font-size:13px;color:' + H.sub + ';">' + esc(company + " (" + view.ticker + ")" + when) + '</div>');
-  h.push('<div style="font-size:25px;font-weight:700;line-height:1.2;margin-top:10px;color:' + H.fg + ';">' + esc(quiet.title) + '</div>');
-  if (quiet.lines.length) {
-    h.push('<div style="font-size:15px;line-height:1.45;margin-top:10px;color:' + H.fg + ';">' + quiet.lines.map(esc).join("<br>") + '</div>');
+  const heroLines = scored ? scored.lines : quiet.lines;
+  h.push('<div style="font-size:25px;font-weight:700;line-height:1.2;margin-top:10px;color:' + H.fg + ';">' + esc(scored ? scored.title : quiet.title) + '</div>');
+  if (heroLines.length) {
+    h.push('<div style="font-size:15px;line-height:1.45;margin-top:10px;color:' + H.fg + ';">' + heroLines.map(esc).join("<br>") + '</div>');
   }
   h.push('</div>');
-  h.push('<div style="padding:12px 22px;background:#f4f6f7;border-bottom:1px solid ' + LINE + ';font-size:13px;color:#3b4a57;">' + esc(quiet.why) + '</div>');
+  if (!scored) {
+    h.push('<div style="padding:12px 22px;background:#f4f6f7;border-bottom:1px solid ' + LINE + ';font-size:13px;color:#3b4a57;">' + esc(quiet.why) + '</div>');
+  } else if (scored.rows.length) {
+    h.push('<div style="padding:18px 22px 6px;">' + label("This release against the guide"));
+    h.push('<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;margin-top:8px;font-size:14px;font-variant-numeric:tabular-nums;">');
+    for (const r of scored.rows) {
+      const line = 'border-bottom:1px solid ' + LINE + ';';
+      h.push('<tr><td style="padding:9px 8px 9px 0;vertical-align:top;' + line + '">' + esc(r.measure)
+        + '<div style="font-size:12px;color:' + SOFT + ';">' + esc(r.period + " \u00b7 guided " + r.guided) + '</div></td>'
+        + '<td align="right" style="padding:9px 0;vertical-align:top;white-space:nowrap;' + line + '"><b style="font-size:16px;">' + esc(r.reported) + '</b>'
+        + '<div style="font-size:13px;color:' + (WORD[r.word] || SOFT) + ';">' + esc(r.verdict) + '</div></td></tr>');
+    }
+    h.push('</table></div>');
+  }
 
   if (quiet.rows.length) {
     h.push('<div style="padding:18px 22px 6px;">' + label("What they guide now"));
@@ -2141,6 +2186,10 @@ export function renderEmail(view, options) {
   const d = designOf(view, metrics, sec);
   const quiet = d.kind === "none" ? quietDesign(sec, d) : null;
   if (quiet) return renderQuiet(view, opts, company, metrics, sec, quiet, subject);
+  // Scored day: the same compact email, with the scores at the top. The
+  // longer layout below is no longer sent; it is kept until the new one has
+  // gone out for a few releases, then removed.
+  if (!opts.longLayout) return renderQuiet(view, opts, company, metrics, sec, quietDesign(sec, d), subject, scoredDesign(sec, d));
   const heroText = d.side.replace(/<br>/g, " ");
   t.push(company + " (" + view.ticker + ")");
   t.push("");
