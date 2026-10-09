@@ -179,6 +179,8 @@ export function forEmail(record) {
       before: r.before || null,
       after: r.after || null,
       words: r.words || null,
+      // Kept so the email can show "about 20%" when the company wrote "Approx. 20%".
+      quote: r.quote ? String(r.quote).slice(0, 400) : null,
       // The sentence is BUILT HERE, from the untrimmed revision, and not read
       // off the record.
       //

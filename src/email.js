@@ -194,7 +194,9 @@ function outcomeCell(p) {
     // "$0bn vs single figure" read like a typo. Exactly on it says so.
     if (tidy(actual - value) === 0) return "on the guide";
     const d = tidy(actual - value);
-    return formatDelta(Math.abs(d), p.unit, false) + (d > 0 ? " above" : " below");
+    // Same wording as a range ("below by $0.18"), so the history column
+    // reads one way down the page.
+    return (d > 0 ? "above by " : "below by ") + formatDelta(Math.abs(d), p.unit, false);
   }
   return p.position || "";
 }
@@ -1466,7 +1468,7 @@ export function sectionsOf(view, keys) {
         measure,
         first: i === 0,
         period: periodLabel(r.period),
-        guide: r.after ? (r.words ? "\u201c" + r.words + "\u201d (read as " + formatFigure(r.after, r.unit) + ")" : formatFigure(r.after, r.unit)) : "",
+        guide: r.after ? (r.words ? "\u201c" + r.words + "\u201d (read as " + formatFigure(r.after, r.unit) + ")" : roughly(r) + formatFigure(r.after, r.unit)) : "",
         change: changeWords(r),
       });
     });
@@ -2018,6 +2020,18 @@ export function subjectOf(view, keys, sec, company) {
    guided period is reported gets the same: the outcome in the header, one
    line per figure scored, what they guide now, and the record - so every
    email from the product reads the same way. */
+/* "Approx. 20%" printed as "20%" claims more precision than the company gave.
+   A single-figure guide whose quote puts approx/about/roughly/around/~ in
+   front of a number is shown as "about 20%". Ranges are left alone. */
+function roughly(r) {
+  const a = r && r.after;
+  if (!a || a.value == null || a.low != null || a.high != null) return "";
+  // The approximating word must sit right before THIS figure, not another one in the quote.
+  const n = String(Number(a.value)).replace(".", "\\.");
+  const re = new RegExp("(approx\\.?|approximately|about|roughly|around|~)\\s*[$(]?\\s*" + n + "(?![0-9])", "i");
+  return re.test(String(r.quote || "")) ? "about " : "";
+}
+
 function scoredDesign(sec, d) {
   const parts = String(d.side || "").split(/<br>/).map((x) => x.trim()).filter(Boolean);
   const title = (d.big + " " + parts.slice(0, 2).join(" ")).replace(/\s+/g, " ").trim();
