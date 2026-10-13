@@ -379,7 +379,9 @@ function byMetric(pairs, unanswered, limit) {
      * which costs more than the row is worth. So the guide is counted, and the
      * count line says how many were left out and why. */
     const g = group(key, u.unit);
-    g.labels.push(u.metric);
+    // Named by what was scored: an unanswered GAAP guide ("Diluted Net
+    // Earnings per Share to UNH Shareholders") was renaming the adjusted table.
+    (g.unansweredLabels = g.unansweredLabels || []).push(u.metric);
     if (!g.rows.some((p) => p.period === u.period)) {
       if (u.split) g.acrossSplit = (g.acrossSplit || 0) + 1;
       else g.unmatched = (g.unmatched || 0) + 1;
@@ -426,6 +428,7 @@ function byMetric(pairs, unanswered, limit) {
   }
   for (const [key, g] of groups) {
     g.key = key;
+    if (!g.labels.length) g.labels = g.unansweredLabels || [];
     g.metric = displayLabel(g.labels);
     // A per-share table named "Net earnings" reads as dollars: prefer a
     // label that says per share, else say it.
