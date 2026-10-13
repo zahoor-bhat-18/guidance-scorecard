@@ -1215,6 +1215,19 @@ export function deepPassages(full, label, room = 30000) {
   return out;
 }
 
+/* The deep look's passages hold both versions of a measure side by side, so
+   its answer must name the same side the guide does. P&G's "diluted net
+   earnings per share growth" came back as "Core EPS" 4% - the adjusted
+   twin - and would have been scored as the GAAP guide's result. */
+function sameSide(asked, found) {
+  const adj = /adjusted|\bcore\b|non-?gaap|comparable|underlying|excluding/i;
+  const plain = /\b(diluted|gaap|reported|net (income|earnings))\b/i;
+  const a = String(asked || ""), f = String(found || "");
+  if (plain.test(a) && !adj.test(a) && adj.test(f)) return false;
+  if (adj.test(a) && plain.test(f) && !adj.test(f)) return false;
+  return true;
+}
+
 async function deepLook(env, requests, actuals, full, text, release, cal) {
   // Also within the budget: a short question about a few passages finds
   // what a long list of thirty skipped.
@@ -1262,7 +1275,8 @@ async function deepLook(env, requests, actuals, full, text, release, cal) {
       && Boolean(cand.period)
       && cand.period === requests[i].guidePeriod
       && valueInQuoteAnyScale(cand.value, cand.quote)
-      && q.length >= 8 && flatFull.includes(q.split(/\s*(?:\.\.\.|\u2026)\s*/)[0].slice(0, 50));
+      && q.length >= 8 && flatFull.includes(q.split(/\s*(?:\.\.\.|\u2026)\s*/)[0].slice(0, 50))
+      && sameSide(requests[i].metric_as_written, cand.found_as);
     console.log("Deep look " + release.accession + " " + requests[i].guidePeriod + " "
       + requests[i].metric_as_written + ": " + JSON.stringify(cand.found_as) + " " + cand.value
       + (ok ? " - USED" : " - left empty"));
