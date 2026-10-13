@@ -29,6 +29,7 @@
  * different rules and the mismatch would be invisible.
  */
 
+import { metricKey as sharedMetricKey } from "../src/metrics.js";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { resolveCik, companyCalendar, factsFor } from "../src/xbrl.js";
 import { annualRecord } from "../src/annual.js";
@@ -121,31 +122,11 @@ const env = {
  * a forecast, parenthetical asides, footnote markers, and the prefixes that
  * only say "the whole company".
  */
+// One definition, shared with the email and the send path (src/metrics.js):
+// this copy had drifted, and UnitedHealth's EPS guide - worded three ways over
+// three years - counted as three measures here and one in the email.
 function metricKey(guide) {
-  return String(guide.metric_as_written || "")
-    .toLowerCase()
-    .replace(/\([^)]*\)/g, " ")
-    .replace(/\b(first|second|third|fourth)\s+quarter\b/g, " ")
-    .replace(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+quarter\b/g, " ")
-    .replace(/\bof\s+fiscal\s+year\s*\d{2,4}\b/g, " ")
-    .replace(/\bfiscal\s+(year\s+)?\d{2,4}\b/g, " ")
-    .replace(/\bfull[-\s]?year\b/g, " ")
-    .replace(/\b[1-4]q\s?\d{0,4}\b/g, " ")
-    .replace(/\bq[1-4]\b/g, " ")
-    .replace(/\bfy\s?\d{2,4}\b/g, " ")
-    .replace(/\b(19|20)\d{2}\b/g, " ")
-    .replace(/\b(guidance|outlook|forecast|expectations?|expected|projected)\b/g, " ")
-    .replace(/\badj(\.|usted)?\b/g, " ")
-    .replace(/\bcore\b/g, " ")
-    .replace(/\bconstant[-\s]currency\b/g, " ")
-    .replace(/\b(consolidated|total|company)\b/g, " ")
-    // Delta writes "Earnings Per Share" in its outlook table and "adjusted EPS"
-    // in the narrative. One measure, five matched pairs, counted as four and
-    // one.
-    .replace(/\beps\b/g, "earnings per share")
-    .replace(/[^a-z ]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return sharedMetricKey(guide);
 }
 
 /* pairUp lives in src/pairing.js and is imported. This file carried its own

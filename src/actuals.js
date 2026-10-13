@@ -1443,8 +1443,34 @@ async function growthFromLevels(env, requests, actuals, adjustedFor, text, relea
  * matched exactly, and only comparing the markers in that label against the
  * markers in the guide catches it.
  */
+/* ONE VERSION ONLY. A bare label is read as the adjusted figure, because
+   that is what companies guide - but Wells Fargo prints no adjusted
+   noninterest expense, so "the ADJUSTED version" was asked for and the model
+   rightly returned nothing, for every year: Q4 2025 guided ~$13.5bn,
+   reported $13,726m, never scored. Where the release has no adjusted line
+   of the measure at all - no line carrying the measure's name together with
+   adjusted, non-GAAP, core, underlying or excluding - the figure it prints
+   IS the one guided, and is asked for as reported. Only requests this
+   changes are asked anew; every other question is exactly as it was. */
+export function onlyOneVersion(req, text) {
+  if (!req || !req.expectBasis || !req.expectBasis.wantsAdjusted) return false;
+  const label = String(req.metric_as_written || "");
+  if (/adjusted|non-?gaap|\bcore\b|underlying|excluding|\bex\b|comparable|organic/i.test(label)) return false;
+  const name = label.toLowerCase().replace(/\([^)]*\)/g, " ").replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
+  if (name.split(" ").length < 2 || /\b(eps|earnings per share|ebitda|ebit|margin|operating income|operating profit|free cash flow|fcf)\b/.test(name)) return false;
+  const t = String(text || "").toLowerCase().replace(/\s+/g, " ");
+  if (!t.includes(name)) return false;
+  const near = new RegExp("(adjusted|non-?gaap|\\bcore\\b|underlying|excluding)[^.]{0,60}" + name.replace(/ /g, "\\s+")
+    + "|" + name.replace(/ /g, "\\s+") + "[^.]{0,40}(adjusted|non-?gaap|excluding)");
+  return !near.test(t);
+}
+
 export async function actualsFrom(env, cik, release, requests, cal) {
   let filing = await readFiling(env, cik, release.accession);
+  requests = requests.map((req) => onlyOneVersion(req, filing.text)
+    ? { ...req, expectBasis: { ...req.expectBasis, wantsAdjusted: false, exempt: true,
+        describe: "the figure as reported (the release prints no adjusted version)" + (req.expectBasis.wantsCC ? ", in CONSTANT CURRENCY" : "") } }
+    : req);
   /* A guide read from a filing BESIDE its release (JPMorgan's outlook slide)
      is answered from the filing beside this one as well: the measures on the
      slide are reported on the slide. Put first, so the release's long tables
