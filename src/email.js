@@ -2052,6 +2052,20 @@ function scoredDesign(sec, d) {
 }
 
 function renderQuiet(view, opts, company, metrics, sec, quiet, subject, scored) {
+  /* On a scored day the guide moves were only halfway down. Delta's October
+     2026 email led with "2 below" while the news was a full-year EPS guide
+     cut by a quarter. Every raised, cut, narrowed or widened guide gets one
+     line under the score, above the tables. */
+  if (scored) {
+    const moves = quiet.rows.filter((r) => ["raised", "cut", "narrowed", "widened", "withdrawn"].includes(r.dir));
+    if (moves.length) {
+      const bit = (r) => r.measure + " " + r.period + " " + r.dir
+        + (r.dir === "withdrawn" ? "" : " to " + r.guide) + (r.was ? " (was " + r.was + ")" : "");
+      const line = "Guidance: " + moves.slice(0, 3).map(bit).join("; ")
+        + (moves.length > 3 ? "; and " + (moves.length - 3) + " more below" : "") + ".";
+      scored = { ...scored, lines: [...scored.lines, line] };
+    }
+  }
   // Every other guide in the release, by what happened to it: names only.
   const latest = view.latestRelease && view.latestRelease.accession;
   const shown = new Set(sec.outlook.map((o) => o.r));
