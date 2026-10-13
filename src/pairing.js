@@ -225,7 +225,8 @@ export function pairUp(guides, actuals) {
       const outflow = /expense|cost|interest|capital (expenditure|spending)|capex|depreciation|amortization|charges?\b|repurchase|buyback|dividend|outflow|tax(es)? paid/i
         .test(String(g.metric_as_written || ""))
         && !/income|earnings|profit|eps|margin|growth|rate|cash flow/i.test(String(g.metric_as_written || ""));
-      if (outflow && mag !== null && base.actual < 0 && gv.length && gv.every((x) => x > 0)) {
+      // A percentage is a change or a ratio, and either can be below zero.
+      if (outflow && g.unit !== "percent" && mag !== null && base.actual < 0 && gv.length && gv.every((x) => x > 0)) {
         const q = String(a.quote || "").replace(/(\d),(?=\d{3})/g, "$1");
         const shown = [Math.abs(a.value), mag].map((x) => String(x).replace(".", "\\.") + "0*");
         if (shown.some((f) => new RegExp("\\(\\s*\\$?\\s*" + f + "\\s*\\)").test(q))) {
