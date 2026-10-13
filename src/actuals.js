@@ -108,6 +108,12 @@ function expectedBasis(guide) {
   const metric = guide.metric || "other";
 
   const exempt = exemptFromAdjustment(metric, label);
+  /* "Diluted net earnings per share growth" - P&G's GAAP guide, beside its
+     "core EPS" one - says GAAP without the word. The reading marked it GAAP;
+     the label's own plain word agrees. It was asked for as the ADJUSTED
+     version and its growth built from core EPS: 3.6% scored against a GAAP
+     guide of 6% to 8%. */
+  if (!mk.gaap && !markers(label).adjusted && guide.basis === "gaap" && /\b(diluted|reported|net (income|earnings))\b/i.test(label)) mk.gaap = true;
   const wantsAdjusted = !exempt && !mk.gaap;
 
   return {
