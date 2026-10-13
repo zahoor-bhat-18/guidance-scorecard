@@ -18,6 +18,8 @@
  * sending. All three are below.
  */
 
+import { checkBeforeSend } from "../src/check.js";
+import { readFiling as readFilingForCheck } from "../src/guidance.js";
 import { resolveCik, companyCalendar, shareCountChanges } from "../src/xbrl.js";
 import { earningsReleases, guidanceFrom, guidanceUpdatesBetween, applyUpdates, completedDeals, updateCandidates } from "../src/guidance.js";
 import { requestsFrom, actualsFrom } from "../src/actuals.js";
@@ -258,6 +260,16 @@ async function handle(ticker) {
         // The outlook never came. The email that was held goes out now, from
         // the record as the first pass left it, saying what is missing.
         const shortCo = displayName(record.company || name || ticker);
+        const timeoutArgs = {
+          ticker, cik, name, current, updated: record,
+          movedRevisions: (record.revisions || []).filter((r) => r.release === current.accession),
+          newPairs: (record.pairs || []).filter((p) => p.comparable && p.answeredBy === current.accession).length,
+        };
+        if ((waiting.problems || []).length) {
+          await kvPut("awaiting:" + ticker, JSON.stringify({ accession: current.accession, done: true, at: new Date().toISOString() }));
+          await holdIndex(ticker, null);
+          return holdForReview({ ...timeoutArgs, problems: waiting.problems });
+        }
         const res = await deliver({
           ticker, cik, name, current, updated: record,
           movedRevisions: (record.revisions || []).filter((r) => r.release === current.accession),
@@ -378,6 +390,26 @@ async function handle(ticker) {
   // "Not repeated" is not news when the outlook simply has not been filed.
   const movedRevisions = awaiting ? moved.revisions.filter((r) => r.direction !== "not repeated") : moved.revisions;
 
+  /* THE CHECK. Every number traced to the filing, nothing guide-shaped left
+     unread - see src/check.js. Problems hold the email for review. */
+  let problems = [];
+  try {
+    let text = (await readFilingForCheck(env, cik, current.accession)).text;
+    for (const c of (nowGuiding.release && nowGuiding.release.companions) || []) {
+      text += "\n" + (await readFilingForCheck(env, cik, c.accession)).text;
+    }
+    problems = checkBeforeSend({
+      text,
+      guides: nowGuiding.guides,
+      seen: nowGuiding.seen,
+      pairs: [...scored.pairs, ...carriedPairs],
+      revisions: movedRevisions,
+    });
+  } catch (e) {
+    problems = ["The check before sending could not run: " + e.message];
+  }
+  for (const p of problems) console.log(ticker + " CHECK: " + p);
+
   const scoredNow = [...scored.pairs, ...carriedPairs].filter((p) => p.comparable).length;
   if (secondPass) {
     const scoredFirst = (secondPass.first.pairs || []).filter((p) => p.comparable && p.answeredBy === current.accession).length;
@@ -430,7 +462,7 @@ async function handle(ticker) {
   // The record as it stood before this release, kept for the second pass.
   const heldAt = new Date().toISOString();
   if (awaiting) {
-    await kvPut("awaiting:" + ticker, JSON.stringify({ accession: current.accession, at: heldAt, tried: [], record, held: true }));
+    await kvPut("awaiting:" + ticker, JSON.stringify({ accession: current.accession, at: heldAt, tried: [], record, held: true, problems }));
   }
   await kvPut("record:" + ticker, JSON.stringify(updated));
   if (secondPass) {
@@ -450,6 +482,11 @@ async function handle(ticker) {
     };
   }
 
+  if (problems.length) {
+    return holdForReview({ ticker, cik, name, current, updated, movedRevisions,
+      newPairs: scored.pairs.filter((p) => p.comparable).length, problems });
+  }
+
   const shortCo = displayName(updated.company || name || ticker);
   // An email already went out on the first pass only for holds made before
   // emails were held; that one is followed by a marked update.
@@ -467,7 +504,7 @@ async function handle(ticker) {
 }
 
 /* Everything from here sends: to each follower, one email each. */
-async function deliver({ ticker, cik, name, current, updated, movedRevisions, newPairs, note, prefix, pass }) {
+async function deliver({ ticker, cik, name, current, updated, movedRevisions, newPairs, note, prefix, pass, only }) {
 
   const withNote = (mail) => {
     if (!note) return mail;
@@ -504,7 +541,7 @@ async function deliver({ ticker, cik, name, current, updated, movedRevisions, ne
     // the release came in and why there is no scorecard. Silence read as the
     // product having failed. See renderNothingToScore.
     const subscribers = JSON.parse((await kvGet("subscribers")) || "{}");
-    const followers = Object.entries(subscribers)
+    const followers = only || Object.entries(subscribers)
       .filter(([, v]) => (v.tickers || []).includes(ticker))
       .map(([email]) => email);
     const guided = (movedRevisions || [])
@@ -541,7 +578,7 @@ async function deliver({ ticker, cik, name, current, updated, movedRevisions, ne
 
   const view = forEmail(updated);
   const subscribers = JSON.parse((await kvGet("subscribers")) || "{}");
-  const followers = Object.entries(subscribers)
+  const followers = only || Object.entries(subscribers)
     .filter(([, v]) => (v.tickers || []).includes(ticker))
     .map(([email]) => email);
 
@@ -570,21 +607,53 @@ async function deliver({ ticker, cik, name, current, updated, movedRevisions, ne
   };
 }
 
+/* HELD FOR REVIEW. The email goes to the owner only (TEST_EMAIL), with the
+   problems listed at the top; subscribers get nothing until it is released
+   (the send workflow run by hand with "release" ticked, after a fix). */
+async function holdForReview({ ticker, cik, name, current, updated, movedRevisions, newPairs, problems }) {
+  await kvPut("review:" + ticker, JSON.stringify({ accession: current.accession, filed: current.filed, problems, at: new Date().toISOString() }));
+  const owner = process.env.TEST_EMAIL;
+  if (!owner) return { ticker, release: current.accession, filed: current.filed, newPairs, revisions: movedRevisions.length, sent: 0, held: problems };
+  const note = "HELD - not sent to subscribers. The check found:\n- " + problems.join("\n- ")
+    + "\n\nTo send it as it is, run the send workflow for " + ticker + " with release ticked.";
+  const res = await deliver({ ticker, cik, name, current, updated, movedRevisions, newPairs, note, prefix: "[Held] ", only: [owner],
+    pass: "held for review" });
+  return { ...res, held: problems };
+}
+
+async function releaseHeld(ticker) {
+  const review = JSON.parse((await kvGet("review:" + ticker)) || "null");
+  if (!review || review.done) return { ticker, skipped: "Nothing held for review." };
+  const record = JSON.parse((await kvGet("record:" + ticker)) || "null");
+  if (!record) return { ticker, skipped: "No record." };
+  const { cik, name } = await resolveCik(env, ticker);
+  const current = { accession: review.accession, filed: review.filed };
+  const res = await deliver({
+    ticker, cik, name, current, updated: record,
+    movedRevisions: (record.revisions || []).filter((r) => r.release === current.accession),
+    newPairs: (record.pairs || []).filter((p) => p.comparable && p.answeredBy === current.accession).length,
+    note: null, prefix: "", pass: "released after review",
+  });
+  await kvPut("review:" + ticker, JSON.stringify({ ...review, done: true, releasedAt: new Date().toISOString() }));
+  return res;
+}
+
 async function main() {
   // Flags come off first. Without this, --test is parsed as a ticker called
   // "--TEST" and the run fails looking for a record for it.
   const args = process.argv.slice(2);
   const isTest = args.includes("--test");
+  const isRelease = args.includes("--release");
   const positional = args.filter((a) => !a.startsWith("--"));
 
   // A test run reads KV and posts an email. It does not touch EDGAR or the
   // model, so it must not demand keys for either - a missing DEEPSEEK_API_KEY
   // failing a render-only run would be a lie about what went wrong.
-  const required = isTest
+  const required = isTest || isRelease
     ? {
         CLOUDFLARE_ACCOUNT_ID: ACCOUNT, CLOUDFLARE_API_TOKEN: CF_TOKEN,
         KV_NAMESPACE_ID: KV_ID, RESEND_API_KEY: process.env.RESEND_API_KEY,
-        UNSUB_SECRET: process.env.UNSUB_SECRET, TEST_EMAIL: process.env.TEST_EMAIL,
+        UNSUB_SECRET: process.env.UNSUB_SECRET, ...(isTest ? { TEST_EMAIL: process.env.TEST_EMAIL } : { SEC_USER_AGENT: env.SEC_USER_AGENT }),
       }
     : {
         SEC_USER_AGENT: env.SEC_USER_AGENT, DEEPSEEK_API_KEY: env.DEEPSEEK_API_KEY,
@@ -608,7 +677,7 @@ async function main() {
     try {
       const r = isTest
         ? await testSend(ticker, process.env.TEST_EMAIL)
-        : await handle(ticker);
+        : isRelease ? await releaseHeld(ticker) : await handle(ticker);
       results.push(r);
       console.log(JSON.stringify(r));
     } catch (e) {

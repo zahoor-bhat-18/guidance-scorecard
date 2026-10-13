@@ -19,6 +19,10 @@ on:
         description: "Test render: email the stored record to TEST_EMAIL. Scores nothing, writes nothing, sends to no subscriber."
         type: boolean
         default: false
+      release:
+        description: "Release an email held for review: send the stored record to subscribers as it is."
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -66,4 +70,4 @@ jobs:
         # trigger can never produce a test run, and a hand run defaults to a
         # real one only if the box is left unticked.
         run: |
-          node scripts/send.mjs ${{ inputs.test && '--test' || '' }} "${{ github.event.client_payload.tickers || inputs.tickers }}"
+          node scripts/send.mjs ${{ inputs.test && '--test' || '' }} ${{ inputs.release && '--release' || '' }} "${{ github.event.client_payload.tickers || inputs.tickers }}"

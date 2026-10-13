@@ -1166,6 +1166,24 @@ function statedNumbers(line) {
  */
 export function missedGuideLines(text, guides) {
   const lines = String(text || "").split("\n");
+  const hits = missedGuideHits(text, guides).map((h) => h.i);
+  if (!hits.length) return [];
+
+  // Each hit with the twelve lines before it (the table's header and the
+  // row's label are usually there) and two after; overlapping windows merge.
+  const windows = [];
+  for (const i of hits) {
+    const a = Math.max(0, i - 12), b = Math.min(lines.length - 1, i + 2);
+    const last = windows[windows.length - 1];
+    if (last && a <= last[1] + 1) last[1] = Math.max(last[1], b);
+    else windows.push([a, b]);
+  }
+  return windows.map(([a, b]) => lines.slice(a, b + 1).join("\n"));
+}
+
+/* The lines themselves, for the check before sending (src/check.js). */
+export function missedGuideHits(text, guides) {
+  const lines = String(text || "").split("\n");
   const pool = new Set();
   for (const g of guides || []) {
     for (const n of quoteNumbers(g.quote)) pool.add(n);
@@ -1208,20 +1226,9 @@ export function missedGuideLines(text, guides) {
     const before = lines.slice(Math.max(0, i - 40), i).join(" ");
     if (/reconcil/i.test(before)) return;
     if (nums.some(covered)) return;
-    hits.push(i);
+    hits.push({ i, line });
   });
-  if (!hits.length) return [];
-
-  // Each hit with the twelve lines before it (the table's header and the
-  // row's label are usually there) and two after; overlapping windows merge.
-  const windows = [];
-  for (const i of hits) {
-    const a = Math.max(0, i - 12), b = Math.min(lines.length - 1, i + 2);
-    const last = windows[windows.length - 1];
-    if (last && a <= last[1] + 1) last[1] = Math.max(last[1], b);
-    else windows.push([a, b]);
-  }
-  return windows.map(([a, b]) => lines.slice(a, b + 1).join("\n"));
+  return hits;
 }
 
 async function secondLookGuides(env, filing, guides) {
@@ -1815,6 +1822,7 @@ export async function guidanceFrom(env, cik, release, cal, readAlready) {
    * Not for an update filing (readAlready), which is one of these itself.
    */
   const companions = [];
+  const seenBeside = [];
   if (!readAlready && !guides.some(hasFigure)) {
     let sameDay = [];
     try {
@@ -1832,6 +1840,7 @@ export async function guidanceFrom(env, cik, release, cal, readAlready) {
         const open = (x) => !(x.period && (calendar || cal) && periodIsClosedBy(x.period, f.filed, calendar || cal));
         const tag = (x) => ({ ...x, filed_beside: f.accession });
         const add = (g.guides || []).filter(open).map(tag);
+        seenBeside.push(...(g.seen || []));
         if (!add.length) continue;
         guides.push(...add);
         asExtracted.push(...(g.asExtracted || []).filter(open).filter((x) => !isEffectGuide(x)).map(tag));
@@ -1862,6 +1871,10 @@ export async function guidanceFrom(env, cik, release, cal, readAlready) {
     guides,
     effects,
     asExtracted,
+    // Everything read, including what was set aside on purpose (an earlier
+    // table column, a currency effect): the check before sending counts a
+    // line as accounted for when any of these carries its figure.
+    seen: withPeriodsAll.concat(effects, seenBeside),
   };
 }
 
