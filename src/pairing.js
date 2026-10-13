@@ -102,6 +102,46 @@ function forPeriod(candidates, period, askedFor) {
   return candidates.length === 1 ? candidates[0] : null;
 }
 
+/* Is this figure printed in the quote? Any number of the line, at a scale
+   of thousands or millions either way, within rounding (half a percent, so
+   $1,907,665 thousand is $1.908bn); for a percentage, also the change
+   between two of the line's figures (Netflix's 15.9% from $11,079m and
+   $9,559m in one revenue row). */
+export function traceable(value, quote, unit) {
+  const v = Math.abs(Number(value));
+  if (!Number.isFinite(v)) return false;
+  const nums = [];
+  for (const m of String(quote || "").matchAll(/\d[\d,]*(?:\.\d+)?/g)) {
+    const x = Number(m[0].replace(/,/g, ""));
+    if (Number.isFinite(x)) nums.push(x);
+  }
+  if (v === 0) return nums.includes(0) || /\b(flat|unchanged|zero)\b/i.test(String(quote));
+  const close = (a, b) => b !== 0 && Math.abs(a - b) / Math.abs(b) <= 0.005;
+  const dec = (n) => { const t = String(n); return t.includes(".") ? t.split(".")[1].length : 0; };
+  const roundTo = (n, d) => Number(n.toFixed(d));
+  const vd = dec(v);
+  for (const m of String(quote || "").matchAll(/\d[\d,]*(?:\.\d+)?/g)) {
+    const raw = m[0].replace(/,/g, "");
+    const x = Number(raw);
+    if (!Number.isFinite(x)) continue;
+    const xd = raw.includes(".") ? raw.split(".")[1].length : 0;
+    for (const sc of [1, 1e3, 1e6, 1e-3, 1e-6]) {
+      const y = x * sc;
+      if (close(v, y)) return true;
+      // Rounding either way: "$2.8 billion" for $2.822bn; $3.2bn for "3,152.2" million.
+      if (sc === 1 && roundTo(v, xd) === x) return true;
+      if ((vd >= 1 || sc !== 1) && roundTo(y, vd) === v) return true;
+    }
+  }
+  if (String(unit || "") === "percent") {
+    for (const a of nums) for (const b of nums) {
+      if (a === b || b === 0) continue;
+      if (Math.abs(Math.abs((a / b - 1) * 100) - v) <= 0.15) return true;
+    }
+  }
+  return false;
+}
+
 export function pairUp(guides, actuals) {
   const byLabel = new Map();
   const byMeasure = new Map();
@@ -208,6 +248,20 @@ export function pairUp(guides, actuals) {
       stated_vs_guide: a.stated_vs_guide || null,
       gaap_recheck: a.gaap_recheck || null,
     };
+
+    /* THE FIGURE MUST BE IN ITS OWN LINE. Carnival's third-quarter 2024 cost
+       per ALBD came back as -0.3% quoting "decreased compared to 2023" - no
+       number at all; Elevance's CarelonRx growth as 6.3% quoting a guidance
+       row. A result whose figure cannot be found in the line quoted for it
+       (in any of the usual scales, or as the change between two of the
+       line's figures) is not scored. Figures the code computed are exempt:
+       their quote is the inputs. */
+    if (typeof a.value === "number" && a.quote && !/computed/i.test(String(a.found_as || "")) && !a.computed
+      && !traceable(a.value, a.quote, a.unit)) {
+      pairs.push({ ...base, comparable: false,
+        why: "The figure taken is not in the line quoted for it, so it was not scored." });
+      continue;
+    }
 
     const inGuideUnit = sameMoneyUnit(g, a);
     base.actual = thousandsFixed(g, inGuideUnit);

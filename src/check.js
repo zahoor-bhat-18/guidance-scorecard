@@ -25,6 +25,7 @@
  */
 import { missedGuideHits, figureInQuote } from "./guidance.js";
 import { numberInQuote } from "./actuals.js";
+import { traceable } from "./pairing.js";
 import { formatFigure, periodLabel } from "./format.js";
 
 // Footnote markers - "(c)", "(1)", "*" - sit between a table label and its
@@ -116,7 +117,8 @@ export function checkBeforeSend({ text, guides, seen, pairs, revisions }) {
     const quote = p.quote || (p.answer && p.answer.quote) || "";
     const shown = p.score && typeof p.score.actualAsGuided === "number" ? p.score.actualAsGuided : p.actual;
     const computed = p.computed || (p.answer && p.answer.computed);
-    if (!computed && quote && !numberInQuote(p.actual, quote) && !numberInQuote(shown, quote)) {
+    const ans = p.answer && typeof p.answer.value === "number" ? p.answer.value : p.actual;
+    if (!computed && quote && !traceable(ans, quote, (p.answer && p.answer.unit) || p.unit) && !traceable(shown, quote, p.unit)) {
       problems.push("Result withheld - the figure is not in its own quote: " + (p.metric_as_written || "?") + " " + periodLabel(p.guide_period || "")
         + " = " + p.actual + " - \"" + short(quote, 140) + "\"", { pair: p });
     } else if (body && quote && !quoteInText(quote, body)) {
