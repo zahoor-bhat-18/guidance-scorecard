@@ -94,7 +94,7 @@ export function checkBeforeSend({ text, guides, seen, pairs, revisions }) {
   // 1. Read, then thrown away.
   for (const g of guides || []) {
     const r = g.reported_numbers;
-    if (g.numbers_verified === false && r && [r.low, r.high, r.value].some((x) => typeof x === "number")) {
+    if (g.numbers_verified === false && !g.horizon && r && [r.low, r.high, r.value].some((x) => typeof x === "number")) {
       problems.push("A guide was read but its figure was not trusted and dropped: " + (g.metric_as_written || "?")
         + (g.period ? " " + periodLabel(g.period) : "") + " - \"" + short(g.quote, 160) + "\"");
     }

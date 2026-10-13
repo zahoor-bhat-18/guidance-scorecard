@@ -402,7 +402,10 @@ export async function readFiling(env, cik, accession) {
     used.push({ file: d.file.name, chars: d.text.length, included: true, truncated: slice.length < d.text.length });
   });
 
-  return { text: parts.join(""), pickedBy: chosen.pickedBy, files: used, chars: spent };
+  // The whole of every exhibit, uncut, for the searches that look past the
+  // budget: the deep look for a result (actuals.js) and the check before send.
+  const full = docs.map((d) => d.header + d.text).join("");
+  return { text: parts.join(""), full, pickedBy: chosen.pickedBy, files: used, chars: spent };
 }
 
 /**
@@ -886,7 +889,22 @@ export function qualifierFromQuote(g) {
   return { ...g, metric_as_written: word + " " + label, label_was: label };
 }
 
+/* A MEDIUM-TERM TARGET IS NOT THIS YEAR'S GUIDE. JPMorgan's 2023 slide,
+   headed "2023 Outlook", also said "Medium-term NII ex. Markets outlook
+   increasing to ~$84B" - and the $84bn was scored as a 2023 guide against
+   $89.7bn. A figure the quote calls medium-term, long-term or multi-year is
+   kept as an event with no figure, never scored against one period. */
+const HORIZON = /\b(medium|mid|long|longer)[-\s]term\b(?!\s+(debt|borrowings?|notes?|investments?|incentive|assets?|liabilit\w*|contracts?|care|leases?|loans?|deposits?|financing|obligations?))|\bmulti-?year\b|\bover the (next|coming) (few|several|\w+) years\b|\bthrough the cycle\b/i;
+function notOnePeriod(g) {
+  if (!HORIZON.test(String(g.quote || "")) || g.shape === "qualitative") return g;
+  return { ...g, shape: "qualitative", low: null, high: null, value: null, numbers_verified: false,
+    horizon: true, reported_numbers: { low: g.low ?? null, high: g.high ?? null, value: g.value ?? null },
+    guard_note: "Dropped: the quote calls this a medium- or long-term figure, not a guide for one period." };
+}
+
 export function guardGuide(input, filingText) {
+  const held = notOnePeriod(input);
+  if (held !== input) return held;
   const g = inBasisPoints(aboutNotPlusMinus(qualifierFromQuote(input.shape === "reaffirmed" ? recoverReaffirmed(input) : input)));
 
   const pool = quoteNumbers(g.quote);

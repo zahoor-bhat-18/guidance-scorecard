@@ -1138,6 +1138,131 @@ async function secondLook(env, requests, actuals, text, release, cal) {
 }
 
 /* ------------------------------------------------------------------ *
+ * The deep look: past the character budget
+ * ------------------------------------------------------------------ */
+
+/**
+ * The model reads at most MAX_CHARS of a filing. JPMorgan's 8-K carries a
+ * three-megabyte supplement, and its full-year Card Services net charge-off
+ * rate - guided every year - sits deep inside it: "No reported figure was
+ * found" for 2023, 2024 and 2025. Wells Fargo's expense line is the same.
+ *
+ * For a figure every earlier step left empty, the WHOLE filing is searched in
+ * code for the lines that carry the measure's words - a word missing from the
+ * line itself (a segment's name: "Card Services") must be in the lines above
+ * it, where a section heading sits - and only those passages, with the start
+ * of the release for its dates, are put to the model. The answer passes every
+ * check any other answer passes, and its figure must be in the line it quotes.
+ */
+const ABBREVIATIONS = [
+  [/\bncos?\b/gi, "net charge-off"], [/\bnii\b/gi, "net interest income"], [/\bfcf\b/gi, "free cash flow"],
+  [/\bcapex\b/gi, "capital expenditures"], [/\bopex\b/gi, "operating expenses"], [/\bsg&a\b/gi, "selling general administrative"],
+];
+const NOT_SEARCHED = /^(adjusted|adj|gaap|non|reported|total|the|of|and|for|per|its|our|full|year|fy|outlook|guidance|expected|approximately|excluding|including|basis|growth|change)$/;
+function searchWords(label) {
+  let l = String(label || "");
+  for (const [re, to] of ABBREVIATIONS) l = l.replace(re, " " + to + " ");
+  return Array.from(new Set(l.toLowerCase().replace(/\([^)]*\)/g, " ").replace(/[^a-z ]/g, " ").split(/\s+/)
+    .filter((w) => w.length > 2 && !NOT_SEARCHED.test(w))));
+}
+export function deepPassages(full, label, room = 30000) {
+  const words = searchWords(label);
+  if (words.length < 2 || !full) return [];
+  const lines = String(full).split("\n");
+  const low = lines.map((x) => x.toLowerCase());
+  const has = (line, w) => new RegExp("\\b" + w + "\\b").test(line);
+  const hits = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].length > 400 || !/\d/.test(lines[i])) continue;
+    const inLine = words.filter((w) => has(low[i], w));
+    if (inLine.length < Math.min(2, words.length)) continue;
+    const missing = words.filter((w) => !inLine.includes(w));
+    if (missing.length) {
+      const above = low.slice(Math.max(0, i - 120), i).join(" ");
+      if (!missing.every((w) => has(above, w))) continue;
+    }
+    hits.push({ i, score: inLine.length });
+  }
+  hits.sort((a, b) => b.score - a.score || a.i - b.i);
+  const out = [];
+  let used = 0;
+  const taken = new Set();
+  for (const h of hits) {
+    if (taken.has(h.i)) continue;
+    const a = Math.max(0, h.i - 25), b = Math.min(lines.length - 1, h.i + 3);
+    /* The column headings ("QUARTERLY TRENDS FULL YEAR / 4Q25 3Q25 ... 2025
+       2024") say which figure is the year. When they sit above the window,
+       they are put in front of it. */
+    let head = "";
+    for (let k = a - 1; k >= Math.max(0, h.i - 150); k--) {
+      if (columnPeriods(lines[k]).length >= 3) { head = lines.slice(Math.max(0, k - 2), k + 1).join("\n") + "\n...\n"; break; }
+    }
+    const passage = (head + lines.slice(a, b + 1).join("\n")).slice(-3500);
+    if (used + passage.length > room) break;
+    for (let k = a; k <= b; k++) taken.add(k);
+    out.push(passage);
+    used += passage.length;
+  }
+  return out;
+}
+
+async function deepLook(env, requests, actuals, full, text, release, cal) {
+  if (!full || full.length <= String(text || "").length + 1000) return { asked: 0, found: 0 };
+  const idx = [];
+  requests.forEach((req, i) => {
+    const a = actuals[i];
+    if (!a || a.value !== null || a.period_open) return;
+    if (!req.guidePeriod || !guidePeriodClosed(req, release, cal)) return;
+    idx.push(i);
+  });
+  if (!idx.length) return { asked: 0, found: 0 };
+  const ask = [];
+  const passages = [];
+  for (const i of idx.slice(0, 8)) {
+    const p = deepPassages(full, requests[i].metric_as_written, 12000);
+    if (!p.length) continue;
+    ask.push(i);
+    passages.push(...p);
+  }
+  if (!ask.length) return { asked: 0, found: 0 };
+  const again = ask.map((i) => requests[i]);
+  const body = "THE START OF THE RELEASE (for its date and the periods it reports):\n" + String(full).slice(0, 1500)
+    + "\n\nPASSAGES FROM THE SAME FILING THAT MAY CARRY THESE FIGURES:\n" + Array.from(new Set(passages)).join("\n=====\n");
+  let rows;
+  try {
+    rows = await callModel(env, again, body.slice(0, MAX_CHARS));
+  } catch (e) {
+    console.log("Deep look failed for " + release.accession + ": " + e.message);
+    return { asked: ask.length, found: 0 };
+  }
+  const byId = new Map();
+  for (const row of rows) {
+    if (row.id !== undefined && row.id !== null && !byId.has(Number(row.id))) byId.set(Number(row.id), row);
+  }
+  const flatFull = String(full).replace(/\s+/g, " ");
+  let found = 0;
+  ask.forEach((i, j) => {
+    const cand = toActual(again[j], byId.get(j) || {}, release, cal);
+    const q = String(cand.quote || "").replace(/\s+/g, " ").trim();
+    const ok = cand.value !== null
+      && !cand.basis_mismatch
+      && !cand.unit_mismatch
+      && !cand.period_open
+      && Boolean(cand.period)
+      && cand.period === requests[i].guidePeriod
+      && valueInQuoteAnyScale(cand.value, cand.quote)
+      && q.length >= 8 && flatFull.includes(q.split(/\s*(?:\.\.\.|\u2026)\s*/)[0].slice(0, 50));
+    console.log("Deep look " + release.accession + " " + requests[i].guidePeriod + " "
+      + requests[i].metric_as_written + ": " + JSON.stringify(cand.found_as) + " " + cand.value
+      + (ok ? " - USED" : " - left empty"));
+    if (!ok) return;
+    actuals[i] = { ...cand, deep_look: "found" };
+    found++;
+  });
+  return { asked: ask.length, found };
+}
+
+/* ------------------------------------------------------------------ *
  * A figure read straight from a table whose columns are periods
  * ------------------------------------------------------------------ */
 
@@ -1562,6 +1687,9 @@ export async function actualsFrom(env, cik, release, requests, cal) {
     fromTable++;
   });
 
+  // Still empty: look past the character budget, in the whole filing.
+  const deep = await deepLook(env, requests, actuals, filing.full || filing.text, filing.text, release, cal);
+
   // Any growth guide still without a usable answer: build it from two amounts.
   const growth = await growthFromLevels(env, requests, actuals, recheck.adjustedFor, filing.text, release, cal);
 
@@ -1596,6 +1724,8 @@ export async function actualsFrom(env, cik, release, requests, cal) {
     gaapReplaced: gaap.replaced,
     secondLookAsked: second.asked,
     secondLookFound: second.found,
+    deepLookAsked: deep.asked,
+    deepLookFound: deep.found,
     growthAsked: growth.asked,
     growthComputed: growth.computed,
     actuals,

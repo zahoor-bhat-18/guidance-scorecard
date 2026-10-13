@@ -382,9 +382,12 @@ async function handle(ticker) {
   let problems = [];
   let findings = [];
   try {
-    let text = (await readFilingForCheck(env, cik, current.accession)).text;
+    // The whole filing, not the model's budgeted slice: a result found deep
+    // in a supplement must be traced where it was found.
+    const whole = (f) => f.full || f.text;
+    let text = whole(await readFilingForCheck(env, cik, current.accession));
     for (const c of (nowGuiding.release && nowGuiding.release.companions) || []) {
-      text += "\n" + (await readFilingForCheck(env, cik, c.accession)).text;
+      text += "\n" + whole(await readFilingForCheck(env, cik, c.accession));
     }
     findings = checkBeforeSend({
       text,
