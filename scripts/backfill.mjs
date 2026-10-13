@@ -592,6 +592,25 @@ async function buildOne(ticker) {
     const held = bestByPeriod.get(key);
 
     if (!held) { bestByPeriod.set(key, p); continue; }
+    /* TWO MEASURES, NOT TWO READINGS. UnitedHealth guided 2023 "net
+       earnings" of $23.60-23.75 a share and "adjusted net earnings" of
+       $24.85-25.00, in different releases, and reported $23.86 and $25.12.
+       Once "adjusted" is set aside they share a key, and one was dropped.
+       Both scored, with different guides and different results, and only
+       one saying adjusted: the bare one is the GAAP measure, kept beside. */
+    const ADJ = /adjusted|non-?gaap|comparable|\bcore\b|underlying/i;
+    if (p.comparable && held.comparable && typeof p.actual === "number" && typeof held.actual === "number"
+        && Math.abs(p.actual - held.actual) > 1e-9 && JSON.stringify(p.guide) !== JSON.stringify(held.guide)
+        && ADJ.test(String(p.metric_as_written || "")) !== ADJ.test(String(held.metric_as_written || ""))) {
+      const bare = ADJ.test(String(p.metric_as_written || "")) ? held : p;
+      const adj = bare === p ? held : p;
+      bare.side_hint = "gaap";
+      bestByPeriod.set(key, adj);
+      const gkey = metricKey(bare) + "|gaap|" + (bare.guide_period || "");
+      const g = bestByPeriod.get(gkey);
+      if (!g || String(bare.answeredByFiled || "") > String(g.answeredByFiled || "")) bestByPeriod.set(gkey, bare);
+      continue;
+    }
     if (Boolean(p.comparable) !== Boolean(held.comparable)) {
       if (p.comparable) bestByPeriod.set(key, p);
       continue;
