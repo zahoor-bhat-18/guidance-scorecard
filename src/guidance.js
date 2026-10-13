@@ -678,6 +678,13 @@ function aboutNotPlusMinus(g) {
     if (!/\$/.test(m[0]) || !(n > 0)) return g;
     return { ...g, low: null, high: null, value: n, shape: "point", plus_minus_read_as: "about" };
   }
+  /* A band the model invented around the figure: the same Wells Fargo
+     sentence came back on another read as $49.95bn to $50.05bn. Every end
+     within 1% of the +/- figure, on both sides of it, is that figure. */
+  if (n > 0 && nums.every((x) => x > 0 && Math.abs(x - n) / n <= 0.01)
+      && nums.some((x) => x < n) && nums.some((x) => x > n)) {
+    return { ...g, low: null, high: null, value: n, shape: "point", plus_minus_read_as: "about" };
+  }
   if (!nums.every((x) => Math.abs(Math.abs(x) - n) < 1e-9)) return g;
   if (!nums.some((x) => x < 0)) return g;
   return { ...g, low: null, high: null, value: n, shape: "point", plus_minus_read_as: "about" };
