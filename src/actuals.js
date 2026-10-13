@@ -81,6 +81,13 @@ function exemptFromAdjustment(metric, label) {
      is not touched by this: it still asks for what it says. */
   if (/\bnet interest income\b|\bnii\b|net charge-?off|\bnco\b/i.test(String(label || ""))
     && !/adjusted|excluding|\bex\b|\bcore\b/i.test(String(label || ""))) return true;
+  /* Cash returned and cash spent have no adjusted twin either. P&G's "around
+     $10 billion in dividends" and "$6 to $7 billion of share repurchases"
+     were asked for as the ADJUSTED dividends and repurchases, and came back
+     empty three years running beside "$9.9 billion in dividend payments and
+     $6.5 billion of share repurchases" printed in the release. */
+  if (/\bdividends?\b|repurchases?|buybacks?|cash returns?|capital (spending|expenditures?)|\bcapex\b|interest expense|depreciation|\bshares outstanding\b|share count/i.test(String(label || ""))
+    && !/adjusted|\bcore\b|non-?gaap/i.test(String(label || ""))) return true;
   return /comparable sales|comp sales|net sales|\brevenue\b|capacity|capital expenditure/i
     .test(String(label || ""));
 }
@@ -1167,10 +1174,12 @@ function searchWords(label) {
 }
 export function deepPassages(full, label, room = 30000) {
   const words = searchWords(label);
-  if (words.length < 2 || !full) return [];
+  if (!words.length || !full) return [];
   const lines = String(full).split("\n");
   const low = lines.map((x) => x.toLowerCase());
-  const has = (line, w) => new RegExp("\\b" + w + "\\b").test(line);
+  // By stem: "dividends" finds "dividend payments", "repurchases" finds "repurchased".
+  const stem = (w) => w.length > 4 ? w.replace(/(es|s|ed|ing)$/, "") : w;
+  const has = (line, w) => new RegExp("\\b" + stem(w)).test(line);
   const hits = [];
   for (let i = 0; i < lines.length; i++) {
     if (lines[i].length > 400 || !/\d/.test(lines[i])) continue;
@@ -1207,7 +1216,9 @@ export function deepPassages(full, label, room = 30000) {
 }
 
 async function deepLook(env, requests, actuals, full, text, release, cal) {
-  if (!full || full.length <= String(text || "").length + 1000) return { asked: 0, found: 0 };
+  // Also within the budget: a short question about a few passages finds
+  // what a long list of thirty skipped.
+  if (!full) return { asked: 0, found: 0 };
   const idx = [];
   requests.forEach((req, i) => {
     const a = actuals[i];
