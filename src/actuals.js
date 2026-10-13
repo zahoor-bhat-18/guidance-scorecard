@@ -1240,6 +1240,27 @@ export function sameSide(asked, found) {
   return true;
 }
 
+/* And the same measure. Coca-Cola's "cash flow from operations excluding the
+   fairlife payment" came back from the passages as "Free Cash Flow Excluding
+   the fairlife ... Payment": the passage held both lines. The answer must
+   carry most of the guide's own words, and no word that makes it a different
+   measure (free, gross, net, operating, pre-tax...) the guide does not have. */
+const DIFFERENT_MEASURE = ["free", "gross", "net", "operating", "pretax", "pre", "after", "comparable", "constant", "organic", "per", "margin", "growth"];
+export function sameMeasure(asked, found) {
+  const a = searchWords(asked), f = searchWords(found);
+  if (!a.length || !f.length) return false;
+  const stem = (w) => (w.length > 4 ? w.replace(/(es|s|ed|ing)$/, "") : w);
+  const fs = new Set(f.map(stem)), as = new Set(a.map(stem));
+  const shared = a.filter((w) => fs.has(stem(w))).length;
+  if (shared / a.length < 0.5) return false;
+  const raw = (x) => { let l = String(x || ""); for (const [re, to] of ABBREVIATIONS) l = l.replace(re, " " + to + " "); return l.toLowerCase(); };
+  for (const w of DIFFERENT_MEASURE) {
+    const re = new RegExp("\\b" + w + "\\b");
+    if (re.test(raw(found)) && !re.test(raw(asked))) return false;
+  }
+  return true;
+}
+
 async function deepLook(env, requests, actuals, full, text, release, cal) {
   // Also within the budget: a short question about a few passages finds
   // what a long list of thirty skipped.
@@ -1288,7 +1309,8 @@ async function deepLook(env, requests, actuals, full, text, release, cal) {
       && cand.period === requests[i].guidePeriod
       && valueInQuoteAnyScale(cand.value, cand.quote)
       && q.length >= 8 && flatFull.includes(q.split(/\s*(?:\.\.\.|\u2026)\s*/)[0].slice(0, 50))
-      && sameSide(requests[i].metric_as_written, cand.found_as);
+      && sameSide(requests[i].metric_as_written, cand.found_as)
+      && sameMeasure(requests[i].metric_as_written, cand.found_as);
     console.log("Deep look " + release.accession + " " + requests[i].guidePeriod + " "
       + requests[i].metric_as_written + ": " + JSON.stringify(cand.found_as) + " " + cand.value
       + (ok ? " - USED" : " - left empty"));

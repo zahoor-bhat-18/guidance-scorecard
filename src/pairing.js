@@ -328,6 +328,33 @@ export function pairUp(guides, actuals) {
       }
     }
 
+    /* A LABEL THAT NAMES BOTH BASES. Constellation's "Tax rate: reported and
+       comparable" ~18% sat beside "Tax rate: reported" ~18% and "Tax rate:
+       comparable" ~19%, and was scored against the comparable 17.9%. Which
+       basis it means cannot be told, and the two single-basis guides carry
+       the figures anyway. */
+    if (/\b(reported|gaap)\s+(and|&|\/)\s+(comparable|adjusted|non-?gaap|core)\b|\b(comparable|adjusted|non-?gaap|core)\s+(and|&|\/)\s+(reported|gaap)\b/i
+      .test(String(g.metric_as_written || ""))) {
+      pairs.push({ ...base, comparable: false,
+        why: "The guide's label names both the reported and the adjusted basis, so it is not scored." });
+      continue;
+    }
+
+    /* OPERATING CASH FLOW IS NOT FREE CASH FLOW. Coca-Cola's "cash flow from
+       operations excluding the IRS tax litigation deposit" was answered with
+       "Free Cash Flow Excluding the IRS Tax Litigation Deposit": the same
+       exclusion, a different measure. */
+    {
+      const gl = String(g.metric_as_written || ""), fa = String(a.found_as || "");
+      const isFree = (x) => /\bfree cash flow\b|\bfcf\b/i.test(x);
+      const isOps = (x) => /cash (flows? )?(from|provided by) operat|operating cash flow|cash from operations/i.test(x);
+      if (fa && ((isOps(gl) && !isFree(gl) && isFree(fa)) || (isFree(gl) && isOps(fa) && !isFree(fa)))) {
+        pairs.push({ ...base, comparable: false,
+          why: "The guide is for " + (isFree(gl) ? "free cash flow" : "operating cash flow") + "; the figure found is the other measure." });
+        continue;
+      }
+    }
+
     /* A label that names no measure. Constellation's tax-rate line was
        split, and one guide came back labelled just "comparable" - then
        paired with comparable OPERATING MARGIN, 34% against an 18.5% tax
@@ -769,7 +796,42 @@ function hasFigure(g) {
  */
 const SAYS_ADJUSTED = /\badj(?:\.|usted)?\b|non-?gaap|\bcore\b|\bunderlying\b|\bcomparable\b/i;
 const SAYS_GAAP = /\b(gaap|reported)\b/i;
+/* A GUIDE RESTATED "EXCLUDING" AN ITEM REPLACES THE PLAIN ONE. Coca-Cola
+   guided 2024 cash flow from operations of ~$11.4bn in April; after paying a
+   $6bn tax deposit it guided "cash flow from operations excluding the IRS
+   tax litigation deposit" of ~$11.4bn. The April guide was then scored
+   against the reported $6.8bn as a $4.6bn miss - against a guide the company
+   had since restated. For the same period, an earlier guide whose label is
+   the later guide's label minus an "excluding ..." clause is not scored. */
+function supersededByExcluding(pairs) {
+  const core = (l) => String(l || "").toLowerCase().replace(/\(.*?\)/g, " ").replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
+  // Which guide is later: by the date carried, else by accession number
+  // (year, then sequence within the same filer agent); unknown is not later.
+  const acc = (p) => /(\d{10})-(\d{2})-(\d{6})/.exec(String(p.fromRelease || p.carried_from || ""));
+  const isLater = (b, a) => {
+    if (b.guide_filed && a.guide_filed) return String(b.guide_filed) > String(a.guide_filed);
+    const x = acc(b), y = acc(a);
+    if (!x || !y) return false;
+    if (x[2] !== y[2]) return x[2] > y[2];
+    return x[1] === y[1] && x[3] > y[3];
+  };
+  for (const a of pairs || []) {
+    if (!a || !a.comparable) continue;
+    const la = core(a.metric_as_written);
+    if (!la || /excluding/.test(la)) continue;
+    const later = (pairs || []).find((b) => b !== a && b.guide_period === a.guide_period
+      && /excluding/.test(core(b.metric_as_written)) && core(b.metric_as_written).startsWith(la + " excluding")
+      && isLater(b, a));
+    if (later) {
+      a.comparable = false;
+      a.score = null;
+      a.why = "A later guide for the same figure, restated excluding an item (\"" + later.metric_as_written + "\"), replaced this one.";
+    }
+  }
+}
+
 export function oneGuidePerFigure(pairs) {
+  supersededByExcluding(pairs);
   const groups = new Map();
   for (const p of pairs || []) {
     if (!p || !p.comparable || typeof p.actual !== "number") continue;
