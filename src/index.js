@@ -251,6 +251,20 @@ async function poll(env) {
     const t = wanted.get(cik);
     if (t) hits.add(t);
   }
+  /* A held email whose outlook never came. send.mjs holds the email of a
+     company that files its outlook later the same day (JPMorgan) and lists
+     it in awaiting:index; after six hours the send is started anyway, and it
+     sends the results it has. Six hours plus a minute, so the send script's
+     own clock agrees the hold is over. */
+  try {
+    const held = JSON.parse((await env.CACHE.get("awaiting:index")) || "{}") || {};
+    for (const [t, at] of Object.entries(held)) {
+      if (watching.includes(t) && Date.now() - Date.parse(at) > (6 * 60 + 1) * 60 * 1000) hits.add(t);
+    }
+  } catch (e) {
+    // A broken index must not stop the poller; the next filing still dispatches.
+  }
+
   if (!hits.size) return;
 
   const fresh = [];

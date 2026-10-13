@@ -64,6 +64,18 @@ async function kvPut(key, value) {
   if (!r.ok) throw new Error("KV write failed for " + key + ": " + r.status + " " + (await r.text()).slice(0, 200));
 }
 
+/* Companies whose outlook is filed beside their release (JPMorgan) get ONE
+   email, sent when the outlook arrives. The tickers being held are listed in
+   one key, so the Worker's poller can see a hold that has run past
+   HOLD_HOURS with a single read and start the send that releases it. */
+const HOLD_HOURS = 6;
+async function holdIndex(ticker, at) {
+  let idx = {};
+  try { idx = JSON.parse((await kvGet("awaiting:index")) || "{}") || {}; } catch { idx = {}; }
+  if (at) idx[ticker] = at; else delete idx[ticker];
+  await kvPut("awaiting:index", JSON.stringify(idx));
+}
+
 async function hmac(secret, value) {
   const key = await crypto.subtle.importKey(
     "raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
@@ -241,7 +253,25 @@ async function handle(ticker) {
     }
     const untried = beside.filter((a) => !(waiting.tried || []).includes(a));
     if (!untried.length) {
-      return { ticker, skipped: "Already in the record, and nothing new has been filed beside " + current.accession };
+      const hours = (Date.now() - Date.parse(waiting.at || 0)) / 3600000;
+      if (waiting.held && hours >= HOLD_HOURS) {
+        // The outlook never came. The email that was held goes out now, from
+        // the record as the first pass left it, saying what is missing.
+        const shortCo = displayName(record.company || name || ticker);
+        const res = await deliver({
+          ticker, cik, name, current, updated: record,
+          movedRevisions: (record.revisions || []).filter((r) => r.release === current.accession),
+          newPairs: (record.pairs || []).filter((p) => p.comparable && p.answeredBy === current.accession).length,
+          note: shortCo + " usually files its outlook separately, later the same day. It had not been filed "
+            + HOLD_HOURS + " hours after the release, so this email has the results only.",
+          prefix: "",
+        });
+        await kvPut("awaiting:" + ticker, JSON.stringify({ accession: current.accession, done: true, at: new Date().toISOString() }));
+        await holdIndex(ticker, null);
+        return { ...res, pass: "held email released after " + HOLD_HOURS + " hours; no outlook filed" };
+      }
+      return { ticker, skipped: "Already in the record, and nothing new has been filed beside " + current.accession
+        + (waiting.held ? " (email held, " + hours.toFixed(1) + "h of " + HOLD_HOURS + "h)" : "") };
     }
     secondPass = { waiting, beside, first: record };
     record = waiting.record;
@@ -353,8 +383,11 @@ async function handle(ticker) {
     const scoredFirst = (secondPass.first.pairs || []).filter((p) => p.comparable && p.answeredBy === current.accession).length;
     if (!gotBeside && scoredNow <= scoredFirst) {
       // Nothing more to say. Remembered, so the same filing is not read again.
+      // A held email stays held: the outlook may still come, and the timeout
+      // above sends it if it does not.
       await kvPut("awaiting:" + ticker, JSON.stringify({ ...secondPass.waiting, tried: secondPass.beside }));
-      return { ticker, skipped: "The filing beside " + current.accession + " added no outlook and no result; no second email." };
+      return { ticker, skipped: "The filing beside " + current.accession + " added no outlook and no result"
+        + (secondPass.waiting.held ? "; email still held." : "; no second email.") };
     }
   }
 
@@ -395,21 +428,47 @@ async function handle(ticker) {
   };
 
   // The record as it stood before this release, kept for the second pass.
+  const heldAt = new Date().toISOString();
   if (awaiting) {
-    await kvPut("awaiting:" + ticker, JSON.stringify({ accession: current.accession, at: new Date().toISOString(), tried: [], record }));
+    await kvPut("awaiting:" + ticker, JSON.stringify({ accession: current.accession, at: heldAt, tried: [], record, held: true }));
   }
   await kvPut("record:" + ticker, JSON.stringify(updated));
   if (secondPass) {
     await kvPut("awaiting:" + ticker, JSON.stringify({ accession: current.accession, done: true, at: new Date().toISOString() }));
+    if (secondPass.waiting.held) await holdIndex(ticker, null);
+  }
+  if (awaiting) {
+    // One email, not two: nothing goes out until the outlook is filed (or
+    // HOLD_HOURS pass). The record is written so the site is current.
+    await holdIndex(ticker, heldAt);
+    return {
+      ticker, release: current.accession, filed: current.filed,
+      newPairs: scored.pairs.filter((p) => p.comparable).length,
+      revisions: movedRevisions.length,
+      pass: "first; email held until the outlook is filed (at most " + HOLD_HOURS + " hours)",
+      sent: 0,
+    };
   }
 
   const shortCo = displayName(updated.company || name || ticker);
-  const note = secondPass
-    ? "Update. This replaces the email sent earlier today: it adds what " + shortCo
-      + " filed after its release - its outlook, and the results its guides are measured against."
-    : awaiting
-      ? shortCo + " files its outlook separately, later the same day. A second email follows when it is filed."
-      : null;
+  // An email already went out on the first pass only for holds made before
+  // emails were held; that one is followed by a marked update.
+  const wasSent = secondPass && !secondPass.waiting.held;
+  return deliver({
+    ticker, cik, name, current, updated, movedRevisions,
+    newPairs: scored.pairs.filter((p) => p.comparable).length,
+    note: wasSent
+      ? "Update. This replaces the email sent earlier today: it adds what " + shortCo
+        + " filed after its release - its outlook, and the results its guides are measured against."
+      : null,
+    prefix: wasSent ? "Update: " : "",
+    pass: secondPass ? "second (the filing beside the release)" : undefined,
+  });
+}
+
+/* Everything from here sends: to each follower, one email each. */
+async function deliver({ ticker, cik, name, current, updated, movedRevisions, newPairs, note, prefix, pass }) {
+
   const withNote = (mail) => {
     if (!note) return mail;
     const box = '<div style="padding:12px 22px;background:#f4f6f7;border-bottom:1px solid #e3e8e5;font-size:13px;line-height:1.45;color:#3b4a57;">'
@@ -417,7 +476,7 @@ async function handle(ticker) {
     const anchor = /(<div style="max-width:600px[^>]*>)/;
     return {
       ...mail,
-      subject: (secondPass ? "Update: " : "") + mail.subject,
+      subject: (prefix || "") + mail.subject,
       html: anchor.test(mail.html) ? mail.html.replace(anchor, "$1" + box) : box + mail.html,
       text: note + "\n\n" + (mail.text || ""),
     };
@@ -472,7 +531,7 @@ async function handle(ticker) {
       ticker,
       release: current.accession,
       filed: current.filed,
-      newPairs: scored.pairs.filter((p) => p.comparable).length,
+      newPairs,
       nothingToScore: "Not enough to score: "
         + (updated.coverage.reason || "no measure has enough matched periods yet"),
       followers: followers.length,
@@ -503,9 +562,9 @@ async function handle(ticker) {
     ticker,
     release: current.accession,
     filed: current.filed,
-    newPairs: scored.pairs.filter((p) => p.comparable).length,
+    newPairs,
     revisions: movedRevisions.length,
-    pass: secondPass ? "second (the filing beside the release)" : awaiting ? "first; a second follows when the outlook is filed" : undefined,
+    pass,
     followers: followers.length,
     sent,
   };
