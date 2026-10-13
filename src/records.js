@@ -165,7 +165,6 @@ export function forEmail(record) {
       basisCaveat: Boolean(p.basisCaveat),
       source: p.source || null,
       bound: p.bound || null,
-      side: basisSide(p),
     })),
 
     revisions: (record.revisions || []).map((r) => ({
@@ -241,6 +240,8 @@ function pathAcrossSplit(p, changes) {
 function trim(p) {
   return {
     metric: p.metric_as_written,
+    // GAAP or adjusted side, for the email's tables (see basisSide).
+    side: basisSide(p),
     period: p.guide_period,
     basis: p.basis,
     unit: p.unit,

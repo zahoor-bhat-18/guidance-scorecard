@@ -427,6 +427,12 @@ function byMetric(pairs, unanswered, limit) {
   for (const [key, g] of groups) {
     g.key = key;
     g.metric = displayLabel(g.labels);
+    // A per-share table named "Net earnings" reads as dollars: prefer a
+    // label that says per share, else say it.
+    if (unitClass(g.unit) === "per-share" && !/per share|\beps\b/i.test(g.metric)) {
+      const ps = g.labels.filter((l) => /per share|\beps\b/i.test(String(l)));
+      g.metric = ps.length ? displayLabel(ps) : g.metric + " per share";
+    }
     // Two tables for one measure: say which is the rate.
     if (baseCount.get(key.split("|")[0]) > 1 && unitClass(g.unit) === "rate" && !/%|growth|margin|yield|rate/i.test(g.metric)) {
       g.metric += " (%)";
