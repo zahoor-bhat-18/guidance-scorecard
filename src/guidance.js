@@ -1252,7 +1252,10 @@ export function missedGuideHits(text, guides) {
        skipped guide is looked for. */
     const before = lines.slice(Math.max(0, i - 40), i).join(" ");
     if (/reconcil/i.test(before)) return;
-    if (nums.some(covered)) return;
+    // A row of several "~" figures (quarter outlook, full year implied) is
+    // covered only when every "~" figure is.
+    const approx = Array.from(String(line).matchAll(/~\s?\$?\s?(\d[\d,]*(?:\.\d+)?)/g)).map((x) => Number(x[1].replace(/,/g, "")));
+    if (approx.length >= 2 ? approx.every(covered) : nums.some(covered)) return;
     hits.push({ i, line });
   });
   return hits;
@@ -1815,7 +1818,7 @@ export async function guidanceFrom(env, cik, release, cal, readAlready) {
       : { period: null, why: "No fiscal calendar was supplied." };
     return { ...g, period: r.period, period_how: r.how || null, period_why: r.why || null };
   });
-  const withPeriods = dropEarlierColumn(withPeriodsAll, filing.text);
+  const withPeriods = impliedYear(dropEarlierColumn(withPeriodsAll, filing.text), filing.text);
 
   // Every guide as extracted, in order - what the next release is ASKED
   // about. Kept unchanged so the backfill sends the model the same questions
@@ -1903,6 +1906,37 @@ export async function guidanceFrom(env, cik, release, cal, readAlready) {
     // line as accounted for when any of these carries its figure.
     seen: withPeriodsAll.concat(effects, seenBeside),
   };
+}
+
+/* THE FULL-YEAR COLUMN OF A QUARTER'S OUTLOOK TABLE.
+   JPMorgan's outlook slide reads "3Q26YTD | 4Q outlook | FY26 implied", one
+   row per measure: "Net interest income $78.2B ~$28B ~$106.2B". The reading
+   took the fourth-quarter column and left the year, so its full-year net
+   interest income guide - raised from ~$105.5bn to ~$106.2bn - showed as
+   no longer given. Where a quarter's guide is one of two or more "~" figures
+   in its row and the table's heading names a full-year implied column, the
+   row's last "~" figure is the full-year guide. */
+export function impliedYear(guides, text) {
+  const t = String(text || "").replace(/\s+/g, " ");
+  const out = guides.slice();
+  const same = (a, b) => String(a.metric_as_written || "").toLowerCase().trim() === String(b.metric_as_written || "").toLowerCase().trim();
+  for (const g of guides) {
+    const m = /^(\d{4})Q([1-4])$/.exec(String(g.period || ""));
+    if (!m || typeof g.value !== "number" || typeof g.low === "number" || typeof g.high === "number") continue;
+    const q = String(g.quote || "").replace(/\s+/g, " ").trim();
+    const approx = Array.from(q.matchAll(/~\s?\$?\s?(\d[\d,]*(?:\.\d+)?)/g)).map((x) => Number(x[1].replace(/,/g, "")));
+    const k = approx.findIndex((n) => Math.abs(n - g.value) < 1e-9);
+    if (k < 0 || k === approx.length - 1) continue;
+    const at = t.indexOf(q.slice(0, 40));
+    if (at < 0) continue;
+    const before = t.slice(Math.max(0, at - 800), at);
+    if (!/\b(FY\s?'?\d{2,4}|full[- ]year)\s+implied\b|\bimplied\s+(FY|full[- ]year)\b/i.test(before)) continue;
+    const period = m[1] + "FY";
+    if (out.some((x) => x.period === period && same(x, g))) continue;
+    out.push({ ...g, period, period_text: "FY" + m[1].slice(2) + " implied", value: approx[approx.length - 1],
+      period_how: "the full-year implied column of the outlook table", implied_year: true });
+  }
+  return out;
 }
 
 /* ------------------------------------------------------------------ *
