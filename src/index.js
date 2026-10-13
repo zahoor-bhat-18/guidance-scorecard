@@ -256,8 +256,9 @@ async function poll(env) {
      it in awaiting:index; after six hours the send is started anyway, and it
      sends the results it has. Six hours plus a minute, so the send script's
      own clock agrees the hold is over. */
+  let held = {};
   try {
-    const held = JSON.parse((await env.CACHE.get("awaiting:index")) || "{}") || {};
+    held = JSON.parse((await env.CACHE.get("awaiting:index")) || "{}") || {};
     for (const [t, at] of Object.entries(held)) {
       if (watching.includes(t) && Date.now() - Date.parse(at) > (6 * 60 + 1) * 60 * 1000) hits.add(t);
     }
@@ -270,6 +271,14 @@ async function poll(env) {
   const fresh = [];
   for (const ticker of hits) {
     const seen = await env.CACHE.get("dispatched:" + ticker);
+    /* A company whose email is held for its outlook filing is let through
+       after ten minutes, not an hour: the outlook can be filed soon after the
+       release, and a busy hour pushes it out of the 100-filing feed before
+       the hour's mark expires - and the email would then go without it. */
+    if (seen && held[ticker]) {
+      const at = Number(seen);
+      if (Number.isFinite(at) && Date.now() - at > 10 * 60 * 1000) { fresh.push(ticker); continue; }
+    }
     if (seen) continue;
     fresh.push(ticker);
   }
@@ -293,7 +302,7 @@ async function poll(env) {
       + (await d.text().catch(() => "")).slice(0, 200));
   }
   for (const ticker of fresh) {
-    await env.CACHE.put("dispatched:" + ticker, "1", { expirationTtl: 3600 });
+    await env.CACHE.put("dispatched:" + ticker, String(Date.now()), { expirationTtl: 3600 });
   }
 
   await env.CACHE.put("poll:last", new Date().toISOString() + " dispatched " + fresh.join(","));
