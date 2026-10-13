@@ -1246,13 +1246,19 @@ export function sameSide(asked, found) {
    carry most of the guide's own words, and no word that makes it a different
    measure (free, gross, net, operating, pre-tax...) the guide does not have. */
 const DIFFERENT_MEASURE = ["free", "gross", "net", "operating", "pretax", "pre", "after", "comparable", "constant", "organic", "per", "margin", "growth"];
-export function sameMeasure(asked, found) {
-  const a = searchWords(asked), f = searchWords(found);
+export function sameMeasure(asked, found, heading) {
+  // A table row is often named only by its part ("Card Services") under a
+  // heading that names the measure ("Net charge-off/(recovery) rate").
+  const a = searchWords(asked), f = searchWords(String(found || "") + " " + String(heading || ""));
   if (!a.length || !f.length) return false;
   const stem = (w) => (w.length > 4 ? w.replace(/(es|s|ed|ing)$/, "") : w);
   const fs = new Set(f.map(stem)), as = new Set(a.map(stem));
   const shared = a.filter((w) => fs.has(stem(w))).length;
-  if (shared / a.length < 0.5) return false;
+  // A row named only by a part of the guide's own name ("Card Services" for
+  // "Card Services NCO rate") is that row; the unit check still applies.
+  const own = searchWords(found);
+  const subset = own.length > 0 && own.every((w) => as.has(stem(w)));
+  if (shared / a.length < 0.5 && !subset) return false;
   const raw = (x) => { let l = String(x || ""); for (const [re, to] of ABBREVIATIONS) l = l.replace(re, " " + to + " "); return l.toLowerCase(); };
   for (const w of DIFFERENT_MEASURE) {
     const re = new RegExp("\\b" + w + "\\b");
@@ -1310,7 +1316,7 @@ async function deepLook(env, requests, actuals, full, text, release, cal) {
       && valueInQuoteAnyScale(cand.value, cand.quote)
       && q.length >= 8 && flatFull.includes(q.split(/\s*(?:\.\.\.|\u2026)\s*/)[0].slice(0, 50))
       && sameSide(requests[i].metric_as_written, cand.found_as)
-      && sameMeasure(requests[i].metric_as_written, cand.found_as);
+      && sameMeasure(requests[i].metric_as_written, cand.found_as, cand.section);
     console.log("Deep look " + release.accession + " " + requests[i].guidePeriod + " "
       + requests[i].metric_as_written + ": " + JSON.stringify(cand.found_as) + " " + cand.value
       + (ok ? " - USED" : " - left empty"));
