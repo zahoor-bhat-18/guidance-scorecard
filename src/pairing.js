@@ -211,6 +211,23 @@ export function pairUp(guides, actuals) {
 
     const inGuideUnit = sameMoneyUnit(g, a);
     base.actual = thousandsFixed(g, inGuideUnit);
+    /* AN EXPENSE PRINTED IN BRACKETS. Constellation guided interest expense
+       of $445-455 million and its table prints "(411.4)"; the result came
+       back as -411.4 and the email would have shown a negative expense. A
+       guide whose figures are all positive, answered by a figure the release
+       prints in brackets, is the same figure without the sign. */
+    {
+      const gv = [base.guide && base.guide.low, base.guide && base.guide.high, base.guide && base.guide.value].filter((x) => typeof x === "number");
+      const mag = typeof base.actual === "number" ? Math.abs(base.actual) : null;
+      if (mag !== null && base.actual < 0 && gv.length && gv.every((x) => x > 0)) {
+        const q = String(a.quote || "").replace(/(\d),(?=\d{3})/g, "$1");
+        const shown = [Math.abs(a.value), mag].map((x) => String(x).replace(".", "\\.") + "0*");
+        if (shown.some((f) => new RegExp("\\(\\s*\\$?\\s*" + f + "\\s*\\)").test(q))) {
+          base.actual = mag;
+          base.actual_sign = "printed in brackets; compared without the sign";
+        }
+      }
+    }
     if (inGuideUnit.value !== a.value) base.actual_scaled = "converted from " + a.unit + " to " + g.unit;
     else if (base.actual !== a.value) base.actual_scaled = "read in thousands; divided by 1,000";
     base.actual_unit = inGuideUnit.unit;
@@ -228,6 +245,26 @@ export function pairUp(guides, actuals) {
       // The two labels, kept, because this match was a judgement and the
       // judgement should be checkable.
       base.actual_matched_as = a.metric_as_written;
+    }
+
+    /* A CHANGE IS NOT A LEVEL. Elevance guided "GAAP operating margin vs.
+       2024" of (50) to (25) basis points - a change - and the answer was the
+       margin itself, 2.5%, scored as far above the guide. A guide in basis
+       points, or one whose own words say it is a change against a year
+       ("vs. 2024"), is not scored against a figure that is not one. */
+    if (a.value !== null) {
+      const gq = String(g.quote || "") + " " + String(g.metric_as_written || "");
+      const guideIsBps = g.unit === "basis points" || /\bbps\b|basis points/i.test(gq);
+      // The answer's OWN figure followed by bps - Elevance's row carries the
+      // guide's "bps" in the next column, beside the 2.5% level.
+      const av = String(Math.abs(a.value)).replace(".", "\\.");
+      const answerIsBps = /basis points|\bbps\b/i.test(String(a.unit || ""))
+        || new RegExp("\\(?" + av + "\\)?\\s*(bps|basis points)", "i").test(String(a.quote || ""));
+      if (guideIsBps && !answerIsBps) {
+        pairs.push({ ...base, comparable: false,
+          why: "The guide is a change in basis points; the figure found is a level, not a change." });
+        continue;
+      }
     }
 
     /* A label that names no measure. Constellation's tax-rate line was
