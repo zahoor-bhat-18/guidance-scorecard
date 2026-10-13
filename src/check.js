@@ -16,16 +16,21 @@
  *      for the same period - usually one guide worded two ways (UnitedHealth,
  *      October 2026: a raise printed as new).
  *
- * The answer is a list of problems in plain words. Empty means the email may
- * go. Anything else holds the email for review: it goes to the owner only,
- * with the list at the top. A false alarm costs a delay; a wrong number in a
- * PM's inbox costs the product.
+ * The answer is a list of findings, each in plain words. Empty means the
+ * email goes as it is. A finding that names one item - a result that cannot
+ * be traced, a guide change the filing does not show - takes THAT ITEM out of
+ * the email, and the rest goes to subscribers on time. Every finding is also
+ * emailed to the owner. A subscriber never sees a number the check could not
+ * confirm; a doubtful line costs one line, not the whole email.
  */
-import { missedGuideHits } from "./guidance.js";
+import { missedGuideHits, figureInQuote } from "./guidance.js";
 import { numberInQuote } from "./actuals.js";
 import { formatFigure, periodLabel } from "./format.js";
 
-const flat = (s) => String(s || "").replace(/(\d),(?=\d{3}\b)/g, "$1").replace(/\s+/g, " ").toLowerCase().trim();
+// Footnote markers - "(c)", "(1)", "*" - sit between a table label and its
+// figure in the filing and never in the model's quote.
+const flat = (s) => String(s || "").replace(/(\d),(?=\d{3}\b)/g, "$1").replace(/\s\([a-z0-9]\)(?=\s)/gi, " ")
+  .replace(/\*+/g, " ").replace(/\s+/g, " ").toLowerCase().trim();
 
 /* Is the quote in the filing? Whitespace, case and thousands commas aside.
    A long quote is matched on its first 60 characters - the model sometimes
@@ -82,7 +87,8 @@ export function notAGuideLine(line) {
 }
 
 export function checkBeforeSend({ text, guides, seen, pairs, revisions }) {
-  const problems = [];
+  const found = [];
+  const problems = { push: (t, drop) => found.push({ text: t, drop: drop || null }) };
   const body = String(text || "");
 
   // 1. Read, then thrown away.
@@ -111,11 +117,11 @@ export function checkBeforeSend({ text, guides, seen, pairs, revisions }) {
     const shown = p.score && typeof p.score.actualAsGuided === "number" ? p.score.actualAsGuided : p.actual;
     const computed = p.computed || (p.answer && p.answer.computed);
     if (!computed && quote && !numberInQuote(p.actual, quote) && !numberInQuote(shown, quote)) {
-      problems.push("A result is not in its own quote: " + (p.metric_as_written || "?") + " " + periodLabel(p.guide_period || "")
-        + " = " + p.actual + " - \"" + short(quote, 140) + "\"");
+      problems.push("Result withheld - the figure is not in its own quote: " + (p.metric_as_written || "?") + " " + periodLabel(p.guide_period || "")
+        + " = " + p.actual + " - \"" + short(quote, 140) + "\"", { pair: p });
     } else if (body && quote && !quoteInText(quote, body)) {
-      problems.push("A result's quote was not found in the filing: " + (p.metric_as_written || "?") + " " + periodLabel(p.guide_period || "")
-        + " - \"" + short(quote, 140) + "\"");
+      problems.push("Result withheld - its quote was not found in the filing: " + (p.metric_as_written || "?") + " " + periodLabel(p.guide_period || "")
+        + " - \"" + short(quote, 140) + "\"", { pair: p });
     }
   }
 
@@ -125,8 +131,8 @@ export function checkBeforeSend({ text, guides, seen, pairs, revisions }) {
     if (r.direction !== "not repeated" || !r.before) continue;
     const nums = [r.before.low, r.before.high, r.before.value].filter((x) => typeof x === "number");
     if (body && stillStated(r.metric_as_written, nums, body, r.unit)) {
-      problems.push("Shown as no longer guided, but the release still states it: " + (r.metric_as_written || "?") + " "
-        + periodLabel(r.period || "") + " (was " + formatFigure(r.before, r.unit) + ")");
+      problems.push("Left out - would have shown as no longer guided, but the release still states it: " + (r.metric_as_written || "?") + " "
+        + periodLabel(r.period || "") + " (was " + formatFigure(r.before, r.unit) + ")", { revision: r });
     }
   }
 
@@ -138,9 +144,32 @@ export function checkBeforeSend({ text, guides, seen, pairs, revisions }) {
     if (twin) {
       problems.push("Shown as a new guide, but a guide of the same kind for the same period was dropped - possibly one guide worded two ways: \""
         + (r.metric_as_written || "?") + "\" (new, " + formatFigure(r.after, r.unit) + ") and \"" + (twin.metric_as_written || "?")
-        + "\" (was " + formatFigure(twin.before, twin.unit) + "), " + periodLabel(r.period || ""));
+        + "\" (was " + formatFigure(twin.before, twin.unit) + "), " + periodLabel(r.period || "")
+        + ". The dropped one is left out of the email.", { revision: twin });
     }
   }
 
-  return [...new Set(problems)];
+  /* 6. A guide change the filing does not show. Every new, raised, cut or
+     held guide prints a figure; its quote must be in the filing and the
+     figure in its quote, or the line comes out of the email and the guide
+     out of the record. */
+  for (const r of moved) {
+    if (!r.after || r.direction === "not repeated") continue;
+    const nums = [r.after.low, r.after.high, r.after.value].filter((x) => typeof x === "number");
+    const q = r.quote || "";
+    // A worded guide ("mid-teens", read as 14% to 16%) prints the words; a
+    // "flat" change is 0. Neither figure is written in the quote.
+    if (!q || r.words || r.from_words) continue;
+    if (nums.every((n) => n === 0) && /\bflat\b/i.test(q)) continue;
+    const inQuote = nums.every((n) => figureInQuote(n, q));
+    const inFiling = !body || quoteInText(q, body) || stillStated(r.metric_as_written, nums, body, r.unit);
+    if (!inQuote || !inFiling) {
+      problems.push("Guide withheld - " + (!inQuote ? "its figure is not in its own quote" : "its quote was not found in the filing") + ": "
+        + (r.metric_as_written || "?") + " " + periodLabel(r.period || "") + " " + formatFigure(r.after, r.unit)
+        + " - \"" + short(q, 140) + "\"", { revision: r, guideQuote: q });
+    }
+  }
+
+  const seenText = new Set();
+  return found.filter((f) => !seenText.has(f.text) && seenText.add(f.text));
 }

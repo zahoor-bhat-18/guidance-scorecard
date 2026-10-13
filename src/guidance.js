@@ -629,6 +629,15 @@ export function bandEnds(quote) {
   return ends;
 }
 
+/* Is this guide figure written in its quote - plainly, as an accounting
+   negative, as a decline in words, or as one end of "X +/- Y"? The same test
+   the number guard uses, for the check before sending. */
+export function figureInQuote(value, quote) {
+  const pool = quoteNumbers(quote);
+  for (const e of bandEnds(quote)) pool.add(e);
+  return present(value, pool) || present(Math.abs(value), pool) || present(-Math.abs(value), pool);
+}
+
 function present(value, pool) {
   if (typeof value !== "number" || !Number.isFinite(value)) return true;
   for (const n of pool) {
@@ -1142,7 +1151,7 @@ async function callModel(env, text) {
 
 /* A line that carries a guide-shaped figure: a "±" band, or a range of
    dollars or percentages ("$1.25 - $1.75", "0% - 4%", "$60 to $63 billion"). */
-const GUIDE_SHAPED = /±|(?:\$\s?\d[\d.,]*|\d[\d.,]*\s?%)\s*(?:-|–|—|to)\s*\$?\s?\d[\d.,]*\s?(?:%|billion|million)?/i;
+const GUIDE_SHAPED = /±|\+\s?\/\s?-\s?\$?\s?\d|(?:\$\s?\d[\d.,]*|\d[\d.,]*\s?%)\s*(?:-|–|—|to)\s*\$?\s?\d[\d.,]*\s?(?:%|billion|million)?/i;
 const OUTLOOK_WORD = /\b(outlook|guidance|expects?|expected|anticipates?|forecast|targets?)\b/i;
 const BOILERPLATE = /forward[-\s]looking statements?|safe harbor|private securities litigation/i;
 

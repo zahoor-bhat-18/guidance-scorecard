@@ -254,16 +254,6 @@ async function handle(ticker) {
         // The outlook never came. The email that was held goes out now, from
         // the record as the first pass left it, saying what is missing.
         const shortCo = displayName(record.company || name || ticker);
-        const timeoutArgs = {
-          ticker, cik, name, current, updated: record,
-          movedRevisions: (record.revisions || []).filter((r) => r.release === current.accession),
-          newPairs: (record.pairs || []).filter((p) => p.comparable && p.answeredBy === current.accession).length,
-        };
-        if ((waiting.problems || []).length) {
-          await kvPut("awaiting:" + ticker, JSON.stringify({ accession: current.accession, done: true, at: new Date().toISOString() }));
-          await holdIndex(ticker, null);
-          return holdForReview({ ...timeoutArgs, problems: waiting.problems });
-        }
         const res = await deliver({
           ticker, cik, name, current, updated: record,
           movedRevisions: (record.revisions || []).filter((r) => r.release === current.accession),
@@ -274,6 +264,7 @@ async function handle(ticker) {
         });
         await kvPut("awaiting:" + ticker, JSON.stringify({ accession: current.accession, done: true, at: new Date().toISOString() }));
         await holdIndex(ticker, null);
+        await alertOwner(ticker, current, waiting.problems || []);
         return { ...res, pass: "held email released after " + HOLD_HOURS + " hours; no outlook filed" };
       }
       return { ticker, skipped: "Already in the record, and nothing new has been filed beside " + current.accession
@@ -382,17 +373,20 @@ async function handle(ticker) {
   const gotBeside = ((nowGuiding.release && nowGuiding.release.companions) || []).length > 0;
   const awaiting = !secondPass && expectsBeside && !gotBeside;
   // "Not repeated" is not news when the outlook simply has not been filed.
-  const movedRevisions = awaiting ? moved.revisions.filter((r) => r.direction !== "not repeated") : moved.revisions;
+  let movedRevisions = awaiting ? moved.revisions.filter((r) => r.direction !== "not repeated") : moved.revisions;
 
   /* THE CHECK. Every number traced to the filing, nothing guide-shaped left
-     unread - see src/check.js. Problems hold the email for review. */
+     unread - see src/check.js. A finding that names an item takes that item
+     out of the email and the record; the email still goes on time, and the
+     owner is emailed every finding. */
   let problems = [];
+  let findings = [];
   try {
     let text = (await readFilingForCheck(env, cik, current.accession)).text;
     for (const c of (nowGuiding.release && nowGuiding.release.companions) || []) {
       text += "\n" + (await readFilingForCheck(env, cik, c.accession)).text;
     }
-    problems = checkBeforeSend({
+    findings = checkBeforeSend({
       text,
       guides: nowGuiding.guides,
       seen: nowGuiding.seen,
@@ -400,8 +394,21 @@ async function handle(ticker) {
       revisions: movedRevisions,
     });
   } catch (e) {
-    problems = ["The check before sending could not run: " + e.message];
+    findings = [{ text: "The check before sending could not run: " + e.message, drop: null }];
   }
+  problems = findings.map((f) => f.text);
+  // Withhold what the check could not confirm.
+  const dropRevisions = new Set(findings.filter((f) => f.drop && f.drop.revision).map((f) => f.drop.revision));
+  const dropQuotes = new Set(findings.filter((f) => f.drop && f.drop.guideQuote).map((f) => f.drop.guideQuote));
+  for (const f of findings) {
+    const p = f.drop && f.drop.pair;
+    if (!p) continue;
+    p.comparable = false;
+    p.withheld = true;
+    p.why = "Withheld: the reported figure could not be traced to the filing.";
+  }
+  if (dropRevisions.size) movedRevisions = movedRevisions.filter((r) => !dropRevisions.has(r));
+  if (dropQuotes.size) nowGuiding.guides = nowGuiding.guides.filter((g) => !dropQuotes.has(g.quote));
   for (const p of problems) console.log(ticker + " CHECK: " + p);
 
   const scoredNow = [...scored.pairs, ...carriedPairs].filter((p) => p.comparable).length;
@@ -476,16 +483,11 @@ async function handle(ticker) {
     };
   }
 
-  if (problems.length) {
-    return holdForReview({ ticker, cik, name, current, updated, movedRevisions,
-      newPairs: scored.pairs.filter((p) => p.comparable).length, problems });
-  }
-
   const shortCo = displayName(updated.company || name || ticker);
   // An email already went out on the first pass only for holds made before
   // emails were held; that one is followed by a marked update.
   const wasSent = secondPass && !secondPass.waiting.held;
-  return deliver({
+  const sentRes = await deliver({
     ticker, cik, name, current, updated, movedRevisions,
     newPairs: scored.pairs.filter((p) => p.comparable).length,
     note: wasSent
@@ -495,6 +497,29 @@ async function handle(ticker) {
     prefix: wasSent ? "Update: " : "",
     pass: secondPass ? "second (the filing beside the release)" : undefined,
   });
+  const firstProblems = secondPass ? (secondPass.waiting.problems || []) : [];
+  await alertOwner(ticker, current, [...new Set([...firstProblems, ...problems])]);
+  return problems.length ? { ...sentRes, checked: problems } : sentRes;
+}
+
+/* Every finding of the check, to the owner, after the subscribers' email has
+   gone. Plain text: what was withheld and why, so it can be looked at. */
+async function alertOwner(ticker, current, problems) {
+  if (!problems.length) return;
+  const owner = process.env.TEST_EMAIL;
+  if (!owner) { console.log(ticker + ": " + problems.length + " check findings, and no TEST_EMAIL to send them to."); return; }
+  const text = ticker + " - release " + current.accession + " filed " + current.filed + "\n\n"
+    + "The subscribers' email went out. The check before sending found:\n\n- " + problems.join("\n- ")
+    + "\n\nItems marked withheld or left out were taken out of the email and the record. The others are for a look.";
+  try {
+    await sendMail(owner, {
+      subject: "[Check] " + ticker + ": " + problems.length + " finding" + (problems.length === 1 ? "" : "s"),
+      text,
+      html: "<pre style=\"white-space:pre-wrap;font-family:inherit;font-size:14px\">" + text.replace(/&/g, "&amp;").replace(/</g, "&lt;") + "</pre>",
+    }, SITE);
+  } catch (e) {
+    console.error(ticker + ": the check findings could not be emailed - " + e.message);
+  }
 }
 
 /* Everything from here sends: to each follower, one email each. */
@@ -599,20 +624,6 @@ async function deliver({ ticker, cik, name, current, updated, movedRevisions, ne
     followers: followers.length,
     sent,
   };
-}
-
-/* HELD FOR REVIEW. The email goes to the owner only (TEST_EMAIL), with the
-   problems listed at the top; subscribers get nothing until it is released
-   (the send workflow run by hand with "release" ticked, after a fix). */
-async function holdForReview({ ticker, cik, name, current, updated, movedRevisions, newPairs, problems }) {
-  await kvPut("review:" + ticker, JSON.stringify({ accession: current.accession, filed: current.filed, problems, at: new Date().toISOString() }));
-  const owner = process.env.TEST_EMAIL;
-  if (!owner) return { ticker, release: current.accession, filed: current.filed, newPairs, revisions: movedRevisions.length, sent: 0, held: problems };
-  const note = "HELD - not sent to subscribers. The check found:\n- " + problems.join("\n- ")
-    + "\n\nTo send it as it is, run the send workflow for " + ticker + " with release ticked.";
-  const res = await deliver({ ticker, cik, name, current, updated, movedRevisions, newPairs, note, prefix: "[Held] ", only: [owner],
-    pass: "held for review" });
-  return { ...res, held: problems };
 }
 
 async function releaseHeld(ticker) {
