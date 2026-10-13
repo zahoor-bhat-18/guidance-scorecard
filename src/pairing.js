@@ -219,7 +219,13 @@ export function pairUp(guides, actuals) {
     {
       const gv = [base.guide && base.guide.low, base.guide && base.guide.high, base.guide && base.guide.value].filter((x) => typeof x === "number");
       const mag = typeof base.actual === "number" ? Math.abs(base.actual) : null;
-      if (mag !== null && base.actual < 0 && gv.length && gv.every((x) => x > 0)) {
+      /* Only for a measure that is an outflow by nature. A LOSS is printed in
+         brackets too: Constellation's fiscal 2025 GAAP EPS of $(0.45) was
+         shown as $0.45 against a $3.90-4.30 guide. */
+      const outflow = /expense|cost|interest|capital (expenditure|spending)|capex|depreciation|amortization|charges?\b|repurchase|buyback|dividend|outflow|tax(es)? paid/i
+        .test(String(g.metric_as_written || ""))
+        && !/income|earnings|profit|eps|margin|growth|rate|cash flow/i.test(String(g.metric_as_written || ""));
+      if (outflow && mag !== null && base.actual < 0 && gv.length && gv.every((x) => x > 0)) {
         const q = String(a.quote || "").replace(/(\d),(?=\d{3})/g, "$1");
         const shown = [Math.abs(a.value), mag].map((x) => String(x).replace(".", "\\.") + "0*");
         if (shown.some((f) => new RegExp("\\(\\s*\\$?\\s*" + f + "\\s*\\)").test(q))) {
