@@ -29,7 +29,7 @@
  * different rules and the mismatch would be invisible.
  */
 
-import { metricKey as sharedMetricKey } from "../src/metrics.js";
+import { metricKey as sharedMetricKey, basisSide } from "../src/metrics.js";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { resolveCik, companyCalendar, factsFor } from "../src/xbrl.js";
 import { annualRecord } from "../src/annual.js";
@@ -571,14 +571,10 @@ async function buildOne(ticker) {
   // Only an EXPLICIT GAAP guide is told apart: Delta's unlabelled "Earnings
   // Per Share" table row and its "adjusted EPS" sentence are one measure,
   // and must stay one pair.
-  const basisTag = (p) => {
-    const l = String(p.metric_as_written || "");
-    if (/adjusted|non-?gaap|comparable|\bcore\b|underlying/i.test(l)) return "adj";
-    // GAAP only when the label says so, or the GAAP re-check supplied the
-    // figure - never on the model's own basis guess, which varies run to run.
-    if (/\b(gaap|reported)\b/i.test(l) || (p.answer && p.answer.gaap_recheck)) return "gaap";
-    return "adj";
-  };
+  // GAAP only when the label says so, the GAAP re-check supplied the figure,
+  // or the guide's own sentence also guides the adjusted twin - never on the
+  // model's own basis guess, which varies run to run. See basisSide.
+  const basisTag = (p) => basisSide(p);
   const pairKey = (p) => metricKey(p) + "|" + basisTag(p) + "|" + (p.guide_period || "");
 
   // One reported figure answers one guide - see oneGuidePerFigure.

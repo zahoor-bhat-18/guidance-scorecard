@@ -24,7 +24,7 @@ import { resolveCik, companyCalendar, shareCountChanges } from "../src/xbrl.js";
 import { earningsReleases, guidanceFrom, guidanceUpdatesBetween, applyUpdates, completedDeals, updateCandidates } from "../src/guidance.js";
 import { requestsFrom, actualsFrom } from "../src/actuals.js";
 import { pairUp, refuseAcrossSplit, markOpenAtAnswer, guidesToCarry, oneGuidePerFigure } from "../src/pairing.js";
-import { metricKey } from "../src/metrics.js";
+import { metricKey, basisSide } from "../src/metrics.js";
 import { scoreAll } from "../src/score.js";
 import { revisionsBetween } from "../src/revisions.js";
 import { forEmail, headline } from "../src/records.js";
@@ -166,14 +166,7 @@ async function testSend(ticker, to) {
 function mergePairs(fresh, stored) {
   const byKey = new Map();
   // GAAP and adjusted guides of one measure are two pairs (see backfill).
-  const basisTag = (p) => {
-    const l = String(p.metric_as_written || "");
-    if (/adjusted|non-?gaap|comparable|\bcore\b|underlying/i.test(l)) return "adj";
-    // GAAP only when the label says so, or the GAAP re-check supplied the
-    // figure - never on the model's own basis guess, which varies run to run.
-    if (/\b(gaap|reported)\b/i.test(l) || (p.answer && p.answer.gaap_recheck)) return "gaap";
-    return "adj";
-  };
+  const basisTag = (p) => basisSide(p);
   const keyOf = (p) => metricKey(p) + "|" + basisTag(p) + "|" + (p.guide_period || "");
 
   for (const p of fresh) byKey.set(keyOf(p), p);

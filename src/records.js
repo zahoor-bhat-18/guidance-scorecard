@@ -13,6 +13,7 @@
  * something has gone wrong upstream.
  */
 
+import { basisSide } from "./metrics.js";
 import { revisionSentence } from "./summary.js";
 import { withBound } from "./revisions.js";
 
@@ -164,6 +165,7 @@ export function forEmail(record) {
       basisCaveat: Boolean(p.basisCaveat),
       source: p.source || null,
       bound: p.bound || null,
+      side: basisSide(p),
     })),
 
     revisions: (record.revisions || []).map((r) => ({

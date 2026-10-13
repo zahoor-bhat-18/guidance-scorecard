@@ -326,7 +326,9 @@ function byMetric(pairs, unanswered, limit) {
     // Measure AND kind of unit: Carnival's "adjusted net income" is guided
     // both in dollars and as a growth rate, and one table held $1.86bn and
     // "at least 60%" in adjacent rows. Each kind gets its own table.
-    const key = unitKey(p.metric, p.unit);
+    // A GAAP guide is its own table: UnitedHealth's GAAP and adjusted EPS
+    // guides share a name once "adjusted" is set aside.
+    const key = unitKey(p.metric, p.unit) + (p.side === "gaap" ? "|gaap" : "");
     const g = group(key, p.unit);
     g.key = key;
     g.labels.push(p.metric);

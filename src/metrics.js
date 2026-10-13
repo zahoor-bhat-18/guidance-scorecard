@@ -155,3 +155,27 @@ export function namesSaidBy(guides, into) {
   for (const g of guides || []) if (g && g.said_by) out.add(String(g.said_by).toLowerCase().trim());
   return out;
 }
+
+/* WHICH SIDE OF A GAAP/ADJUSTED PAIR A GUIDE IS ON, for grouping and
+   de-duplicating - never sent to the model.
+
+   Adjusted when the label says so; GAAP when the label says so, or the GAAP
+   re-check supplied the figure. A bare label is adjusted (what companies
+   guide), EXCEPT where its own sentence also guides the adjusted twin:
+   UnitedHealth's "net earnings of $22.50 to $22.90 per share and adjusted
+   net earnings of $24.85 to $25.00 per share" - there the bare one is the
+   GAAP figure, and treating both as adjusted dropped one of them. */
+export function basisSide(p) {
+  const l = String((p && p.metric_as_written) || "");
+  if (/adjusted|non-?gaap|comparable|\bcore\b|underlying/i.test(l)) return "adj";
+  if (/\b(gaap|reported)\b/i.test(l) || (p && p.answer && p.answer.gaap_recheck)) return "gaap";
+  const bare = l.toLowerCase().replace(/\([^)]*\)/g, " ")
+    .replace(/\b(outlook|guidance|target|forecast|expected)\b/g, " ").replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
+  const q = String((p && (p.guide_quote || p.quote)) || "").toLowerCase().replace(/\s+/g, " ");
+  if (bare.length >= 6 && q.includes("adjusted " + bare)) {
+    const all = q.split(bare).length - 1;
+    const twins = q.split("adjusted " + bare).length - 1;
+    if (all > twins) return "gaap";
+  }
+  return "adj";
+}
