@@ -35,6 +35,15 @@
 
 import { revisionSentence } from "./summary.js";
 import { labelAsCompany, namesSaidBy } from "./metrics.js";
+import { boundOf } from "./score.js";
+
+/* "At least $20.50" kept as a floor on the figure itself, so the email does
+   not print a bare "$20.50" (UnitedHealth, October 2026). */
+export function withBound(nums, g) {
+  if (!nums || !g) return nums;
+  const b = boundOf({ guide: nums, shape: g.shape, guide_quote: g.quote });
+  return b ? { ...nums, bound: b.kind } : nums;
+}
 
 /* Metric labels drift between releases even at the same company. Walmart wrote
    "Adj. operating income (cc)" in one and "Operating income (cc)" in the next,
@@ -51,6 +60,12 @@ function labelKey(guide) {
        Walmart's "(cc)" and "constant currency" still match each other. */
     .replace(/\(cc\)/g, " constant currency ")
     .replace(/constant[-\s]currency/g, " constant currency ")
+    /* An abbreviation given in brackets after the full name is the same
+       measure: Wells Fargo's "net interest income (NII)" in October was its
+       "net interest income" of July, held at about $50bn, and read as one
+       new guide and one dropped. Only a bracket that follows words, so a
+       label that IS an abbreviation is left alone. */
+    .replace(/([a-z])\s*\([a-z]{2,6}\)/g, "$1 ")
     // Growth with the sign in words, and the words for "all of it":
     // PepsiCo's "net revenue growth" became "Net Revenue", and "Total cash
     // returns to shareholders" became "Cash Returns to Shareholders".
@@ -414,7 +429,7 @@ export function revisionsBetween(rawBefore, rawAfter, opts) {
   const out = [];
 
   for (const g of afterGuides) {
-    const n = numbersOf(g);
+    const n = withBound(numbersOf(g), g);
     const key = labelKey(g) + "|" + (g.period || "");
     const before = readingFor(key, n);
 
@@ -435,7 +450,7 @@ export function revisionsBetween(rawBefore, rawAfter, opts) {
     }
 
     seen.add(key);
-    const b = inUnitOf(numbersOf(before), before.unit, g.unit);
+    const b = withBound(inUnitOf(numbersOf(before), before.unit, g.unit), before);
     // A guide restated in another kind of unit - a growth rate after a
     // dollar figure - is not a revision of it: there is nothing to compare.
     if (b === null) {
@@ -539,6 +554,31 @@ export function revisionsBetween(rawBefore, rawAfter, opts) {
     r.before = before;
     r.direction = direction(before, r.after);
     if (r.direction === "unchanged" || r.direction === "changed") r.direction = r.direction === "changed" ? "changed" : "unchanged";
+    r.relabelled_from = o.metric_as_written;
+    r.summary = revisionSentence(r) || r.summary;
+  }
+  /* EARNINGS PER SHARE, WORDED TWO WAYS. UnitedHealth wrote "Adjusted Earnings
+   * per Share" and "Diluted Net Earnings per Share to UNH Shareholders" in July
+   * and "adjusted net earnings per share" and "Diluted earnings per share" in
+   * October: both raised, both printed as new. Earnings per share is always
+   * the whole company, so two leftovers of it for the same period and on the
+   * same adjusted/GAAP side are the same guide - when each side has exactly
+   * one. Other measures are not matched this way: two segments share a class. */
+  for (const r of fresh) {
+    if (r.direction !== "new" || r.metric !== "eps" || !r.after) continue;
+    const side = sideOf(r.metric_as_written);
+    const twins = fresh.filter((x) => x.direction === "new" && x.metric === "eps" && x.period === r.period
+      && sideOf(x.metric_as_written) === side);
+    if (twins.length !== 1) continue;
+    const olds = dropped.filter((o) => !matchedOld.has(o) && o.metric === "eps" && o.period === r.period
+      && sideOf(o.metric_as_written) === side);
+    if (olds.length !== 1) continue;
+    const o = olds[0];
+    const before = inUnitOf(o.before, o.unit, r.unit);
+    if (!before) continue;
+    matchedOld.add(o);
+    r.before = before;
+    r.direction = direction(before, r.after);
     r.relabelled_from = o.metric_as_written;
     r.summary = revisionSentence(r) || r.summary;
   }

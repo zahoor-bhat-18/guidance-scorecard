@@ -669,7 +669,16 @@ function aboutNotPlusMinus(g) {
   if (!m) return g;
   const n = Number(m[2]);
   const nums = [g.low, g.high, g.value].filter((x) => typeof x === "number");
-  if (!nums.length || !nums.every((x) => Math.abs(Math.abs(x) - n) < 1e-9)) return g;
+  /* No figure at all: Wells Fargo's "Expect 2026 net interest income (NII) to
+     be +/- $50 billion" came back as a qualitative guide with no number, so
+     the email called the guide dropped when the company had held it. A dollar
+     amount after +/- is the guide itself, read as "about". Money only: "+/- 2%"
+     on a growth rate can mean a band around zero. */
+  if (!nums.length) {
+    if (!/\$/.test(m[0]) || !(n > 0)) return g;
+    return { ...g, low: null, high: null, value: n, shape: "point", plus_minus_read_as: "about" };
+  }
+  if (!nums.every((x) => Math.abs(Math.abs(x) - n) < 1e-9)) return g;
   if (!nums.some((x) => x < 0)) return g;
   return { ...g, low: null, high: null, value: n, shape: "point", plus_minus_read_as: "about" };
 }

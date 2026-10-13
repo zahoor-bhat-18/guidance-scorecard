@@ -14,6 +14,7 @@
  */
 
 import { revisionSentence } from "./summary.js";
+import { withBound } from "./revisions.js";
 
 const PREFIX = "record:";
 
@@ -177,7 +178,8 @@ export function forEmail(record) {
       // summary at the top of the email.
       unit: r.unit || null,
       before: r.before || null,
-      after: r.after || null,
+      // Records built before floors were kept on the figure get theirs here.
+      after: r.after ? (r.after.bound ? r.after : withBound(r.after, r)) : null,
       words: r.words || null,
       // Kept so the email can show "about 20%" when the company wrote "Approx. 20%".
       quote: r.quote ? String(r.quote).slice(0, 400) : null,
@@ -192,7 +194,7 @@ export function forEmail(record) {
       // deliberately narrow, and the fields the sentence needs - the label as
       // written, the unit, the figures before and after - are exactly the ones
       // this mapper drops.
-      summary: revisionSentence(r) || r.summary,
+      summary: revisionSentence(r.after && !r.after.bound ? { ...r, after: withBound(r.after, r) } : r) || r.summary,
       // Carried through so the email can tell today's revisions from the
       // fourteen releases of history behind them.
       release: r.release,

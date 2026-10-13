@@ -126,9 +126,12 @@ export function formatFigure(guide, unit) {
     const lo = Math.min(g.low, g.high), hi = Math.max(g.low, g.high);
     return formatInScale(lo, unit, larger) + " to " + formatInScale(hi, unit, larger);
   }
-  if (hasValue) return formatValue(g.value, unit);
-  if (hasLow) return formatValue(g.low, unit);
-  if (hasHigh) return formatValue(g.high, unit);
+  // A floor or ceiling travels with the figure ("at least $20.50"), so every
+  // place that prints a guide says what the company said.
+  const lead = g.bound === "floor" ? "at least " : g.bound === "ceiling" ? "under " : "";
+  if (hasValue) return lead + formatValue(g.value, unit);
+  if (hasLow) return lead + formatValue(g.low, unit);
+  if (hasHigh) return lead + formatValue(g.high, unit);
   return "no figure";
 }
 

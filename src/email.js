@@ -2028,7 +2028,7 @@ function roughly(r) {
   if (!a || a.value == null || a.low != null || a.high != null) return "";
   // The approximating word must sit right before THIS figure, not another one in the quote.
   const n = String(Number(a.value)).replace(".", "\\.");
-  const re = new RegExp("(approx\\.?|approximately|about|roughly|around|~)\\s*[$(]?\\s*" + n + "(?![0-9])", "i");
+  const re = new RegExp("(approx\\.?|approximately|about|roughly|around|~|\\+\\s?\\/\\s?-|\u00b1)\\s*[$(]?\\s*" + n + "(?![0-9])", "i");
   return re.test(String(r.quote || "")) ? "about " : "";
 }
 
