@@ -34,7 +34,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { resolveCik, companyCalendar, factsFor } from "../src/xbrl.js";
 import { annualRecord } from "../src/annual.js";
 import { earningsReleases, guidanceFrom, updateCandidates, guidanceUpdatesBetween, applyUpdates, completedDeals } from "../src/guidance.js";
-import { requestsFrom, actualsFrom } from "../src/actuals.js";
+import { requestsFrom, actualsFrom, sameSide } from "../src/actuals.js";
 import { samePeriod } from "../src/period.js";
 import { scoreAll } from "../src/score.js";
 import { pairUp, refuseAcrossSplit, markOpenAtAnswer, guidesToCarry, oneGuidePerFigure } from "../src/pairing.js";
@@ -655,6 +655,9 @@ async function buildOne(ticker) {
           && o.metric_as_written === fresh.metric_as_written
           && o.guide_period === fresh.guide_period && same(o.guide, fresh.guide));
         if (!old || typeof old.actual !== "number") return fresh;
+        // Not an answer from the other side: a "Core EPS" figure kept for a
+        // diluted (GAAP) guide is the mistake the current rules now refuse.
+        if (!sameSide(fresh.metric_as_written, old.actual_found_as || (old.answer && old.answer.found_as))) return fresh;
         const g = {
           metric: fresh.metric, metric_as_written: fresh.metric_as_written, basis: fresh.basis,
           unit: fresh.unit, shape: fresh.shape, period: fresh.guide_period, period_text: fresh.guide_period_text,

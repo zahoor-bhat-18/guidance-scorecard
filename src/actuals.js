@@ -1225,7 +1225,7 @@ export function deepPassages(full, label, room = 30000) {
    its answer must name the same side the guide does. P&G's "diluted net
    earnings per share growth" came back as "Core EPS" 4% - the adjusted
    twin - and would have been scored as the GAAP guide's result. */
-function sameSide(asked, found) {
+export function sameSide(asked, found) {
   const adj = /adjusted|\bcore\b|non-?gaap|comparable|underlying|excluding/i;
   const plain = /\b(diluted|gaap|reported|net (income|earnings))\b/i;
   const a = String(asked || ""), f = String(found || "");
