@@ -24,7 +24,7 @@ import { resolveCik, companyCalendar, shareCountChanges } from "../src/xbrl.js";
 import { earningsReleases, guidanceFrom, guidanceUpdatesBetween, applyUpdates, completedDeals, updateCandidates } from "../src/guidance.js";
 import { requestsFrom, actualsFrom } from "../src/actuals.js";
 import { pairUp, refuseAcrossSplit, markOpenAtAnswer, guidesToCarry, oneGuidePerFigure } from "../src/pairing.js";
-import { metricKey, basisSide } from "../src/metrics.js";
+import { metricKey, basisSide, markGaapTwins } from "../src/metrics.js";
 import { scoreAll } from "../src/score.js";
 import { revisionsBetween } from "../src/revisions.js";
 import { forEmail, headline } from "../src/records.js";
@@ -164,6 +164,7 @@ async function testSend(ticker, to) {
  * --rebuild, not as a side effect of a company reporting again.
  */
 function mergePairs(fresh, stored) {
+  markGaapTwins(fresh);
   const byKey = new Map();
   // GAAP and adjusted guides of one measure are two pairs (see backfill).
   const basisTag = (p) => basisSide(p);

@@ -29,7 +29,7 @@
  * different rules and the mismatch would be invisible.
  */
 
-import { metricKey as sharedMetricKey, basisSide } from "../src/metrics.js";
+import { metricKey as sharedMetricKey, basisSide, markGaapTwins } from "../src/metrics.js";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { resolveCik, companyCalendar, factsFor } from "../src/xbrl.js";
 import { annualRecord } from "../src/annual.js";
@@ -578,6 +578,8 @@ async function buildOne(ticker) {
   const pairKey = (p) => metricKey(p) + "|" + basisTag(p) + "|" + (p.guide_period || "");
 
   // One reported figure answers one guide - see oneGuidePerFigure.
+  // A bare guide beside an adjusted one with other figures is the GAAP one.
+  markGaapTwins(allPairs);
   const setAside = oneGuidePerFigure(allPairs);
   if (setAside) console.log("  " + ticker + ": " + setAside + " pairs set aside - the same reported figure had been scored against more than one guide");
 

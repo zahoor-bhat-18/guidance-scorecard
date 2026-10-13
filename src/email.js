@@ -803,7 +803,7 @@ export function readingOf(view, metrics) {
 function unitKey(label, unit) {
   const cls = unitClass(unit);
   let k = metricKey(label);
-  if (cls === "per-share" && /\b(earnings|income)\b/.test(k) && !/per share/.test(k)) k += " per share";
+  if (cls === "per-share" && /\b(earnings|income)\b/.test(k) && !/per share/.test(k)) k = metricKey(String(label) + " per share");
   return k + "|" + cls;
 }
 

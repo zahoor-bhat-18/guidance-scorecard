@@ -166,6 +166,7 @@ export function namesSaidBy(guides, into) {
    net earnings of $24.85 to $25.00 per share" - there the bare one is the
    GAAP figure, and treating both as adjusted dropped one of them. */
 export function basisSide(p) {
+  if (p && p.side_hint) return p.side_hint;
   const l = String((p && p.metric_as_written) || "");
   if (/adjusted|non-?gaap|comparable|\bcore\b|underlying/i.test(l)) return "adj";
   if (/\b(gaap|reported)\b/i.test(l) || (p && p.answer && p.answer.gaap_recheck)) return "gaap";
@@ -178,4 +179,35 @@ export function basisSide(p) {
     if (all > twins) return "gaap";
   }
   return "adj";
+}
+
+/* The same release guiding "net earnings outlook" in one sentence and
+   "adjusted net earnings" in another (UnitedHealth, 2023): the bare one is
+   the GAAP figure. Marked on the pair (side_hint) so every later step - the
+   de-duplication, the email's tables - keeps both. */
+export function markGaapTwins(pairs) {
+  const groups = new Map();
+  for (const p of pairs || []) {
+    const k = metricKey(p) + "|" + (p.guide_period || "") + "|" + (p.fromRelease || p.carried_from || "");
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(p);
+  }
+  let marked = 0;
+  for (const list of groups.values()) {
+    const ADJ = /adjusted|non-?gaap|comparable|\bcore\b|underlying/i;
+    const adjs = list.filter((p) => ADJ.test(String(p.metric_as_written || "")));
+    if (!adjs.length) continue;
+    // Different figures only. Delta's outlook table says "Earnings Per Share"
+    // and its narrative "adjusted EPS", with the same $2.00 to $2.50: one guide.
+    const fig = (p) => JSON.stringify([p.guide && p.guide.low, p.guide && p.guide.high, p.guide && p.guide.value]);
+    const adjFigs = new Set(adjs.map(fig));
+    for (const p of list) {
+      if (p.side_hint || adjFigs.has(fig(p))) continue;
+      if (basisSide(p) === "adj" && !ADJ.test(String(p.metric_as_written || ""))) {
+        p.side_hint = "gaap";
+        marked++;
+      }
+    }
+  }
+  return marked;
 }
