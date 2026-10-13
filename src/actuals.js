@@ -565,7 +565,13 @@ function toActual(req, row, release, cal) {
          measures; the section said adjusted, the line said GAAP, and the
          right GAAP figure was refused. */
       && !(/\b(gaap|reported)\b/i.test(String(row.found_as || "") + " " + String(row.quote || "").slice(0, 60))
-        && !/non-?gaap|adjusted|comparable/i.test(String(row.found_as || "") + " " + String(row.quote || "").slice(0, 60)))) {
+        && !/non-?gaap|adjusted|comparable/i.test(String(row.found_as || "") + " " + String(row.quote || "").slice(0, 60)))
+      /* Nor the other line in the same quote: P&G's "Diluted EPS $6.51 $6.02
+         +8% Core EPS $6.83 $6.59 +4%" was taken as "Diluted EPS" and refused
+         because "Core" sits later in the quote. A label that is plainly the
+         GAAP one, with no adjusted word of its own, is GAAP. */
+      && !(/\b(gaap|reported|diluted|net (income|earnings))\b/i.test(String(row.found_as || ""))
+        && !markers(String(row.found_as || "")).adjusted)) {
       basisMismatch = "The guide is on a GAAP basis and the figure taken is adjusted.";
     } else if (req.expectBasis.wantsCC && !found.cc) {
       basisMismatch = "The guide is in constant currency and the figure taken is not.";
