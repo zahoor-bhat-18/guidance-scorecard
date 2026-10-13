@@ -49,6 +49,10 @@ function metricKey(x) {
     // decline" (2026) are one measure, and were two tables.
     .replace(/\b(growth|change|decline|increase|decrease|diluted|common)\b/g, " ")
     .replace(/\bper share(\s+per share)+\b/g, "per share")
+    // "Net earnings per share to UNH shareholders" is earnings per share.
+    .replace(/\b(attributable\s+)?to\s+[a-z ]*?\s*(common\s+)?(share|stock)holders\b/g, " ")
+    .replace(/\bnet (earnings|income) per share\b/g, "earnings per share")
+    .replace(/\bearnings per diluted share\b/g, "earnings per share")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -322,7 +326,7 @@ function byMetric(pairs, unanswered, limit) {
     // Measure AND kind of unit: Carnival's "adjusted net income" is guided
     // both in dollars and as a growth rate, and one table held $1.86bn and
     // "at least 60%" in adjacent rows. Each kind gets its own table.
-    const key = metricKey(p.metric) + "|" + unitClass(p.unit);
+    const key = unitKey(p.metric, p.unit);
     const g = group(key, p.unit);
     g.key = key;
     g.labels.push(p.metric);
@@ -362,7 +366,7 @@ function byMetric(pairs, unanswered, limit) {
     if (!u.metric || !u.period) continue;
     if (newestScored && periodSortKey(u.period) > newestScored) continue;
 
-    const key = metricKey(u.metric) + "|" + unitClass(u.unit);
+    const key = unitKey(u.metric, u.unit);
     unansweredByKey.set(key + "|" + u.period, u);
 
     /* NO ROW FOR A GUIDE WE COULD NOT MATCH.
@@ -469,7 +473,7 @@ function byMetric(pairs, unanswered, limit) {
   for (const g of earned) {
     g.allPeriods = g.rows.length;
 
-    const key = g.key || (metricKey(g.labels[0]) + "|" + unitClass(g.unit));
+    const key = g.key || unitKey(g.labels[0], g.unit);
     const have = new Set(g.rows.map((p) => p.period));
 
     /* Slots already taken, by position rather than by name. FY2025 and Q4
@@ -789,6 +793,18 @@ export function readingOf(view, metrics) {
  * ------------------------------------------------------------------ */
 
 /* Kinds of unit, for keeping each table to one kind. */
+/* A measure's identity with its kind of unit. Earnings guided per share are
+   earnings per share whatever the label: UnitedHealth called its EPS guide
+   "adjusted net earnings" in 2023, "adjusted net earnings outlook" in 2024
+   and "adjusted net earnings per share" in 2025, and the email showed one
+   year of history instead of three. */
+function unitKey(label, unit) {
+  const cls = unitClass(unit);
+  let k = metricKey(label);
+  if (cls === "per-share" && /\b(earnings|income)\b/.test(k) && !/per share/.test(k)) k += " per share";
+  return k + "|" + cls;
+}
+
 function unitClass(unit) {
   const u = String(unit || "").toLowerCase();
   if (u === "percent" || /percent|%|points/.test(u)) return "rate";

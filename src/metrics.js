@@ -34,6 +34,19 @@
  */
 export function metricKey(guide) {
   const written = typeof guide === "string" ? guide : (guide && guide.metric_as_written);
+  const key = baseKey(written);
+  /* Earnings guided per share are earnings per share, whatever the label:
+     UnitedHealth's EPS guide was "adjusted net earnings" (2023), "adjusted
+     net earnings outlook" (2024) and "adjusted net earnings per share"
+     (2025) - three measures of one year each, so none qualified. */
+  const perShare = guide && typeof guide === "object" && /per share/i.test(String(guide.unit || ""));
+  if (perShare && /\b(earnings|income)\b/.test(key) && !/per share/.test(key)) {
+    return baseKey(key + " per share");
+  }
+  return key;
+}
+
+function baseKey(written) {
   return String(written || "")
     .toLowerCase()
     .replace(/\([^)]*\)/g, " ")
@@ -53,6 +66,10 @@ export function metricKey(guide) {
     // "Enterprise" is Constellation's word for the whole company.
     .replace(/\b(consolidated|total|company|enterprise)\b/g, " ")
     .replace(/\beps\b/g, "earnings per share")
+    // "Diluted Net Earnings per Share to UNH Shareholders" is earnings per share.
+    .replace(/\b(attributable\s+)?to\s+[a-z ]*?\s*(common\s+)?(share|stock)holders\b/g, " ")
+    .replace(/\bnet (earnings|income) per share\b/g, "earnings per share")
+    .replace(/\bearnings per diluted share\b/g, "earnings per share")
     .replace(/[^a-z ]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
