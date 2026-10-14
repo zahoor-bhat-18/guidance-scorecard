@@ -5,8 +5,10 @@ name: release-watch
 # The Worker in this repository is the one 8-K watcher for both products. When
 # a company someone follows on Release Watch files an 8-K, it fires this
 # workflow with event type "release-watch". The run checks out Release Watch's
-# code (a public repository, so no token is needed), builds the email, checks
-# it and sends it to that ticker's Release Watch subscribers.
+# code (a private repository, read with the RW_READ_TOKEN secret: a
+# fine-grained token with read-only Contents access to release-watch alone),
+# builds the email, checks it and sends it to that ticker's subscribers. The
+# code is not copied into this repository and the log does not print it.
 #
 # Why here: this repository is public, so its Actions minutes are free, and it
 # already holds every key the send needs (Resend, the unsubscribe secret, KV,
@@ -52,6 +54,7 @@ jobs:
           repository: zahoor-bhat-18/release-watch
           ref: main
           path: rw
+          token: ${{ secrets.RW_READ_TOKEN }}
 
       - uses: actions/setup-node@v4
         with:
