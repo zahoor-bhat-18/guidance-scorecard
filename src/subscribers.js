@@ -109,11 +109,21 @@ async function writeList(env, list) {
  * Returns the token for the confirmation link. Nothing is added to the
  * subscriber list here.
  */
-export async function hold(env, email, tickers) {
+/* The products a record can follow. "tickers" is Guidance Scorecard's list,
+   kept under its old name so the records written before Release Watch
+   joined still read; "earnings" is Release Watch's. */
+export const PRODUCTS = { guidance: "tickers", earnings: "earnings" };
+export const PRODUCT_NAMES = { guidance: "Guidance Scorecard", earnings: "Release Watch" };
+export function cleanProducts(raw) {
+  const list = (Array.isArray(raw) ? raw : String(raw || "").split(",")).map((p) => String(p).trim().toLowerCase()).filter((p) => PRODUCTS[p]);
+  return list.length ? Array.from(new Set(list)) : ["guidance"];
+}
+
+export async function hold(env, email, tickers, products = ["guidance"]) {
   const token = bytesToHex(crypto.getRandomValues(new Uint8Array(16)));
   await env.CACHE.put(
     PENDING_PREFIX + token,
-    JSON.stringify({ email, tickers, at: new Date().toISOString() }),
+    JSON.stringify({ email, tickers, products, at: new Date().toISOString() }),
     { expirationTtl: PENDING_TTL }
   );
   return token;
@@ -134,24 +144,39 @@ export async function confirm(env, token) {
   const list = await readList(env);
   const existing = list[pending.email];
 
-  const tickers = Array.from(new Set([...(existing ? existing.tickers : []), ...pending.tickers]));
-
-  list[pending.email] = {
-    tickers,
-    confirmedAt: existing ? existing.confirmedAt : new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
+  const products = cleanProducts(pending.products);
+  const record = { ...(existing || {}) };
+  for (const p of products) {
+    const field = PRODUCTS[p];
+    record[field] = Array.from(new Set([...(record[field] || []), ...pending.tickers]));
+  }
+  if (!record.tickers) record.tickers = [];
+  record.confirmedAt = existing ? existing.confirmedAt : new Date().toISOString();
+  record.updatedAt = new Date().toISOString();
+  list[pending.email] = record;
 
   await writeList(env, list);
   await env.CACHE.delete(PENDING_PREFIX + token);
 
-  return { email: pending.email, tickers, added: pending.tickers, alreadyHad: existing ? existing.tickers : [] };
+  const had = (p) => (existing && existing[PRODUCTS[p]]) || [];
+  return {
+    email: pending.email, products, record,
+    tickers: record.tickers, added: pending.tickers,
+    // Guidance Scorecard's view, which the backfill below uses.
+    alreadyHad: had("guidance"),
+    guidanceAdded: products.includes("guidance") ? pending.tickers : [],
+  };
 }
 
-export async function remove(env, email) {
+/* Leaving one product, or all of them. An address following nothing is removed. */
+export async function remove(env, email, product) {
   const list = await readList(env);
   if (!list[email]) return false;
-  delete list[email];
+  if (product && PRODUCTS[product]) {
+    list[email][PRODUCTS[product]] = [];
+    const left = Object.values(PRODUCTS).some((f) => (list[email][f] || []).length);
+    if (!left) delete list[email];
+  } else delete list[email];
   await writeList(env, list);
   return true;
 }
@@ -165,28 +190,38 @@ export async function followersOf(env, ticker) {
     .map(([email]) => email);
 }
 
-/** Every ticker anyone follows, which is what the poller watches for. */
+/** Every ticker anyone follows, on any product, which is what the poller watches for. */
 export async function watchedTickers(env) {
+  const by = await watchedByProduct(env);
+  return Array.from(new Set(Object.values(by).flat()));
+}
+
+/** The tickers each product's subscribers follow: { guidance: [...], earnings: [...] }. */
+export async function watchedByProduct(env) {
   const list = await readList(env);
-  const all = new Set();
-  for (const v of Object.values(list)) for (const t of v.tickers || []) all.add(t);
-  return Array.from(all);
+  const out = {};
+  for (const [p, field] of Object.entries(PRODUCTS)) {
+    const s = new Set();
+    for (const v of Object.values(list)) for (const t of v[field] || []) s.add(t);
+    out[p] = Array.from(s);
+  }
+  return out;
 }
 
 export function confirmUrl(site, token) {
   return site.replace(/\/$/, "") + "/confirm?t=" + encodeURIComponent(token);
 }
 
-export async function unsubscribeUrl(env, site, email) {
+export async function unsubscribeUrl(env, site, email, product) {
   const sig = await sign(env.UNSUB_SECRET, email);
-  return site.replace(/\/$/, "") + "/unsubscribe?e=" + encodeURIComponent(email) + "&s=" + sig;
+  return site.replace(/\/$/, "") + "/unsubscribe?e=" + encodeURIComponent(email) + "&s=" + sig + (product ? "&p=" + product : "");
 }
 
 /* ------------------------------------------------------------------ *
  * Sending
  * ------------------------------------------------------------------ */
 
-export async function send(env, { to, subject, html, text, unsubscribeUrl: unsub }) {
+export async function send(env, { to, subject, html, text, unsubscribeUrl: unsub, from }) {
   if (!env.RESEND_API_KEY) throw new Error("RESEND_API_KEY is not set on the Worker.");
 
   const headers = {};
@@ -203,7 +238,7 @@ export async function send(env, { to, subject, html, text, unsubscribeUrl: unsub
       Authorization: "Bearer " + env.RESEND_API_KEY,
     },
     body: JSON.stringify({
-      from: "Guidance Scorecard <" + (env.EMAIL_FROM || "guidance@zahoorbhat.com") + ">",
+      from: (from || "Guidance Scorecard") + " <" + (env.EMAIL_FROM || "guidance@zahoorbhat.com") + ">",
       // Replies go to the address that already routes to a real inbox.
       //
       // Cloudflare Email Routing needs a rule per address and a verified
@@ -236,17 +271,23 @@ export async function send(env, { to, subject, html, text, unsubscribeUrl: unsub
  * Short, and it says what was asked for. An email that only says "click here"
  * gives someone whose address was typed in by a stranger nothing to judge.
  */
-export function confirmationEmail(tickers, link, postal) {
+export function confirmationEmail(tickers, link, postal, products = ["guidance"]) {
   const list = tickers.join(", ");
+  const names = products.map((p) => PRODUCT_NAMES[p]).filter(Boolean);
+  const what = names.join(" and ");
+  const per = [
+    products.includes("earnings") ? "Release Watch: the earnings release worked through - what the headline numbers do not show, what drove revenue, margin and EPS." : "",
+    products.includes("guidance") ? "Guidance Scorecard: how its guidance has compared to what it delivered, and what it has just guided for next." : "",
+  ].filter(Boolean);
 
   const text = [
-    "Someone asked to follow " + list + " on the Guidance Scorecard using this address.",
+    "Someone asked to follow " + list + " on " + what + " using this address.",
     "",
     "If that was you, confirm here:",
     link,
     "",
-    "You will get one email per company per quarter, when it reports: how its guidance",
-    "has compared to what it delivered, and what it has just guided for next.",
+    "When a company reports, you get one email per product you picked:",
+    ...per.map((x) => "- " + x),
     "",
     "If it was not you, ignore this. Nothing is stored until the link is clicked, and",
     "this one expires in 48 hours.",
@@ -258,17 +299,18 @@ export function confirmationEmail(tickers, link, postal) {
   const html = [
     '<div style="background:#F1F0EA;padding:26px 0;">',
     '<div style="max-width:520px;margin:0 auto;padding:0 20px;font-family:Georgia,serif;color:#16281F;font-size:16px;line-height:1.6;">',
-    '<div style="font-family:ui-monospace,Menlo,monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#5B7166;">Guidance Scorecard</div>',
+    '<div style="font-family:ui-monospace,Menlo,monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#5B7166;">' + what + '</div>',
     '<p style="margin:18px 0 0;">Someone asked to follow <b>' + list + '</b> using this address.</p>',
     '<p style="margin:18px 0 0;"><a href="' + link + '" style="background:#16281F;color:#F1F0EA;text-decoration:none;padding:12px 20px;border-radius:8px;display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;">Confirm</a></p>',
-    '<p style="margin:20px 0 0;color:#3E5248;font-size:15px;">You will get one email per company per quarter, when it reports: how its guidance has compared to what it delivered, and what it has just guided for next.</p>',
+    '<p style="margin:20px 0 0;color:#3E5248;font-size:15px;">When a company reports, you get one email per product you picked.</p>',
+    per.map((x) => '<p style="margin:8px 0 0;color:#3E5248;font-size:15px;">' + x + '</p>').join(""),
     '<p style="margin:18px 0 0;color:#5B7166;font-size:13px;">If it was not you, ignore this. Nothing is stored until the link is clicked, and this one expires in 48 hours.</p>',
     '<p style="margin:18px 0 0;color:#5B7166;font-size:13px;">Questions: just reply, or write to <a href="mailto:hello@zahoorbhat.com" style="color:#5B7166;">hello@zahoorbhat.com</a>.</p>',
     postal ? '<p style="margin:16px 0 0;color:#5B7166;font-size:12px;">' + postal + '</p>' : "",
     "</div></div>",
   ].join("\n");
 
-  return { subject: "Confirm: " + list + " on the Guidance Scorecard", html, text };
+  return { subject: "Confirm: " + list + " on " + what, html, text };
 }
 
 /* A page, not JSON. These links are clicked in a mail client. */

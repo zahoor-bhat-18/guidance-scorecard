@@ -1,0 +1,80 @@
+name: release-watch
+
+# Release Watch's live send, run here rather than in its own repository.
+#
+# The Worker in this repository is the one 8-K watcher for both products. When
+# a company someone follows on Release Watch files an 8-K, it fires this
+# workflow with event type "release-watch". The run checks out Release Watch's
+# code (a public repository, so no token is needed), builds the email, checks
+# it and sends it to that ticker's Release Watch subscribers.
+#
+# Why here: this repository is public, so its Actions minutes are free, and it
+# already holds every key the send needs (Resend, the unsubscribe secret, KV,
+# DeepSeek). Release Watch's own repository holds no keys and no subscribers.
+#
+# The run log is public. The send script prints counts, never addresses.
+#
+# NO pull_request trigger, for the reason given in send.yml.
+
+on:
+  repository_dispatch:
+    types: [release-watch]
+  workflow_dispatch:
+    inputs:
+      tickers:
+        description: "Comma-separated tickers to send for."
+        required: true
+      test:
+        description: "Test: send the email to TEST_EMAIL only. Records nothing, sends to no subscriber."
+        type: boolean
+        default: true
+      force:
+        description: "Send to subscribers even if the release is not new or was sent before."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# The same release can be dispatched twice in a second (see send.yml). The
+# second run waits, then finds the release marked as sent and does nothing.
+concurrency:
+  group: release-watch-${{ github.event.client_payload.tickers || inputs.tickers }}
+  cancel-in-progress: false
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: zahoor-bhat-18/release-watch
+          ref: main
+          path: rw
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - run: npm install --no-audit --no-fund
+        working-directory: rw
+
+      - name: Build, check and send
+        working-directory: rw
+        env:
+          SEC_USER_AGENT: ${{ vars.SEC_USER_AGENT }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          UNSUB_SECRET: ${{ secrets.UNSUB_SECRET }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          KV_NAMESPACE_ID: ${{ vars.KV_NAMESPACE_ID }}
+          SITE_URL: ${{ vars.SITE_URL }}
+          REPLY_TO: ${{ vars.REPLY_TO }}
+          POSTAL_ADDRESS: ${{ vars.POSTAL_ADDRESS }}
+          # Test sends, and anything the check holds, go here.
+          TEST_EMAIL: ${{ vars.TEST_EMAIL }}
+          ALERT_TO: ${{ vars.TEST_EMAIL }}
+        run: |
+          node scripts/send.mjs ${{ inputs.test && '--test' || '' }} ${{ inputs.force && '--force' || '' }} "${{ github.event.client_payload.tickers || inputs.tickers }}"

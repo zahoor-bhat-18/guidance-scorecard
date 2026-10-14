@@ -35,7 +35,7 @@ import { releaseText } from "./text.js";
 import { readRecord, listRecords, forEmail, headline } from "./records.js";
 import { renderEmail } from "./email.js";
 import {
-  cleanEmail, cleanTickers, hold, confirm, remove, readList, watchedTickers,
+  cleanEmail, cleanTickers, hold, confirm, remove, readList, watchedTickers, watchedByProduct, cleanProducts, PRODUCTS, PRODUCT_NAMES,
   confirmUrl, unsubscribeUrl, send, confirmationEmail, signatureValid, page,
 } from "./subscribers.js";
 
@@ -225,7 +225,8 @@ async function watchedCiks(env, watching) {
 async function poll(env) {
   if (!env.GITHUB_TOKEN || !env.GITHUB_REPO) return;
 
-  const watching = await watchedTickers(env);
+  const byProduct = await watchedByProduct(env);
+  const watching = Array.from(new Set(Object.values(byProduct).flat()));
   if (!watching.length) return;
 
   const feed = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K"
@@ -266,6 +267,29 @@ async function poll(env) {
     // A broken index must not stop the poller; the next filing still dispatches.
   }
 
+  if (!hits.size) return;
+
+  /* THE SHARED WATCHER. One poll, two products. A ticker followed on Release
+     Watch starts its own run, in this repository's Actions (public, so the
+     minutes are free), with its own one-hour mark; the Guidance Scorecard
+     dispatch below is unchanged. Neither waits for the other. */
+  const earningsWanted = new Set(byProduct.earnings || []);
+  const rw = [];
+  for (const ticker of hits) if (earningsWanted.has(ticker) && !(await env.CACHE.get("rw:dispatched:" + ticker))) rw.push(ticker);
+  if (rw.length) {
+    const d = await fetch("https://api.github.com/repos/" + env.GITHUB_REPO + "/dispatches", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + env.GITHUB_TOKEN, Accept: "application/vnd.github+json", "User-Agent": "guidance-scorecard", "Content-Type": "application/json" },
+      body: JSON.stringify({ event_type: "release-watch", client_payload: { tickers: rw.join(",") } }),
+    });
+    if (!d.ok) await pollProblem(env, "GitHub refused the Release Watch dispatch for " + rw.join(",") + ": " + d.status);
+    else {
+      for (const ticker of rw) await env.CACHE.put("rw:dispatched:" + ticker, String(Date.now()), { expirationTtl: 3600 });
+      await env.CACHE.put("poll:lastEarnings", new Date().toISOString() + " dispatched " + rw.join(","));
+    }
+  }
+  const guidanceWanted = new Set(byProduct.guidance || []);
+  for (const t of Array.from(hits)) if (!guidanceWanted.has(t)) hits.delete(t);
   if (!hits.size) return;
 
   const fresh = [];
@@ -907,11 +931,12 @@ export default {
           return json({ error: "EDGAR has no company under " + unknown.join(", ") + "." }, 400);
         }
 
-        const token = await hold(env, email, known);
+        const products = cleanProducts(body.products);
+        const token = await hold(env, email, known, products);
         const site = env.SITE_URL || url.origin;
-        const mail = confirmationEmail(known, confirmUrl(site, token), env.POSTAL_ADDRESS);
+        const mail = confirmationEmail(known, confirmUrl(site, token), env.POSTAL_ADDRESS, products);
 
-        await send(env, { to: email, ...mail });
+        await send(env, { to: email, ...mail, from: products.length === 1 ? PRODUCT_NAMES[products[0]] : "Zahoor Bhat" });
 
         return json({
           ok: true,
@@ -940,6 +965,8 @@ export default {
         }
 
         const newly = done.added.filter((t) => !done.alreadyHad.includes(t));
+        const onGuidance = done.products.includes("guidance");
+        const following = done.products.map((p) => PRODUCT_NAMES[p] + ": " + (done.record[PRODUCTS[p]] || []).join(", "));
 
         // Where each ticker in THIS signup stands - not only the new ones.
         // Someone told "today's limit is reached, sign up again tomorrow" is
@@ -947,21 +974,25 @@ export default {
         // the backfill started.
         const stored = await listRecords(env);
         const recorded = new Map((stored.records || []).map((r) => [r.ticker, r]));
-        const covered = done.added.filter((t) => recorded.has(t) && recorded.get(t).publishable);
-        const thin = done.added.filter((t) => recorded.has(t) && !recorded.get(t).publishable);
-        const fresh = done.added.filter((t) => !recorded.has(t));
+        const gAdded = onGuidance ? done.added : [];
+        const covered = gAdded.filter((t) => recorded.has(t) && recorded.get(t).publishable);
+        const thin = gAdded.filter((t) => recorded.has(t) && !recorded.get(t).publishable);
+        const fresh = gAdded.filter((t) => !recorded.has(t));
         const req = await requestBackfill(env, fresh);
 
         const para = (text) => "<p>" + text + "</p>";
         const names = (list) => "<b>" + list.join(", ") + "</b>";
 
         return page("Confirmed",
-          "<h1>Confirmed</h1><p>You are following " + names(done.tickers) + ".</p>"
-          + (newly.length !== done.added.length
+          "<h1>Confirmed</h1>" + following.map((x) => para(x)).join("")
+          + (done.products.includes("earnings")
+              ? para("<b>Release Watch</b>: an email arrives within minutes of each company's next earnings release.")
+              : "")
+          + (onGuidance && newly.length !== done.added.length
               ? para("You were already following " + done.added.filter((t) => done.alreadyHad.includes(t)).join(", ") + ".")
               : "")
           + (covered.length
-              ? para(names(covered) + ": covered. An email arrives when " + (covered.length > 1 ? "each" : "it") + " next reports.")
+              ? para("<b>Guidance Scorecard</b>, " + names(covered) + ": covered. An email arrives when " + (covered.length > 1 ? "each" : "it") + " next reports.")
               : "")
           + (req.started.length
               ? para(names(req.started) + ": new here, so we are reading "
@@ -1003,6 +1034,7 @@ export default {
     if (url.pathname === "/unsubscribe") {
       const email = String(url.searchParams.get("e") || "").toLowerCase();
       const sig = url.searchParams.get("s");
+      const product = PRODUCTS[url.searchParams.get("p")] ? url.searchParams.get("p") : null;
 
       try {
         if (!email || !(await signatureValid(env.UNSUB_SECRET, email, sig))) {
@@ -1010,10 +1042,10 @@ export default {
         }
 
         if (request.method === "POST") {
-          const gone = await remove(env, email);
+          const gone = await remove(env, email, product);
           return page("Unsubscribed",
             gone
-              ? "<h1>Removed</h1><p>Nothing further will be sent to " + email + ".</p>"
+              ? "<h1>Removed</h1><p>" + (product ? PRODUCT_NAMES[product] + " will send nothing further to " : "Nothing further will be sent to ") + email + ".</p>"
               : "<h1>Already gone</h1><p>" + email + " was not on the list.</p>");
         }
 
@@ -1023,10 +1055,12 @@ export default {
           return page("Unsubscribe", "<h1>Already gone</h1><p>" + email + " is not on the list.</p>");
         }
 
+        const field = product ? PRODUCTS[product] : null;
         return page("Unsubscribe",
-          "<h1>Leave the Guidance Scorecard?</h1>"
-          + "<p>This removes <b>" + email + "</b>, which follows "
-          + record.tickers.join(", ") + ".</p>"
+          "<h1>Leave " + (product ? PRODUCT_NAMES[product] : "every email") + "?</h1>"
+          + "<p>This removes <b>" + email + "</b>"
+          + (field ? " from " + PRODUCT_NAMES[product] + ", where it follows " + ((record[field] || []).join(", ") || "nothing") : " from every product")
+          + "." + (product ? " Anything it follows on other products stays." : "") + "</p>"
           + '<form method="POST"><button type="submit">Unsubscribe</button></form>');
       } catch (e) {
         return page("Unsubscribe", "<h1>That did not work</h1><p>" + e.message + "</p>");
@@ -1067,6 +1101,8 @@ export default {
         subscribers,
         watching,
         lastDispatch: await env.CACHE.get("poll:last"),
+        lastEarningsDispatch: await env.CACHE.get("poll:lastEarnings"),
+        watchingByProduct: await watchedByProduct(env),
         // The last thing that stopped a poll, if any in the past hour.
         pollProblem: await env.CACHE.get("poll:problem"),
         // Whether the ticker-to-CIK map the poller depends on is there at all.

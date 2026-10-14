@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Subscribe — earnings emails from SEC filings</title>
+<meta name="description" content="Earnings emails built from SEC filings: Release Watch on each earnings release, Guidance Scorecard on each company's record against its own guidance.">
+<link rel="canonical" href="https://zahoorbhat.com/subscribe">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  html{background-color:#F1F0EA;-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+  body{
+    background-color:#F1F0EA;color:#16281F;margin:0;
+    font-family:"Inter",system-ui,-apple-system,sans-serif;
+    font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased;
+  }
+  *{box-sizing:border-box}
+  a{color:inherit}
+  .wrap{max-width:820px;margin:0 auto;padding:0 24px}
+
+  .mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:10.5px;letter-spacing:.18em;text-transform:uppercase;color:#5B7166}
+
+  .nav{position:sticky;top:0;z-index:30;background-color:#F1F0EA;border-bottom:1px solid #DCDCD2}
+  .nav-in{max-width:820px;margin:0 auto;padding:15px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px}
+  .brand{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:11.5px;letter-spacing:.2em;text-transform:uppercase;color:#16281F;text-decoration:none}
+  .nav-links a{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:10.5px;letter-spacing:.15em;text-transform:uppercase;color:#5B7166;text-decoration:none;transition:color .2s}
+  .nav-links a:hover{color:#1F8A5C}
+
+  header{padding:64px 0 0}
+  h1{
+    font-family:"Newsreader",Georgia,serif;font-weight:400;
+    font-size:clamp(31px,6vw,50px);line-height:1.12;letter-spacing:-.02em;
+    margin:22px 0 0;max-width:19ch;color:#16281F;
+  }
+  .sub{margin:22px 0 0;max-width:56ch;color:#3E5248;font-size:16.5px;line-height:1.7}
+
+  h2{font-family:"Newsreader",Georgia,serif;font-weight:400;font-size:clamp(25px,4.6vw,36px);
+     letter-spacing:-.02em;line-height:1.15;margin:0;max-width:22ch;color:#16281F}
+  section{padding:88px 0 0}
+  .head{display:flex;align-items:baseline;gap:14px;margin-bottom:20px}
+  .head .rule{flex:1;height:1px;background-color:#DCDCD2}
+
+  /* The range strip. The guided band, and where the figure landed on it.
+     No colour coding: position carries the meaning, and a red mark would be
+     the page telling a reader what to think. */
+  .card{background-color:#FBFBF8;border:1px solid #DCDCD2;border-radius:10px;padding:20px 20px 18px;margin-top:10px}
+  .strip + .strip{margin-top:20px;padding-top:18px;border-top:1px solid #EFEFE7}
+  .strip .top{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+  .strip .metric{font-family:"Newsreader",Georgia,serif;font-size:19px;letter-spacing:-.01em}
+  .strip .period{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#5B7166}
+  .track{position:relative;height:30px;margin:12px 0 2px}
+  .track .line{position:absolute;left:0;right:0;top:14px;height:1px;background-color:#DCDCD2}
+  .track .band{position:absolute;top:9px;height:11px;background-color:#A8D8BF;border-radius:2px}
+  .track .dot{position:absolute;top:7px;width:14px;height:14px;margin-left:-7px;border-radius:50%;
+    background-color:#16281F;border:3px solid #FBFBF8}
+  .scale{display:flex;justify-content:space-between}
+  .scale span{font-family:"IBM Plex Mono",monospace;font-size:10.5px;color:#5B7166}
+  .said{margin:8px 0 0;font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:#3E5248;line-height:1.7}
+
+  .note{color:#5B7166;font-size:14px;line-height:1.65}
+  .lead{color:#3E5248;font-size:15.5px;line-height:1.7;max-width:58ch}
+
+  .rows{margin-top:26px;border-top:1px solid #DCDCD2}
+  .row{display:grid;grid-template-columns:1fr;gap:6px;padding:20px 0;border-bottom:1px solid #DCDCD2}
+  .row .k{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.15em;text-transform:uppercase;color:#1F8A5C}
+  .row p{margin:0;color:#3E5248;font-size:15px;line-height:1.65;max-width:54ch}
+
+  .pick{display:flex;flex-wrap:wrap;gap:7px;margin:22px 0 0}
+  .pick button{
+    font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+    background-color:#FBFBF8;color:#16281F;border:1px solid #D3D8D0;border-radius:999px;
+    padding:8px 15px;cursor:pointer;transition:border-color .2s,color .2s;
+  }
+  .pick button:hover{border-color:#1F8A5C;color:#1F8A5C}
+  .pick button[aria-pressed="true"]{background-color:#16281F;color:#F1F0EA;border-color:#16281F}
+  .pick button:focus-visible{outline:2px solid #1F8A5C;outline-offset:3px}
+
+  .count{font-family:"Newsreader",Georgia,serif;font-size:21px;line-height:1.45;margin:22px 0 0;color:#16281F;max-width:40ch}
+
+  form{margin:22px 0 0;display:flex;flex-wrap:wrap;gap:8px}
+  input[type=email],input[type=text]{
+    flex:1 1 14rem;font-family:"Inter",sans-serif;font-size:15px;
+    padding:13px 14px;border:1px solid #D3D8D0;background-color:#FBFBF8;color:#16281F;border-radius:8px;
+  }
+  input::placeholder{color:#8A9A91}
+  /* Signup, matching Filing Watch: email, a company picker with chips, one button. */
+  .capture{margin:24px 0 8px;background-color:#FBFBF8;border:1px solid #D3D8D0;border-radius:10px;padding:26px 24px;max-width:560px}
+  .capture .field{margin:0 0 20px}
+  .capture label.meta{display:block;margin-bottom:9px;font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:#5B7166}
+  .capture input[type=email],.capture input[type=text]{
+    width:100%;box-sizing:border-box;font:400 16px/1.4 "Inter",sans-serif;color:#16281F;
+    background-color:#fff;border:1px solid #D3D8D0;border-radius:7px;padding:13px 14px;
+  }
+  .capture input:focus{outline:2px solid #1F8A5C;outline-offset:1px;border-color:#1F8A5C}
+  .combo{position:relative}
+  .results{display:none;position:absolute;z-index:20;left:0;right:0;top:calc(100% + 5px);margin:0;padding:0;list-style:none;
+    background-color:#fff;border:1px solid #D3D8D0;border-radius:8px;max-height:274px;overflow:auto;box-shadow:0 12px 30px rgba(22,40,31,.10)}
+  .results.open{display:block}
+  .results li{display:flex;gap:12px;align-items:baseline;padding:11px 14px;cursor:pointer;border-bottom:1px solid #E7E7DE}
+  .results li:last-child{border-bottom:0}
+  .results li:hover,.results li[aria-selected=true]{background-color:#F2F7F4}
+  .results .tk{font:500 13px/1 "IBM Plex Mono",monospace;color:#1F8A5C;min-width:56px}
+  .results .nm{font:400 14px/1.35 "Inter",sans-serif;color:#3E5248}
+  .results .noresult{color:#5B7166;cursor:default;font:400 14px/1.4 "Inter",sans-serif}
+  ol.picked{list-style:none;margin:14px 0 0;padding:0}
+  ol.picked li{display:flex;gap:12px;align-items:center;padding:10px 12px;margin-bottom:7px;background-color:#fff;border:1px solid #D3D8D0;border-radius:7px}
+  ol.picked .tk{font:500 13px/1.5 "IBM Plex Mono",monospace;color:#1F8A5C;min-width:56px}
+  ol.picked .nm{font:400 15px/1.5 "Inter",sans-serif;color:#16281F;flex:1}
+  ol.picked button{background:none;border:0;color:#5B7166;font-size:20px;line-height:1;cursor:pointer;padding:0 4px}
+  ol.picked button:hover{color:#A33B2E}
+  .human{margin:4px 0 10px;min-height:0}
+  button.submit{width:100%;font:500 16px/1 "Inter",sans-serif;color:#fff;background-color:#16281F;border:0;border-radius:7px;padding:16px;cursor:pointer;margin-top:4px;transition:background-color .2s}
+  button.submit:hover:not(:disabled){background-color:#1F8A5C}
+  button.submit:disabled{background-color:#9BA79F;cursor:not-allowed}
+  .fineprint{font:400 13px/1.55 "Inter",sans-serif;color:#5B7166;margin:11px 0 0}
+  .signnote{font:400 14px/1.5 "Inter",sans-serif;margin:12px 0 0;padding:11px 14px;display:none;border-radius:6px}
+  .signnote.err{display:block;background-color:#FBF3F2;color:#A33B2E;border-left:2px solid #A33B2E}
+  .signnote.ok{display:block;background-color:#F1F7F3;color:#1F8A5C;border-left:2px solid #1F8A5C}
+  input:focus-visible{outline:2px solid #1F8A5C;outline-offset:2px}
+  button.go{
+    font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+    padding:13px 22px;background-color:#16281F;color:#F1F0EA;border:1px solid #16281F;border-radius:8px;cursor:pointer;
+  }
+  button.go:hover{background-color:#1F8A5C;border-color:#1F8A5C}
+
+  footer{margin-top:88px;border-top:1px solid #DCDCD2;padding:22px 0 52px;
+    display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;
+    font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:#5B7166}
+  footer a{text-decoration:none}
+  footer a:hover{color:#1F8A5C}
+  a:focus-visible{outline:2px solid #1F8A5C;outline-offset:3px}
+
+  @media (min-width:720px){ .row{grid-template-columns:200px 1fr;gap:28px;align-items:start} }
+
+  .products{display:grid;gap:10px;margin:0}
+  .product{display:flex;gap:14px;align-items:flex-start;padding:14px 14px;background-color:#fff;border:1px solid #D3D8D0;border-radius:8px;cursor:pointer}
+  .product:hover{border-color:#1F8A5C}
+  .product input{margin:3px 0 0;width:18px;height:18px;accent-color:#16281F;flex:none}
+  .product .t{font:500 15px/1.4 "Inter",sans-serif;color:#16281F}
+  .product .d{display:block;font:400 14px/1.55 "Inter",sans-serif;color:#3E5248;margin-top:3px}
+  .product .w{display:block;font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#5B7166;margin-top:7px}
+  .others{margin-top:40px}
+  .others a{color:#1F8A5C}
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-in">
+    <a class="brand" href="https://zahoorbhat.com">Zahoor Bhat</a>
+    <div class="nav-links"><a href="https://filings.zahoorbhat.com/">Filing Watch</a></div>
+  </div>
+</nav>
+
+<div class="wrap">
+
+  <header>
+    <div class="mono">Subscribe</div>
+    <h1>Two emails on each earnings release.</h1>
+    <p class="sub">Both are read from the company's SEC filings within minutes of the 8-K. No consensus,
+    no market data, no view. Pick the companies you cover and which email you want for them.</p>
+  </header>
+
+  <section id="follow" style="padding-top:40px">
+    <div class="capture">
+      <div class="field">
+        <label class="meta" for="em">Where should the emails go</label>
+        <input id="em" type="email" name="email" placeholder="you@fund.com" autocomplete="email" required>
+      </div>
+      <div class="field">
+        <label class="meta">Which emails</label>
+        <div class="products">
+          <label class="product"><input type="checkbox" name="product" value="earnings" checked>
+            <span><span class="t">Release Watch</span>
+            <span class="d">The earnings release, worked through: what the headline numbers do not show, what drove revenue and margin by segment, the EPS bridge, cash, and questions for the call.</span>
+            <span class="w">Each earnings release</span></span></label>
+          <label class="product"><input type="checkbox" name="product" value="guidance" checked>
+            <span><span class="t">Guidance Scorecard</span>
+            <span class="d">Every numeric guide management gave, matched to the result that followed, and what it has just guided for next.</span>
+            <span class="w">Each earnings release</span></span></label>
+        </div>
+      </div>
+      <div class="field">
+        <label class="meta" for="tk">Which companies do you cover</label>
+        <div class="combo">
+          <input id="tk" type="text" placeholder="Type a ticker or company name, e.g. MSFT"
+                 autocomplete="off" autocapitalize="characters" spellcheck="false"
+                 role="combobox" aria-expanded="false" aria-controls="results" aria-autocomplete="list">
+          <ul class="results" id="results" role="listbox"></ul>
+        </div>
+        <ol class="picked" id="picked"></ol>
+      </div>
+      <div id="human" class="human"></div>
+      <button class="submit" id="go" type="button">Subscribe</button>
+      <div class="signnote" id="says" role="status" aria-live="polite"></div>
+      <p class="fineprint">Free while in test. Only the emails you tick, only for the companies you pick. Every email carries a link to leave.</p>
+    </div>
+    <p class="note others">Following 10-Q and 10-K changes instead? That is <a href="https://filings.zahoorbhat.com/">Filing Watch</a>.</p>
+  </section>
+
+  <footer>
+    <span>Built from SEC EDGAR filings</span>
+    <span><a href="mailto:hello@zahoorbhat.com">hello@zahoorbhat.com</a></span>
+    <span><a href="https://zahoorbhat.com">zahoorbhat.com</a></span>
+  </footer>
+
+</div>
+
+<script>
+
+  function searchCompanies(list, taken, text) {
+    const q = String(text || "").trim().toUpperCase();
+    if (!q) return [];
+    const exact = [], starts = [], within = [];
+    for (const [t, n] of list) {
+      if (taken.has(t)) continue;
+      const name = String(n).toUpperCase();
+      if (t === q) exact.push([t, n]);
+      else if (t.startsWith(q) || name.startsWith(q)) starts.push([t, n]);
+      else if (q.length >= 2 && name.includes(q)) within.push([t, n]);
+      if (exact.length + starts.length + within.length > 400) break;
+    }
+    starts.sort((a, b) => a[0].length - b[0].length || a[0].localeCompare(b[0]));
+    return exact.concat(starts, within).slice(0, 8);
+  }
+
+  (function () {
+    const emailEl = document.getElementById("em");
+    const tkEl = document.getElementById("tk");
+    const listEl = document.getElementById("results");
+    const pickEl = document.getElementById("picked");
+    const goEl = document.getElementById("go");
+    const noteEl = document.getElementById("says");
+
+    let companies = [];
+    let loading = null;
+    let matches = [];
+    let cursor = -1;
+    const picked = [];
+
+    const say = (msg, kind) => { noteEl.textContent = msg; noteEl.className = "signnote " + kind; };
+
+    const load = () => loading || (loading = fetch("/api/tickers")
+      .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then((rows) => { companies = Array.isArray(rows) ? rows : []; })
+      .catch(() => say("Couldn't load the company list. Reload the page and try again.", "err")));
+    tkEl.addEventListener("focus", load, { once: true });
+
+    function renderResults() {
+      const typed = tkEl.value.trim();
+      if (!matches.length) {
+        listEl.innerHTML = typed ? '<li class="noresult">No company matches that.</li>' : "";
+        listEl.className = typed ? "results open" : "results";
+        tkEl.setAttribute("aria-expanded", typed ? "true" : "false");
+        return;
+      }
+      listEl.innerHTML = matches.map(([t, n], i) =>
+        '<li role="option" data-i="' + i + '" aria-selected="' + (i === cursor) + '">'
+        + '<span class="tk">' + esc(t) + '</span><span class="nm">' + esc(n) + "</span></li>").join("");
+      listEl.className = "results open";
+      tkEl.setAttribute("aria-expanded", "true");
+    }
+
+    function closeResults() {
+      listEl.className = "results";
+      listEl.innerHTML = "";
+      cursor = -1;
+      tkEl.setAttribute("aria-expanded", "false");
+    }
+
+    function renderPicked() {
+      pickEl.innerHTML = picked.map(([t, n], i) =>
+        '<li><span class="tk">' + esc(t) + '</span><span class="nm">' + esc(n) + "</span>"
+        + '<button type="button" data-rm="' + i + '" aria-label="Remove ' + esc(t) + '">&times;</button></li>').join("");
+    }
+
+    function add(co) {
+      if (!co) return;
+      if (picked.some(([t]) => t === co[0])) return;
+      picked.push(co);
+      renderPicked();
+      tkEl.value = "";
+      matches = [];
+      closeResults();
+      tkEl.focus();
+    }
+
+    tkEl.addEventListener("input", () => {
+      load().then(() => {
+        matches = searchCompanies(companies, new Set(picked.map(([t]) => t)), tkEl.value);
+        cursor = matches.length ? 0 : -1;
+        renderResults();
+      });
+    });
+
+    tkEl.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        if (!matches.length) return;
+        e.preventDefault();
+        cursor = (cursor + (e.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length;
+        renderResults();
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        if (cursor >= 0) add(matches[cursor]);
+      } else if (e.key === "Escape") {
+        closeResults();
+      }
+    });
+
+    listEl.addEventListener("click", (e) => {
+      const li = e.target.closest("li[data-i]");
+      if (li) add(matches[Number(li.dataset.i)]);
+    });
+
+    pickEl.addEventListener("click", (e) => {
+      const b = e.target.closest("button[data-rm]");
+      if (!b) return;
+      picked.splice(Number(b.dataset.rm), 1);
+      renderPicked();
+    });
+
+    document.addEventListener("click", (e) => {
+      if (!e.target.closest(".combo")) closeResults();
+    });
+
+    /* Cloudflare Turnstile. The site key comes from the Worker; if none is
+       set yet, no widget is drawn and the form works as before. */
+    let humanToken = "";
+    let humanWidget = null;
+    let humanNeeded = false;
+    fetch("/api/turnstile").then((r) => r.json()).then((d) => {
+      if (!d || !d.siteKey) return;
+      humanNeeded = true;
+      const s = document.createElement("script");
+      s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+      s.async = true;
+      s.onload = () => {
+        humanWidget = window.turnstile.render("#human", {
+          sitekey: d.siteKey,
+          callback: (t) => { humanToken = t; },
+          "expired-callback": () => { humanToken = ""; },
+          "error-callback": () => { humanToken = ""; },
+        });
+      };
+      document.head.appendChild(s);
+    }).catch(() => {});
+
+    goEl.addEventListener("click", async () => {
+      const email = emailEl.value.trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+        say("That email doesn't look right.", "err");
+        emailEl.focus();
+        return;
+      }
+      if (!picked.length) {
+        say("Pick at least one company to follow.", "err");
+        tkEl.focus();
+        return;
+      }
+
+      const products = Array.from(document.querySelectorAll("input[name=product]:checked")).map((x) => x.value);
+      if (!products.length) {
+        say("Tick at least one product.", "err");
+        return;
+      }
+
+      if (humanNeeded && !humanToken) {
+        say("Please complete the check above the button.", "err");
+        return;
+      }
+
+      goEl.disabled = true;
+      say("Sending…", "ok");
+      try {
+        const r = await fetch("/api/signup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, tickers: picked.map(([t]) => t).join(","), products, turnstile: humanToken }),
+        });
+        const d = await r.json();
+        if (!r.ok || d.error) throw new Error(d.error || "Something went wrong.");
+        say("Check your email to confirm. If it is not in your inbox, look in spam and mark it"
+          + " as not spam \u2014 this is a new sending address.", "ok");
+        picked.length = 0;
+        renderPicked();
+        emailEl.value = "";
+      } catch (e) {
+        say(e.message || "That did not go through. Try again in a moment.", "err");
+      } finally {
+        goEl.disabled = false;
+        // A token is good for one use: draw a fresh check for the next signup.
+        if (humanWidget !== null && window.turnstile) {
+          humanToken = "";
+          window.turnstile.reset(humanWidget);
+        }
+      }
+    });
+  })();
+</script>
+
+</body>
+</html>

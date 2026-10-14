@@ -128,7 +128,7 @@ async function testSend(ticker, to) {
 
   const view = forEmail(record);
   const unsub = SITE + "/unsubscribe?e=" + encodeURIComponent(to)
-    + "&s=" + (await hmac(process.env.UNSUB_SECRET, to));
+    + "&s=" + (await hmac(process.env.UNSUB_SECRET, to)) + "&p=guidance";
 
   const mail = renderEmail(
     { ...view, headline: headline(view.landed) },
@@ -572,7 +572,7 @@ async function deliver({ ticker, cik, name, current, updated, movedRevisions, ne
     let sent = 0;
     for (const email of followers) {
       const unsub = SITE + "/unsubscribe?e=" + encodeURIComponent(email)
-        + "&s=" + (await hmac(process.env.UNSUB_SECRET, email));
+        + "&s=" + (await hmac(process.env.UNSUB_SECRET, email)) + "&p=guidance";
       const mail = renderNothingToScore({
         company: updated.company || name,
         ticker,
@@ -608,7 +608,7 @@ async function deliver({ ticker, cik, name, current, updated, movedRevisions, ne
   for (const email of followers) {
     // One email per recipient, never a shared To: line.
     const unsub = SITE + "/unsubscribe?e=" + encodeURIComponent(email)
-      + "&s=" + (await hmac(process.env.UNSUB_SECRET, email));
+      + "&s=" + (await hmac(process.env.UNSUB_SECRET, email)) + "&p=guidance";
     const mail = renderEmail(
       { ...view, headline: headline(view.landed) },
       { unsubscribeUrl: unsub, postalAddress: process.env.POSTAL_ADDRESS }
