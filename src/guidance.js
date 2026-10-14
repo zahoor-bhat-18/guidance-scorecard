@@ -501,12 +501,12 @@ const NUM_WORD = "(?:(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?
   + "|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen)"
   + "(?:\\s+and\\s+(?:a|one)[-\\s]half)?";
 const NUM_UNIT = "(?:percent(?:age points?)?|%|points?|basis points|bps|billion|million|cents)";
-const SPELLED_RANGE = new RegExp("\\b(in[-\\s]line|" + NUM_WORD + ")\\s*(?:percent|%)?\\s*(?:to|-|–)\\s*(" + NUM_WORD + ")\\s*" + NUM_UNIT + "\\b", "gi");
+const SPELLED_RANGE = new RegExp("\\b(in[-\\s]line|flat|" + NUM_WORD + ")\\s*(?:percent|%)?\\s*(?:to|-|–)\\s*(?:up\\s+)?(" + NUM_WORD + ")\\s*" + NUM_UNIT + "\\b", "gi");
 const SPELLED_ONE = new RegExp("\\b(" + NUM_WORD + ")\\s*" + NUM_UNIT + "\\b", "gi");
 
 function wordValue(w) {
   const s = String(w || "").toLowerCase().replace(/-/g, " ").trim();
-  if (/^in\s+line$/.test(s)) return 0;
+  if (/^(in\s+line|flat)$/.test(s)) return 0;
   const half = /\s+and\s+(a|one)\s+half$/.test(s) ? 0.5 : 0;
   const parts = s.replace(/\s+and\s+(a|one)\s+half$/, "").split(/\s+/);
   let n = 0;

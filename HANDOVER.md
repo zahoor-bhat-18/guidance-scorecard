@@ -107,6 +107,13 @@ are thought to guide on the call; GS and KMX give no numeric guidance in filings
 - Email: a guide given in words shows a star; a footnote names the words and the fixed rule (approved by Zahoor:
   low 1-3, mid 4-6, high 7-9).
 
+**Found in the P&G test email after the rebuild (pre-existing, not from batch 1):** the email groups a GAAP guide and its
+core twin under one heading - "Core net earnings per share growth" listed diluted (GAAP) EPS growth rows, FY2024 twice,
+and the FY2027 core EPS level ($6.89-$7.11) as "growth". The record itself is right; the grouping in email.js is not.
+P&G's core EPS growth has no actual (the release prints core EPS, not its growth): compute it from the two levels.
+Delta's "non-fuel unit cost growth improve 1 to 2 points sequentially" is stored as 1-2% growth: a misread.
+History is a rolling 14 releases (~3.5 years); older guides fall out as new releases arrive.
+
 **Still open from the audit, in order:**
 1. Prose guides missed: Netflix ads revenue ~$3bn and content amortization ~+10%, McCormick adjusted gross margin
    +100-120bp, Intuitive 1% tariff impact. Needs an extractor change; do alone.
