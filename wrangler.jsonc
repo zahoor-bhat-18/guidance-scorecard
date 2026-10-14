@@ -59,7 +59,7 @@
     // verified destination. Sending from guidance@ and replying to hello@
     // means no new Email Routing rule is needed at all.
     "REPLY_TO": "hello@zahoorbhat.com",
-    "SITE_URL": "https://guidance.zahoorbhat.com",
+    "SITE_URL": "https://zahoorbhat.com",
     "POSTAL_ADDRESS": "Goosu Pulwama Kashmir 192301"
   },
 

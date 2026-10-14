@@ -1,0 +1,79 @@
+name: sample
+
+# Samples for a newly confirmed subscriber. Fired by the Worker when someone
+# confirms at zahoorbhat.com/subscribe: the email each product would have sent
+# for each company's latest filing, to that one address, marked as a sample.
+# Nothing is recorded; no other subscriber is sent anything.
+#
+# Runnable by hand to see what a new subscriber gets.
+
+on:
+  repository_dispatch:
+    types: [sample]
+  workflow_dispatch:
+    inputs:
+      email:
+        description: "Send the samples to"
+        required: true
+      earnings:
+        description: "Release Watch tickers, comma-separated (may be blank)"
+        required: false
+        default: ""
+      guidance:
+        description: "Guidance Scorecard tickers, comma-separated (may be blank)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sample-${{ github.event.client_payload.email || inputs.email }}
+  cancel-in-progress: false
+
+jobs:
+  sample:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SAMPLE_TO: ${{ github.event.client_payload.email || inputs.email }}
+      EARNINGS: ${{ github.event.client_payload.earnings || inputs.earnings }}
+      GUIDANCE: ${{ github.event.client_payload.guidance || inputs.guidance }}
+      SEC_USER_AGENT: ${{ vars.SEC_USER_AGENT }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      UNSUB_SECRET: ${{ secrets.UNSUB_SECRET }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      KV_NAMESPACE_ID: ${{ vars.KV_NAMESPACE_ID }}
+      SITE_URL: ${{ vars.SITE_URL }}
+      EMAIL_FROM: ${{ vars.EMAIL_FROM }}
+      REPLY_TO: ${{ vars.REPLY_TO }}
+      POSTAL_ADDRESS: ${{ vars.POSTAL_ADDRESS }}
+      ALERT_TO: ${{ vars.TEST_EMAIL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Guidance Scorecard samples
+        if: env.GUIDANCE != ''
+        continue-on-error: true
+        run: node scripts/send.mjs "$GUIDANCE"
+
+      - uses: actions/checkout@v4
+        if: env.EARNINGS != ''
+        with:
+          repository: zahoor-bhat-18/release-watch
+          ref: main
+          path: rw
+          token: ${{ secrets.RW_READ_TOKEN }}
+
+      - name: Release Watch samples
+        if: env.EARNINGS != ''
+        working-directory: rw
+        run: |
+          npm install --no-audit --no-fund
+          node scripts/send.mjs "$EARNINGS"

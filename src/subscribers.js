@@ -112,8 +112,8 @@ async function writeList(env, list) {
 /* The products a record can follow. "tickers" is Guidance Scorecard's list,
    kept under its old name so the records written before Release Watch
    joined still read; "earnings" is Release Watch's. */
-export const PRODUCTS = { guidance: "tickers", earnings: "earnings" };
-export const PRODUCT_NAMES = { guidance: "Guidance Scorecard", earnings: "Release Watch" };
+export const PRODUCTS = { guidance: "tickers", earnings: "earnings", filings: "filings" };
+export const PRODUCT_NAMES = { guidance: "Guidance Scorecard", earnings: "Release Watch", filings: "Filing Watch" };
 export function cleanProducts(raw) {
   const list = (Array.isArray(raw) ? raw : String(raw || "").split(",")).map((p) => String(p).trim().toLowerCase()).filter((p) => PRODUCTS[p]);
   return list.length ? Array.from(new Set(list)) : ["guidance"];
@@ -278,6 +278,7 @@ export function confirmationEmail(tickers, link, postal, products = ["guidance"]
   const per = [
     products.includes("earnings") ? "Release Watch: the earnings release worked through - what the headline numbers do not show, what drove revenue, margin and EPS." : "",
     products.includes("guidance") ? "Guidance Scorecard: how its guidance has compared to what it delivered, and what it has just guided for next." : "",
+    products.includes("filings") ? "Filing Watch: what is new, changed or deleted in each 10-Q and 10-K against the filings before it." : "",
   ].filter(Boolean);
 
   const text = [

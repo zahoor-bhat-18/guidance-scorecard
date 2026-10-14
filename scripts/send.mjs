@@ -121,7 +121,7 @@ async function sendMail(to, mail, unsub) {
  * Nothing here writes. kvPut is never reached, so there is no flag to thread
  * through the write path and nothing for a later edit to quietly re-enable.
  */
-async function testSend(ticker, to) {
+async function testSend(ticker, to, sample = false) {
   const stored = await kvGet("record:" + ticker);
   if (!stored) throw new Error("No stored record for " + ticker + ". Run the backfill first.");
   const record = JSON.parse(stored);
@@ -135,11 +135,13 @@ async function testSend(ticker, to) {
     { unsubscribeUrl: unsub, postalAddress: process.env.POSTAL_ADDRESS }
   );
 
+  if (sample) mail.subject = "Sample: " + mail.subject;
   await sendMail(to, mail, unsub);
 
   return {
     ticker,
-    test: true,
+    test: !sample,
+    sample,
     to,
     builtAt: record.builtAt,
     release: record.releasesRead?.[0]?.accession || null,
@@ -650,7 +652,9 @@ async function main() {
   // Flags come off first. Without this, --test is parsed as a ticker called
   // "--TEST" and the run fails looking for a record for it.
   const args = process.argv.slice(2);
-  const isTest = args.includes("--test");
+  // A sample: the stored scorecard, sent at once to one new subscriber. Reads KV, writes nothing, like --test.
+  const isSample = Boolean(process.env.SAMPLE_TO);
+  const isTest = args.includes("--test") || isSample;
   const isRelease = args.includes("--release");
   const positional = args.filter((a) => !a.startsWith("--"));
 
@@ -661,7 +665,7 @@ async function main() {
     ? {
         CLOUDFLARE_ACCOUNT_ID: ACCOUNT, CLOUDFLARE_API_TOKEN: CF_TOKEN,
         KV_NAMESPACE_ID: KV_ID, RESEND_API_KEY: process.env.RESEND_API_KEY,
-        UNSUB_SECRET: process.env.UNSUB_SECRET, ...(isTest ? { TEST_EMAIL: process.env.TEST_EMAIL } : { SEC_USER_AGENT: env.SEC_USER_AGENT }),
+        UNSUB_SECRET: process.env.UNSUB_SECRET, ...(isTest ? (isSample ? {} : { TEST_EMAIL: process.env.TEST_EMAIL }) : { SEC_USER_AGENT: env.SEC_USER_AGENT }),
       }
     : {
         SEC_USER_AGENT: env.SEC_USER_AGENT, DEEPSEEK_API_KEY: env.DEEPSEEK_API_KEY,
@@ -684,7 +688,7 @@ async function main() {
   for (const ticker of tickers) {
     try {
       const r = isTest
-        ? await testSend(ticker, process.env.TEST_EMAIL)
+        ? await testSend(ticker, isSample ? process.env.SAMPLE_TO : process.env.TEST_EMAIL, isSample)
         : isRelease ? await releaseHeld(ticker) : await handle(ticker);
       results.push(r);
       console.log(JSON.stringify(r));
