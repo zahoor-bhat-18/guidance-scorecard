@@ -495,11 +495,11 @@ export default {
     const url = new URL(request.url);
 
     // Everything lives on zahoorbhat.com. If the old guidance subdomain still
-    // reaches this Worker, its pages go to the signup page; links in emails
+    // reaches this Worker, its pages answer "Not found"; links in emails
     // already sent (/api, /confirm, /unsubscribe) keep working.
     if (url.hostname !== "zahoorbhat.com" && !url.hostname.endsWith(".workers.dev") && request.method === "GET"
         && !/^\/(?:api\/|confirm|unsubscribe|__health|sec$)/.test(url.pathname)) {
-      return Response.redirect("https://zahoorbhat.com/subscribe", 301);
+      return new Response("Not found.", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
     }
 
 
