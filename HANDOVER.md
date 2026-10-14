@@ -1,0 +1,76 @@
+# Guidance Scorecard: handover (14 Oct 2026)
+
+For the next chat. Read this first, then ARCHITECTURE.md if you need the code layout.
+
+## The product
+- Live at guidance.zahoorbhat.com. Repo: zahoor-bhat-18/guidance-scorecard (Cloudflare deploys `main` on every push).
+- When a followed company files its earnings 8-K, each subscriber gets an email that scores results against the company's own guidance, shows how the guidance changed, and shows the track record ("Do they hit their guide?"). The reader is a PM. The product never predicts.
+- Owner: Zahoor. A finance professional, not a developer, who works from his phone.
+- His rules:
+  - Keep it brief and plain.
+  - Say what is verified and what is a guess.
+  - Fixes are general and permanent (they work for every company).
+  - Ask before visible or difficult changes.
+  - Say when an idea is bad.
+  - Start each chat with the pending list, ordered by priority.
+  - **Numbers must be accurate, and nothing may be missed.**
+
+## How Claude works on it (agreed)
+- **Repo:** Claude commits and pushes straight to `main`, as author "Claude <noreply@anthropic.com>".
+- **Before every push:** run `node --check` on each changed file, then an esbuild bundle of `src/index.js`, `scripts/backfill.mjs`, `scripts/send.mjs` and `scripts/notify.mjs`.
+- **Rebuilds:** Claude runs backfill rebuilds himself. Rebuild only the tickers a fix touches, and never between a company's 8-K and its email. Trigger a rebuild with:
+  `gh api -X POST repos/zahoor-bhat-18/guidance-scorecard/actions/workflows/backfill.yml/dispatches -f ref=main -f 'inputs[tickers]=X,Y' -f 'inputs[rebuild]=true'`
+- **Sends:** a send can be run by hand with `send.yml` and `inputs[tickers]=X`.
+- **Inspect live data:** `/api/record?ticker=X&full=1&n=RANDOM`, `/api/preview?ticker=X`, `/api/records` (lists all 39 records) and `/api/summary`.
+- **Gmail access** to zahoorbhatdotcom@gmail.com:
+  - Read every Guidance Scorecard email (from guidance@zahoorbhat.com) right after it is sent, and check it line by line against the filing.
+  - "[Check] TICKER" emails list what the pre-send check held back.
+  - Filing Watch emails (from filings@) are a separate product. Leave them alone unless asked.
+- **SEC from the shell:** EDGAR is reachable with `curl -A "zahoor research zahoorf6@gmail.com"`.
+
+## What changed on 13 Oct (all live, all companies rebuilt except where noted)
+1. **Check before every send** (`src/check.js`). The number checks trace each result, and each new, raised, cut or held guide, to its quote and the filing. Anything that can't be confirmed is withheld: that line is taken out of the email and the record. The email still goes on time, and every finding is emailed to the owner (TEST_EMAIL) as "[Check] TICKER". The missed-guidance check also runs: lines that look like guidance but weren't read are reported (alert only).
+2. **One email for companies whose outlook is filed later the same day** (JPMorgan).
+   - The first pass holds the email. The outlook filing then sends one complete email; if it hasn't come within 6 hours, the email goes with the results only.
+   - The poller re-checks a held company every 10 minutes (`src/index.js`).
+3. **Deep look** (`src/actuals.js`):
+   - **What it does:** a result still missing is searched for in the WHOLE filing, past the 80k-character budget. The lines carrying the measure's words, with their column headings, go to the model.
+   - **Guards:** the answer must be on the same basis side (`sameSide`) and be the same measure (`sameMeasure`).
+   - **Found so far:** JPMorgan's card charge-off rate for 2023–25, and P&G's dividends and buybacks.
+4. **Full-year "implied" column** of a quarter's outlook table is read (JPMorgan FY26).
+5. **Accuracy rules in pairing** (`src/pairing.js`):
+   - A figure not in its own quoted line is never scored (`traceable`).
+   - The bracket rule now applies to outflows only, so losses keep their minus sign.
+   - A label naming both bases ("reported and comparable") is not scored.
+   - Operating cash flow is never answered with free cash flow.
+   - A guide restated "excluding" an item replaces the plain one.
+6. **Guides:**
+   - "at least" and "under" stay with the figure.
+   - "+/- $50 billion" is read as "about $50bn".
+   - "(NII)"-style abbreviations match the full name.
+   - EPS worded two ways matches.
+   - Medium- and long-term targets are not scored as one year's guide.
+7. **Results:**
+   - Dividends, buybacks, capex and interest expense are asked for as printed.
+   - A plainly GAAP label (diluted / net income) is asked for as GAAP.
+   - A rebuild never restores an answer from the other basis side.
+8. **Email:** "about 20%" when the company wrote "Approx.". Scored-day emails get a line under the score for every full-year guide raised or cut.
+9. **Send:** one run at a time per ticker set, which fixed the PepsiCo double email.
+- **Audit after the rebuild:** all 813 scored results trace to their quoted line, and all 775 scored guide figures appear in their quotes.
+
+## Emails sent with known mistakes (cannot be recalled)
+- **13 Oct JPMorgan "Update" email:** showed only the Q4 outlook. It missed the full-year raises: net interest income ~$106.2bn (was $105.5bn), net interest income excluding Markets ~$97.2bn (was $96.5bn) and adjusted expense ~$108.6bn (was $107.5bn). The record is fixed.
+- **13 Oct UnitedHealth and Wells Fargo emails:** UNH showed "new $20.50" for a raise to at least $20.50, and WFC left out the FY NII guide (held at ~$50bn). Both are fixed in the code and the records.
+
+## Pending, by priority
+1. **Check today's emails: JNJ and Citi (C) report 14 Oct.** Read each in Gmail, check every line against the release, and check any "[Check]" email. These are the first sends under the new check.
+2. **Carnival 2023 cost per ALBD:** the guide looks like constant currency (9.5%), but the result scored is current dollars (11%). Read the 2023 releases and fix it in general (the label lacks "constant currency" while the guidance table's column says it).
+3. **Watch the deep look for wrong picks.** It is new; check its "USED" lines in each backfill log against the filing for a while.
+4. **Coca-Cola 2024/2025 "cash flow from operations excluding …":** now not scored, because no such figure is found. Check whether the release prints it.
+5. **Results the releases don't print:** Prologis (acquisitions, occupancy, development), P&G (core tax rate, and capital spending as % of sales, which needs computing). These are left unscored on purpose; decide whether computing ratios is wanted.
+6. **Lamb Weston:** two capex figures (cash vs accrual), which show in the also-line only.
+7. **JPMorgan 2023 adjusted expense:** the guide was "~$84bn excluding FDIC special assessment", against 85.7 reported. The basis is not confirmed.
+8. **Clean-up:** remove the old long email layout in `src/email.js` (it is dead code, used only with `opts.longLayout`).
+
+## The owner's open question
+On 13 Oct he asked whether PMs would pay for this. The honest answer given: probably not as a standalone product (Bloomberg/FactSet already carry guidance, consensus matters more on the day, and the email lands after the price move). The track-record angle is the distinctive part. Suggested: test demand with 5–10 buyers (small funds, independents, family offices), and bundle it with Filing Watch and Release Watch. He then chose to keep fixing accuracy first.
