@@ -2254,7 +2254,7 @@ export function renderEmail(view, options) {
   const alsoRows = belowBarRows(belowBar, view.annual);
   const anyNote = metrics.some((g) => g.hasNote);
   const anyFlag = metrics.some((g) => g.hasFlag);
-  const site = opts.siteUrl || "https://guidance.zahoorbhat.com";
+  const site = opts.siteUrl || "https://zahoorbhat.com";
   const moreLine = others.length || sec.otherMoves
     ? (others.length ? others.length + " more guided " + (others.length === 1 ? "measure" : "measures") : "")
       + (others.length && sec.otherMoves ? " and " : "")

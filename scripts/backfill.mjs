@@ -229,7 +229,7 @@ function coverageOf(scoredPairs) {
 }
 
 /** One company, end to end. */
-const SITE = process.env.SITE_URL || "https://guidance.zahoorbhat.com";
+const SITE = process.env.SITE_URL || "https://zahoorbhat.com";
 
 /* --rebuild discards the stored record and scores everything again. The
    default merges, so an ordinary run can only ADD. */

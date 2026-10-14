@@ -494,11 +494,14 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    // The product pages live on the main site now. The old address's front
-    // page goes there; its /api, /confirm and /unsubscribe keep answering.
-    if (url.hostname === "guidance.zahoorbhat.com" && request.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
-      return Response.redirect("https://zahoorbhat.com/guidance", 301);
+    // Everything lives on zahoorbhat.com. If the old guidance subdomain still
+    // reaches this Worker, its pages go to the signup page; links in emails
+    // already sent (/api, /confirm, /unsubscribe) keep working.
+    if (url.hostname !== "zahoorbhat.com" && !url.hostname.endsWith(".workers.dev") && request.method === "GET"
+        && !/^\/(?:api\/|confirm|unsubscribe|__health|sec$)/.test(url.pathname)) {
+      return Response.redirect("https://zahoorbhat.com/subscribe", 301);
     }
+
 
     if (url.pathname === "/sec") {
       if (request.method !== "GET") return json({ error: "Use GET." }, 405);

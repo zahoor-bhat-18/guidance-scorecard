@@ -24,7 +24,6 @@
   // Remove the domain from the old Worker FIRST. Two Workers cannot hold one
   // name, and the failure is silent at both ends.
   "routes": [
-    { "pattern": "guidance.zahoorbhat.com", "custom_domain": true },
     // The shared signup and the product pages on the main site. The rest of
     // zahoorbhat.com stays the portfolio site (Cloudflare Pages); only these
     // paths come to this Worker.

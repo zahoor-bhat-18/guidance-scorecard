@@ -39,7 +39,7 @@ const env = {
 const ACCOUNT = process.env.CLOUDFLARE_ACCOUNT_ID;
 const CF_TOKEN = process.env.CLOUDFLARE_API_TOKEN;
 const KV_ID = process.env.KV_NAMESPACE_ID;
-const SITE = process.env.SITE_URL || "https://guidance.zahoorbhat.com";
+const SITE = process.env.SITE_URL || "https://zahoorbhat.com";
 
 /* KV over the REST API. Actions has no Worker bindings, and shelling out to
    wrangler for every read would be slower and harder to see when it fails. */

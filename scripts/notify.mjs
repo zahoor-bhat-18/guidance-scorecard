@@ -33,7 +33,7 @@ import { displayName } from "../src/format.js";
 const ACCOUNT = process.env.CLOUDFLARE_ACCOUNT_ID;
 const CF_TOKEN = process.env.CLOUDFLARE_API_TOKEN;
 const KV_ID = process.env.KV_NAMESPACE_ID;
-const SITE = (process.env.SITE_URL || "https://guidance.zahoorbhat.com").replace(/\/$/, "");
+const SITE = (process.env.SITE_URL || "https://zahoorbhat.com").replace(/\/$/, "");
 const POSTAL = process.env.POSTAL_ADDRESS || "";
 
 const kvUrl = (key) =>
