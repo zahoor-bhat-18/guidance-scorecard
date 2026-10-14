@@ -23,6 +23,10 @@ on:
         description: "Guidance Scorecard tickers, comma-separated (may be blank)"
         required: false
         default: ""
+      filings:
+        description: "Filing Watch tickers, comma-separated (may be blank)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -39,6 +43,7 @@ jobs:
       SAMPLE_TO: ${{ github.event.client_payload.email || inputs.email }}
       EARNINGS: ${{ github.event.client_payload.earnings || inputs.earnings }}
       GUIDANCE: ${{ github.event.client_payload.guidance || inputs.guidance }}
+      FILINGS: ${{ github.event.client_payload.filings || inputs.filings }}
       SEC_USER_AGENT: ${{ vars.SEC_USER_AGENT }}
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
       RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
@@ -77,3 +82,30 @@ jobs:
         run: |
           npm install --no-audit --no-fund
           node scripts/send.mjs "$EARNINGS"
+
+      # Filing Watch: its code is read from the private filing-agent repository
+      # with the same read-only key (RW_READ_TOKEN must include filing-agent).
+      - uses: actions/checkout@v4
+        if: env.FILINGS != ''
+        with:
+          repository: zahoor-bhat-18/filing-agent
+          ref: main
+          path: fw
+          token: ${{ secrets.RW_READ_TOKEN }}
+
+      - name: Filing Watch samples
+        if: env.FILINGS != ''
+        working-directory: fw
+        env:
+          EDGAR_UA: ${{ vars.SEC_USER_AGENT }}
+          EMAIL_TO: ${{ github.event.client_payload.email || inputs.email }}
+          EMAIL_FROM: "Filing Watch <filings@zahoorbhat.com>"
+          EMAIL_REPLY_TO: ${{ vars.REPLY_TO }}
+          SHARED_UNSUB_SECRET: ${{ secrets.UNSUB_SECRET }}
+          SAMPLE: "1"
+        run: |
+          npm install --no-audit --no-fund > /dev/null 2>&1
+          for t in $(echo "$FILINGS" | tr ',' ' '); do
+            TICKER="$t" FORM="10-Q" node scripts/section-filings.mjs > "/tmp/fw-$t.log" 2>&1 || true
+            grep -E "sent to|NOT sent|ERROR|Error" "/tmp/fw-$t.log" | sed -E 's/[^ ]+@[^ ]+/<address>/g' | tail -3 || true
+          done

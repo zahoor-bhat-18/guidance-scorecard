@@ -465,17 +465,18 @@ async function requestBackfill(env, tickers) {
  * confirmed signup is sent the email each product would have sent for the
  * company's latest filing, marked as a sample. Release Watch for up to three
  * of the tickers just added; Guidance Scorecard for those with a published
- * record (one being built gets its own email when done). Filing Watch samples
- * come later.
+ * record (one being built gets its own email when done); Filing Watch for up
+ * to two, the briefing for the latest 10-Q.
  *
  * Only after the address is confirmed, so a form cannot be used to send them
  * to strangers. At most SAMPLE_DAILY a day across the site and three tickers
  * per confirmation, so cost stays bounded.
  */
 const SAMPLE_DAILY = 50;
-async function requestSamples(env, email, earnings, guidance) {
-  const want = { earnings: earnings.slice(0, 3), guidance: guidance.slice(0, 3) };
-  const n = want.earnings.length + want.guidance.length;
+async function requestSamples(env, email, earnings, guidance, filings = []) {
+  // Filing Watch briefings are the heaviest to build, so two at most.
+  const want = { earnings: earnings.slice(0, 3), guidance: guidance.slice(0, 3), filings: filings.slice(0, 2) };
+  const n = want.earnings.length + want.guidance.length + want.filings.length;
   if (!n || !env.GITHUB_TOKEN) return { sent: 0 };
   const day = "samples:" + new Date().toISOString().slice(0, 10);
   const used = parseInt((await env.CACHE.get(day)) || "0", 10) || 0;
@@ -483,7 +484,7 @@ async function requestSamples(env, email, earnings, guidance) {
   const r = await fetch("https://api.github.com/repos/" + env.GITHUB_REPO + "/dispatches", {
     method: "POST",
     headers: { Authorization: "Bearer " + env.GITHUB_TOKEN, Accept: "application/vnd.github+json", "User-Agent": "guidance-scorecard", "Content-Type": "application/json" },
-    body: JSON.stringify({ event_type: "sample", client_payload: { email, earnings: want.earnings.join(","), guidance: want.guidance.join(",") } }),
+    body: JSON.stringify({ event_type: "sample", client_payload: { email, earnings: want.earnings.join(","), guidance: want.guidance.join(","), filings: want.filings.join(",") } }),
   });
   if (!r.ok) return { sent: 0, failed: true };
   await env.CACHE.put(day, String(used + n), { expirationTtl: 2 * 24 * 60 * 60 });
@@ -1028,7 +1029,8 @@ export default {
         const fresh = gAdded.filter((t) => !recorded.has(t));
         const req = await requestBackfill(env, fresh);
         const sample = await requestSamples(env, done.email,
-          done.products.includes("earnings") ? done.added : [], covered);
+          done.products.includes("earnings") ? done.added : [], covered,
+          done.products.includes("filings") ? done.added : []);
 
         const para = (text) => "<p>" + text + "</p>";
         const names = (list) => "<b>" + list.join(", ") + "</b>";
@@ -1073,7 +1075,8 @@ export default {
           + (sample.sent
               ? para("A sample of each email, built from each company's latest filing, is on its way: "
                 + [sample.earnings.length ? "Release Watch for " + sample.earnings.join(", ") : "",
-                   sample.guidance.length ? "Guidance Scorecard for " + sample.guidance.join(", ") : ""].filter(Boolean).join("; ")
+                   sample.guidance.length ? "Guidance Scorecard for " + sample.guidance.join(", ") : "",
+                   sample.filings.length ? "Filing Watch for " + sample.filings.join(", ") : ""].filter(Boolean).join("; ")
                 + ". It takes a few minutes.")
               : sample.overLimit ? para("Today's samples are used up; your emails start with each company's next filing.") : "")
           + para("Every email carries a link to leave."));
