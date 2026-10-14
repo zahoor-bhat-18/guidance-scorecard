@@ -1048,26 +1048,26 @@ export default {
               ? para("<b>Guidance Scorecard</b>, " + names(covered) + ": covered. An email arrives when " + (covered.length > 1 ? "each" : "it") + " next reports.")
               : "")
           + (req.started.length
-              ? para(names(req.started) + ": new here, so we are reading "
+              ? para("<b>Guidance Scorecard</b>, " + names(req.started) + ": new here, so we are reading "
                 + (req.started.length > 1 ? "their" : "its") + " last fourteen earnings releases now. Within about"
                 + " fifteen minutes you will get an email saying whether there is guidance to score.")
               : "")
           + (req.alreadyUnderway.length
-              ? para(names(req.alreadyUnderway) + ": already being set up. You will get the same email when it is done.")
+              ? para("<b>Guidance Scorecard</b>, " + names(req.alreadyUnderway) + ": already being set up. You will get the same email when it is done.")
               : "")
           + (thin.length
-              ? para(names(thin) + ": on your list, but "
+              ? para("<b>Guidance Scorecard</b>, " + names(thin) + ": on your list, but "
                 + (thin.length > 1 ? "their" : "its") + " earnings releases carry too little numeric guidance to"
                 + " score. When " + (thin.length > 1 ? "each reports" : "it reports") + " you will get a short note"
                 + " saying so, and the full scorecard once there is something to score.")
               : "")
           + (req.overLimit.length
-              ? para(names(req.overLimit) + ": today's limit for new companies is reached. Sign up for "
+              ? para("<b>Guidance Scorecard</b>, " + names(req.overLimit) + ": today's limit for new companies is reached. Sign up for "
                 + (req.overLimit.length > 1 ? "them" : "it") + " again tomorrow and we will set "
                 + (req.overLimit.length > 1 ? "them" : "it") + " up then.")
               : "")
           + (req.failed.length
-              ? para(names(req.failed) + ": we could not start the setup just now. Sign up again in a few"
+              ? para("<b>Guidance Scorecard</b>, " + names(req.failed) + ": we could not start the setup just now. Sign up again in a few"
                 + " minutes, or write to hello@zahoorbhat.com.")
               : "")
           + (sample.sent
