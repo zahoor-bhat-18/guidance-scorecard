@@ -3,7 +3,7 @@
 For the next chat. Read this first, then ARCHITECTURE.md if you need the code layout.
 
 ## The product
-- Live at guidance.zahoorbhat.com. Repo: zahoor-bhat-18/guidance-scorecard (Cloudflare deploys `main` on every push).
+- Live at zahoorbhat.com/guidance; signup for all three products at zahoorbhat.com/subscribe (this Worker). The guidance subdomain is gone. Repo: zahoor-bhat-18/guidance-scorecard (Cloudflare deploys `main` on every push).
 - When a followed company files its earnings 8-K, each subscriber gets an email that scores results against the company's own guidance, shows how the guidance changed, and shows the track record ("Do they hit their guide?"). The reader is a PM. The product never predicts.
 - Owner: Zahoor. A finance professional, not a developer, who works from his phone.
 - His rules:
@@ -74,3 +74,13 @@ For the next chat. Read this first, then ARCHITECTURE.md if you need the code la
 
 ## The owner's open question
 On 13 Oct he asked whether PMs would pay for this. The honest answer given: probably not as a standalone product (Bloomberg/FactSet already carry guidance, consensus matters more on the day, and the email lands after the price move). The track-record angle is the distinctive part. Suggested: test demand with 5–10 buyers (small funds, independents, family offices), and bundle it with Filing Watch and Release Watch. He then chose to keep fixing accuracy first.
+
+
+## Oct 14 2026: shared watcher and signup
+
+This Worker is now the 8-K watcher and the signup for all three products (Guidance Scorecard, Release Watch,
+Filing Watch). See release-watch HANDOVER.md section 6f for the whole set-up. In this repo:
+- `src/subscribers.js`: products per record (`tickers`, `earnings`, `filings`), per-product unsubscribe (`&p=`).
+- `src/index.js`: poll dispatches `release-watch` for earnings tickers; confirm requests samples; old host answers 404.
+- `.github/workflows/release-watch.yml` and `sample.yml` check out the private release-watch / filing-agent repos with RW_READ_TOKEN.
+- `public/subscribe.html`: the shared signup; `public/guidance.html`: the Scorecard page at zahoorbhat.com/guidance.
