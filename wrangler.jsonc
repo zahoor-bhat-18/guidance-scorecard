@@ -59,9 +59,6 @@
     // means no new Email Routing rule is needed at all.
     "REPLY_TO": "hello@zahoorbhat.com",
     "SITE_URL": "https://zahoorbhat.com",
-    // Public by design: the Turnstile widget's site key sits in the page. The
-    // matching TURNSTILE_SECRET is a Worker secret, set in the dashboard.
-    "TURNSTILE_SITE_KEY": "0x4AAAAAAFWRt2FlczxmLL3x",
     "POSTAL_ADDRESS": "Goosu Pulwama Kashmir 192301"
   },
 

@@ -823,7 +823,10 @@ export default {
      * means the page never has to be edited to change it.
      */
     if (url.pathname === "/api/turnstile") {
-      return json({ siteKey: env.TURNSTILE_SITE_KEY || null });
+      // The widget "zahoorbhat subscribe" (hostname zahoorbhat.com). Public by
+      // design; written here so an old dashboard value cannot shadow it. The
+      // matching TURNSTILE_SECRET is a Worker secret.
+      return json({ siteKey: "0x4AAAAAAFWRt2FlczxmLL3x" });
     }
 
     if (url.pathname === "/api/tickers") {
