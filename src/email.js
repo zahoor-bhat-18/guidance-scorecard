@@ -275,14 +275,15 @@ function pathInUnit(path, unit) {
 }
 
 function guideCell(p) {
-  const now = boundText(p) || formatFigure(p.guide, p.unit);
+  /* A guide the company gave in words carries a star; the footnote says so. */
+  const now = (boundText(p) || formatFigure(p.guide, p.unit)) + (p.guideWords ? "*" : "");
   const path = Array.isArray(p.guidePath) ? pathInUnit(p.guidePath, p.unit)
     : (p.first ? [p.first, p.guide] : null);
   if (!Array.isArray(path) || path.length < 2) return { text: now, noted: false };
 
   const first = path[0];
   const firstText = formatFigure(first, p.unit);
-  if (firstText === now) return { text: now, noted: false };
+  if (firstText === now || firstText + "*" === now) return { text: now, noted: false };
 
   // Per-share guides: the record says whether a real split lies between the
   // first guide and the last. Delta cut its first-quarter 2025 EPS guide from
@@ -909,7 +910,7 @@ function landing(p) {
    was said and how it was read, and can disagree with the reading. */
 function guideWords(p) {
   const fig = boundText(p) || formatFigure(p.guide, p.unit);
-  return p.guideWords ? "\u201c" + p.guideWords + "\u201d (read as " + fig + ")" : fig;
+  return p.guideWords ? fig + "*" : fig;
 }
 
 /**
@@ -1495,7 +1496,7 @@ export function sectionsOf(view, keys) {
         measure,
         first: i === 0,
         period: periodLabel(r.period),
-        guide: r.after ? (r.words ? "\u201c" + r.words + "\u201d (read as " + formatFigure(r.after, r.unit) + ")" : roughly(r) + formatFigure(r.after, r.unit)) : "",
+        guide: r.after ? (r.words ? formatFigure(r.after, r.unit) + "*" : roughly(r) + formatFigure(r.after, r.unit)) : "",
         change: changeWords(r),
       });
     });
@@ -1976,7 +1977,7 @@ function quietDesign(sec, d) {
         else if (al === bl && ah < bh) end = "bottom";
       }
     }
-    rows.push({ measure, period: o.period, guide: o.guide, dir: QUIET_ORDER.includes(dir) ? dir : "new", was, end,
+    rows.push({ measure, period: o.period, guide: o.guide, words: r.words || null, dir: QUIET_ORDER.includes(dir) ? dir : "new", was, end,
       group, adj: basisOfLabel(own || measure) !== "gaap" && /adjusted|non-?gaap|\bcore\b|comparable/i.test(own || measure) });
   }
   // Within one measure, the adjusted guide first: it is the one the company
@@ -2117,6 +2118,17 @@ function renderQuiet(view, opts, company, metrics, sec, quiet, subject, scored) 
   const anyFlag = hist.some((x) => x.rows.some((r) => /\u2020/.test(r.reported)));
   const when = view.latestRelease && view.latestRelease.filed ? " \u00b7 filed " + longDate(view.latestRelease.filed) : "";
 
+  /* The star's footnote: which guides were given in words, and the fixed rule
+     they were read by. Shown once, under the tables, only when a star is. */
+  const starred = quiet.rows.filter((r) => /\*$/.test(String(r.guide || "")) && r.words);
+  const anyStar = starred.length > 0 || hist.some((x) => x.rows.some((r) => /\*/.test(String(r.guided || ""))))
+    || (scored && scored.rows.some((r) => /\*/.test(String(r.guided || ""))));
+  const wordsNote = anyStar
+    ? "* The company gave this guide in words, not numbers"
+      + (starred.length ? " (" + starred.slice(0, 4).map((r) => r.measure + ": \u201c" + r.words + "\u201d").join("; ") + ")" : "")
+      + ". Read by a fixed rule: low single digits 1-3%, mid 4-6%, high 7-9%; low double digits 10-13%; low, mid and high teens 11-13%, 14-16% and 17-19%; numbers written out as words are taken as written."
+    : "";
+
   /* ---------------- plain text ---------------- */
   const t = [];
   t.push(company + " (" + view.ticker + ")" + when);
@@ -2138,6 +2150,7 @@ function renderQuiet(view, opts, company, metrics, sec, quiet, subject, scored) 
       t.push("- " + r.measure + ", " + r.period + ": " + r.guide + " - " + r.dir + (r.end ? " to the " + r.end + " of the range" : "") + (r.was ? ", was " + r.was : ""));
     }
     if (alsoLine) t.push(alsoLine + ".");
+    if (wordsNote && !hist.length) t.push(wordsNote);
     t.push("");
   }
   if (hist.length) {
@@ -2147,6 +2160,7 @@ function renderQuiet(view, opts, company, metrics, sec, quiet, subject, scored) 
       for (const r of x.rows) t.push("   " + r.period + ": guided " + r.guided + ", reported " + r.reported + (r.verdict ? " - " + r.verdict : ""));
     }
     t.push("Guided = the last guide in force before the period was reported.");
+    if (wordsNote) t.push(wordsNote);
     if (anyFlag) { t.push(""); t.push(FLAG_NOTE); }
     t.push("");
   }
@@ -2208,6 +2222,7 @@ function renderQuiet(view, opts, company, metrics, sec, quiet, subject, scored) 
     }
     h.push('</table>');
     if (alsoLine) h.push('<div style="font-size:13px;color:' + SOFT + ';margin-top:10px;">' + esc(alsoLine) + '.</div>');
+    if (wordsNote && !hist.length) h.push('<div style="font-size:12px;color:' + SOFT + ';margin-top:10px;">' + esc(wordsNote) + '</div>');
     h.push('</div>');
   }
 
@@ -2227,7 +2242,7 @@ function renderQuiet(view, opts, company, metrics, sec, quiet, subject, scored) 
       h.push('</table>');
     }
     h.push('<div style="font-size:12px;color:' + SOFT + ';margin-top:10px;">Guided = the last guide in force before the period was reported.'
-      + (anyFlag ? ' ' + esc(FLAG_NOTE) : '') + '</div>');
+      + (anyFlag ? ' ' + esc(FLAG_NOTE) : '') + (wordsNote ? '<br>' + esc(wordsNote) : '') + '</div>');
     h.push('</div>');
   }
 

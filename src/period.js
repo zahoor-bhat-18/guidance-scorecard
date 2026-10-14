@@ -405,6 +405,23 @@ export function resolvePeriod(text, cal, opts) {
     return { period: year + "FY", how: "year stated with no quarter, read as the full year" };
   }
 
+  /* "NEXT YEAR" IS A YEAR. Delta, October 2026: "Looking to next year, we
+     remain on track for low-single-digit unit cost growth". The guide was read
+     and then dropped for having no period, though the sentence names one: the
+     fiscal year after the one in progress when the release was filed. Only
+     for guidance (looking forward); a result is never "next year". "This
+     year" and "the current year" are the year in progress. */
+  if (!quarter && year === null && direction === "future" && Number.isFinite(reference)) {
+    if (/\bnext (fiscal )?year\b/.test(t)) {
+      return { period: (nearestYearLabel(cal, reference, "future") + 1) + "FY",
+        how: "\"next year\": the fiscal year after the one in progress at the filing date" };
+    }
+    if (/\b(this|current) (fiscal )?year\b/.test(t)) {
+      return { period: nearestYearLabel(cal, reference, "future") + "FY",
+        how: "\"this year\": the fiscal year in progress at the filing date" };
+    }
+  }
+
   if (!quarter && year === null && saysFullYear) {
     const label = nearestYearLabel(cal, reference, direction);
     return {

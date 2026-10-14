@@ -477,7 +477,77 @@ export function refineCalendar(cal, text) {
    number, and a 0 read out of it is an inference, not a figure. */
 const DOWN_BEFORE = /\b(down|declines?|declined|decreases?|decreased|lower|negative|minus|reduction|contraction|drop|fall)\s+(?:(?:of|by|approximately|approx\.?|about|roughly|around|nearly)\s+)*\$?\s*$/i;
 
+/**
+ * FIGURES WRITTEN IN WORDS.
+ *
+ * P&G, July 2026: "all-in sales growth in the range of one to three percent",
+ * "core earnings per share growth in the range of in-line to three percent",
+ * "capital spending ... four and a half to five and a half percent of fiscal
+ * 2027 net sales". The model read every one correctly (1 to 3, 0 to 3, 4.5
+ * to 5.5), and the guard, finding no "1" or "3" in the sentence, dropped
+ * them: five of P&G's eight guides for the year were kept with no figure.
+ *
+ * A number spelled out is still the company's number. Read only where a unit
+ * follows (percent, points, billion...), so "one of our segments" or "a
+ * one-time charge" never becomes a 1. "In line" / "in-line" opening a range
+ * of changes is 0, as "flat" is. Returns each figure and the words it came
+ * from, so the guide can say it was given in words.
+ */
+const ONES = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
+  ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
+  seventeen: 17, eighteen: 18, nineteen: 19 };
+const TENS = { twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
+const NUM_WORD = "(?:(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:[-\\s](?:one|two|three|four|five|six|seven|eight|nine))?"
+  + "|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen)"
+  + "(?:\\s+and\\s+(?:a|one)[-\\s]half)?";
+const NUM_UNIT = "(?:percent(?:age points?)?|%|points?|basis points|bps|billion|million|cents)";
+const SPELLED_RANGE = new RegExp("\\b(in[-\\s]line|" + NUM_WORD + ")\\s*(?:percent|%)?\\s*(?:to|-|–)\\s*(" + NUM_WORD + ")\\s*" + NUM_UNIT + "\\b", "gi");
+const SPELLED_ONE = new RegExp("\\b(" + NUM_WORD + ")\\s*" + NUM_UNIT + "\\b", "gi");
+
+function wordValue(w) {
+  const s = String(w || "").toLowerCase().replace(/-/g, " ").trim();
+  if (/^in\s+line$/.test(s)) return 0;
+  const half = /\s+and\s+(a|one)\s+half$/.test(s) ? 0.5 : 0;
+  const parts = s.replace(/\s+and\s+(a|one)\s+half$/, "").split(/\s+/);
+  let n = 0;
+  for (const p of parts) {
+    if (p in TENS) n += TENS[p];
+    else if (p in ONES) n += ONES[p];
+    else return null;
+  }
+  return n + half;
+}
+
+export function spelledFigures(quote) {
+  const text = String(quote || "");
+  const out = [];
+  const taken = [];
+  for (const m of text.matchAll(SPELLED_RANGE)) {
+    const a = wordValue(m[1]), b = wordValue(m[2]);
+    if (a === null || b === null) continue;
+    out.push({ value: a, words: m[0], at: m.index }, { value: b, words: m[0], at: m.index });
+    taken.push([m.index, m.index + m[0].length]);
+  }
+  for (const m of text.matchAll(SPELLED_ONE)) {
+    if (taken.some(([x, y]) => m.index >= x && m.index < y)) continue;
+    const v = wordValue(m[1]);
+    if (v === null) continue;
+    out.push({ value: v, words: m[0], at: m.index });
+  }
+  return out;
+}
+
 export function quoteNumbers(quote) {
+  const found = digitNumbers(quote);
+  const text = String(quote || "");
+  for (const f of spelledFigures(text)) {
+    found.add(f.value);
+    if (DOWN_BEFORE.test(text.slice(Math.max(0, f.at - 40), f.at))) found.add(-f.value);
+  }
+  return found;
+}
+
+function digitNumbers(quote) {
   const found = new Set();
   if (!quote) return found;
 
@@ -902,6 +972,45 @@ function notOnePeriod(g) {
     guard_note: "Dropped: the quote calls this a medium- or long-term figure, not a guide for one period." };
 }
 
+/**
+ * A CHANGE IN MONEY, READ AS A LEVEL.
+ *
+ * Walmart, August 2026: "Adj. Interest, net  Increase approximately $200M to
+ * $300M". The guide came back as a range of $200m to $300m - a level - when
+ * the company guided the INCREASE. Scored as a level it would be compared with
+ * an interest bill of billions and called a huge miss. Where the word just
+ * before the guide's own first figure says increase or decrease, the guide is
+ * a change, in the unit the company used. Only that word, right there: "between
+ * $310 and $330, an increase from $230.6 in 2025" (Fastenal) is a level, and its
+ * "increase" sits before another number, not the guide's.
+ */
+const CHANGE_JUST_BEFORE = /\b(increases?|increased|decreases?|decreased|higher|lower|up|down|grow(?:th)?|declines?)\s+(?:(?:of|by|approximately|approx\.?|about|roughly|around|nearly|~)\s*)*\$?\s*$/i;
+const FALL_WORD = /^(decreases?|decreased|lower|down|declines?)$/i;
+function asChange(g) {
+  if (!/^(range|point)$/.test(String(g.shape || "")) || !/^USD (millions|billions)$/.test(String(g.unit || ""))) return g;
+  const first = typeof g.low === "number" ? g.low : g.value;
+  if (typeof first !== "number") return g;
+  const text = String(g.quote || "");
+  const re = /\$?\s*(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)/g;
+  let m;
+  while ((m = re.exec(text))) {
+    const n = parseFloat(m[1].replace(/,/g, ""));
+    if (Math.abs(n - Math.abs(first)) > 0.0005) continue;
+    const before = text.slice(Math.max(0, m.index - 40), m.index);
+    const w = before.match(CHANGE_JUST_BEFORE);
+    if (!w) return g;
+    const fall = FALL_WORD.test(w[1]);
+    const neg = (x) => (typeof x === "number" ? -Math.abs(x) : x);
+    const out = { ...g, shape: g.shape === "range" ? "growth_range" : "growth_point",
+      read_as_change: "the company guided the " + (fall ? "decrease" : "increase") + ", not the level" };
+    if (fall) {
+      if (g.shape === "range") { out.low = neg(g.high); out.high = neg(g.low); } else out.value = neg(g.value);
+    }
+    return out;
+  }
+  return g;
+}
+
 export function guardGuide(input, filingText) {
   const held = notOnePeriod(input);
   if (held !== input) return held;
@@ -936,7 +1045,19 @@ export function guardGuide(input, filingText) {
   const isYear = (v) => Number.isInteger(v) && v >= 1990 && v <= 2100 && g.unit !== "other"
     && !new RegExp("\\$\\s?" + v + "\\b|\\b" + v + "\\s?(%|percent|million|billion|bn|bps|basis points)", "i").test(plain);
   const unsupported = stated.filter(([, v]) => !present(v, pool) || isYear(v)).map(([k, v]) => k + "=" + v);
-  if (!unsupported.length) return { ...g, numbers_verified: true };
+  if (!unsupported.length) {
+    /* Verified only through figures spelled in words: the guide says so, the
+       same way a "high-single digits" guide does, so the email can mark it. */
+    const digits = digitNumbers(g.quote);
+    for (const e of bandEnds(g.quote)) digits.add(e);
+    if (isChange && /\bflat\b/i.test(String(g.quote || ""))) digits.add(0);
+    const inWords = stated.some(([, v]) => !present(v, digits) && !present(-v, digits));
+    if (inWords && !g.from_words) {
+      const sp = spelledFigures(g.quote);
+      if (sp.length) return { ...asChange(g), numbers_verified: true, from_words: sp[0].words.trim() };
+    }
+    return { ...asChange(g), numbers_verified: true };
+  }
 
   /* THE FIGURE IS IN THE TABLE, THE QUOTE IS THE SENTENCE ABOVE IT.
      Netflix writes "Our summary results, and forecast for Q3, are below" and
@@ -1738,10 +1859,19 @@ export function rangeFromWords(g) {
   let pick = null;
   if (merged.length === 1) pick = merged[0];
   else {
-    const word = String(g.metric_as_written || "").toLowerCase()
+    /* The measure's own word, as the sentence spells it. GE's "DPT: revenue
+       growth" looked for "dpt:" - the part's name with its colon - found
+       nothing, and the guide ("low double digits") stayed as words. The
+       part's name before a colon, and punctuation, are not the measure; the
+       first word of the name that the sentence actually contains is. */
+    const words = String(g.metric_as_written || "").toLowerCase()
+      .replace(/^[^:]{1,40}:\s*/, " ")
       .replace(/\b(adjusted|reported|gaap|non-gaap|organic|diluted|net|total|fiscal|full[- ]year)\b/g, " ")
-      .trim().split(/\s+/).find((w) => w.length > 2);
-    const at = word ? quote.toLowerCase().indexOf(word) : -1;
+      .replace(/[^a-z0-9\s-]/g, " ")
+      .trim().split(/\s+/).filter((w) => w.length > 2);
+    const lower = quote.toLowerCase();
+    const word = words.find((w) => lower.indexOf(w) >= 0);
+    const at = word ? lower.indexOf(word) : -1;
     if (at < 0) return g;
     const after = merged.filter((f) => f.at > at).sort((a, b) => a.at - b.at);
     if (!after.length) return g;

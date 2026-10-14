@@ -84,3 +84,33 @@ Filing Watch). See release-watch HANDOVER.md section 6f for the whole set-up. In
 - `src/index.js`: poll dispatches `release-watch` for earnings tickers; confirm requests samples; old host answers 404.
 - `.github/workflows/release-watch.yml` and `sample.yml` check out the private release-watch / filing-agent repos with RW_READ_TOKEN.
 - `public/subscribe.html`: the shared signup; `public/guidance.html`: the Scorecard page at zahoorbhat.com/guidance.
+
+## Oct 14 2026 (evening): direction and capture batch 1
+
+**Direction agreed with Zahoor.** Guidance Scorecard stays a separate product from Release Watch. It is rebuilt
+around complete data: capture every guide and every actual, then (1) a pre-earnings preview email (guide in force,
+the record, the adjusted guide, what the rest of the year needs; report dates estimated from the web) and (3) a
+company-record-adjusted guide shown with its working. The day-of email goes only when guidance changes. Free and
+legal sources only: filings, then company investor-site slides/transcripts, then webcast audio transcription.
+
+**Audit (40 companies, latest release).** 34 put guidance in the filed 8-K (4 in a second exhibit); MSFT (investor
+site transcript + outlook slides) and C (investor-site presentation) are verified to guide outside SEC; CSX and TRV
+are thought to guide on the call; GS and KMX give no numeric guidance in filings. 1,137 of 1,280 captured past guides
+(89%) have a matched actual. Capture faults found by pattern are listed below; batch 1 fixed the first four.
+
+**Batch 1 (this commit):**
+- Numbers written in words are read ("one to three percent", "four and a half", "in-line to three percent" = 0 to 3).
+  P&G lost 5 of 8 FY27 guides to this. `spelledFigures` in guidance.js; only where a unit follows.
+- Words ranges: the measure's word is found without the part's name and colon (GE "DPT: revenue growth").
+- A change in money guided as "Increase approximately $200M to $300M" is a change, not a level (`asChange`).
+- "next year" / "this year" resolve for guidance (period.js).
+- Email: a guide given in words shows a star; a footnote names the words and the fixed rule (approved by Zahoor:
+  low 1-3, mid 4-6, high 7-9).
+
+**Still open from the audit, in order:**
+1. Prose guides missed: Netflix ads revenue ~$3bn and content amortization ~+10%, McCormick adjusted gross margin
+   +100-120bp, Intuitive 1% tariff impact. Needs an extractor change; do alone.
+2. Ratio guides with no actual: capex as % of net sales (WMT, PG, PEP). Compute capex / net sales from the release.
+3. Half-year guides (Honeywell "second half") are refused by design; score H2 as Q3+Q4.
+4. Investor-site slides and transcripts (MSFT, C, CSX, TRV), then webcast transcription.
+5. Widen coverage beyond 40; then the preview email, the adjusted guide, report dates.
