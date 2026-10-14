@@ -143,6 +143,9 @@
   .product .d{display:block;font:400 14px/1.55 "Inter",sans-serif;color:#3E5248;margin-top:3px}
   .product .w{display:block;font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#5B7166;margin-top:7px}
   .others{margin-top:40px}
+  ol.picked .gs{display:block;font:400 12.5px/1.4 "Inter",sans-serif;margin-top:3px}
+  ol.picked .gs.ok{color:#1F8A5C}
+  ol.picked .gs.no{color:#8A6D2B}
   .others a{color:#1F8A5C}
 </style>
 </head>
@@ -276,9 +279,27 @@
       tkEl.setAttribute("aria-expanded", "false");
     }
 
+    // What Guidance Scorecard holds for each company: a scored record, a record
+    // with too little filed guidance to score, or nothing yet.
+    let records = null;
+    fetch("/api/records").then((r) => r.json()).then((d) => {
+      records = new Map(((d && d.records) || []).map((x) => [x.ticker, x.publishable]));
+      renderPicked();
+    }).catch(() => {});
+    const gsOn = () => { const b = document.querySelector('input[name=product][value=guidance]'); return b && b.checked; };
+    const gsNote = (t) => {
+      if (!records || !gsOn()) return "";
+      const has = records.has(t), ok = records.get(t);
+      const text = !has ? "Guidance Scorecard: not read yet; we read it after you confirm"
+        : ok ? "Guidance Scorecard: scored"
+        : "Guidance Scorecard: little guidance in its filed releases (often given on the call)";
+      return '<span class="gs ' + (has && ok ? "ok" : "no") + '">' + esc(text) + "</span>";
+    };
+    document.querySelectorAll("input[name=product]").forEach((b) => b.addEventListener("change", () => renderPicked()));
+
     function renderPicked() {
       pickEl.innerHTML = picked.map(([t, n], i) =>
-        '<li><span class="tk">' + esc(t) + '</span><span class="nm">' + esc(n) + "</span>"
+        '<li><span class="tk">' + esc(t) + '</span><span class="nm">' + esc(n) + gsNote(t) + "</span>"
         + '<button type="button" data-rm="' + i + '" aria-label="Remove ' + esc(t) + '">&times;</button></li>').join("");
     }
 
