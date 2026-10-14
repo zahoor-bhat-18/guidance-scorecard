@@ -402,13 +402,17 @@ async function passedTurnstile(env, token, ip) {
   if (!token) return { ok: false, error: "Please complete the check above the button, then try again." };
   try {
     const form = new FormData();
-    form.append("secret", env.TURNSTILE_SECRET);
+    // Trimmed: a pasted secret often carries a trailing newline or space.
+    form.append("secret", String(env.TURNSTILE_SECRET).trim());
     form.append("response", String(token));
     if (ip) form.append("remoteip", ip);
     const r = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", { method: "POST", body: form });
     const d = await r.json();
     if (d.success) return { ok: true };
-    return { ok: false, error: "The check did not go through. Please try it again." };
+    // Cloudflare's own reason, so a wrong key is told apart from a failed check:
+    // invalid-input-secret means TURNSTILE_SECRET is not this widget's secret.
+    const why = (d["error-codes"] || []).join(", ");
+    return { ok: false, error: "The check did not go through. Please try it again." + (why ? " (" + why + ")" : "") };
   } catch {
     return { ok: false, error: "The check could not be confirmed just now. Please try again in a moment." };
   }
