@@ -213,6 +213,8 @@
 </div>
 
 <script>
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
   function searchCompanies(list, taken, text) {
     const q = String(text || "").trim().toUpperCase();
