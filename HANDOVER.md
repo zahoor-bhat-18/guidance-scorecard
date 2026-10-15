@@ -180,3 +180,31 @@ with the 10-Q's Baseten sentence as one changed sentence - two different deals. 
 (1) a PREVIEW before the report: guide in force, record against own guides, how much it usually beats by
 (sandbagging) and what the rest of the year needs; (2) Release Watch minutes after the 8-K; (3) Filing Watch when the
 10-Q lands. The preview is the piece still to build; report dates to be estimated from the web.
+
+## Oct 15 2026 (evening): accuracy batch 3 and the PREVIEW email
+
+Accuracy (all live, all 40 rebuilt, diffed against the previous build):
+- Guides stated against the previous quarter ("improve 1 to 2 points sequentially", Delta) are kept as events, not
+  scored. "Compared to the third quarter of 2024" is year-on-year and still scored (a first version dropped
+  Carnival's cost guides; caught in the diff and fixed before any send).
+- "Low twenties" (20-23%) read; words after "up from our prior guide" ignored. GE CES 2025 had been scored against
+  the OLD guide (17-19%, "5pp above"); now 20-23%, 1pp above. "High-teens to low-twenties" = 17-23% (Elevance
+  Carelon Services had been scored against 17-19%).
+- A dollar guide that "equates to two to four percent growth" also yields the growth guide (`rateFromEquates`).
+  P&G FY2025 core EPS growth is still unscored: the July 2025 release was not asked for it - open.
+- Capex as a share of sales computed from the two printed amounts (`ratioFromAmounts`, actuals.js), marked
+  "(calc.)" in the email: P&G FY2023-25 (3.73%, 3.95%, 4.48%), Walmart FY2026 (3.77%).
+
+PREVIEW (src/preview.js, scripts/preview.mjs, .github/workflows/preview.yml):
+- Daily 02:30 UTC. For each company a Guidance subscriber follows: next report = the release four back plus 364
+  days (same weekday); sent when that is 1-3 days ahead, once (KV `preview:<T>:<date>`), skipped if the company
+  filed in the last 30 days. Companies that guide only the year get it at interim reports ("its next quarter").
+- Content: guides in force for the coming quarter and the year; per measure, how results landed against the
+  guide's midpoint (above/within/below, median and range of the gap; flagged rows left out); and, with 4+ scored
+  periods, that record applied to today's guide - labelled as arithmetic, not a forecast.
+- Manual: Actions -> preview -> tickers, "test" ticked sends to TEST_EMAIL only; "dry" lists who is due.
+- Tested 15 Oct: DAL, PG, MU, NFLX to TEST_EMAIL.
+
+**Open for the preview:** report dates are estimates from last year (Zahoor wanted dates from the web - no free,
+licensed calendar API is wired; a company's own "will report on" 8-K could confirm the date); "what the rest of the
+year needs" (FY guide minus year to date) is not built; Abbott's estimate (14 Oct) passed before the job existed.
