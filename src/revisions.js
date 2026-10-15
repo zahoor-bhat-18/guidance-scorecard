@@ -160,6 +160,19 @@ function numbersOf(g) {
  * stripping the qualifier, which would split measures that today group
  * correctly.
  */
+/* The kind of unit, as part of a guide's identity. P&G guides FY2027 core EPS
+   growth (in-line to +3%) and the core EPS it equates to ($6.89 to $7.11) in
+   one paragraph. "Growth" is set aside by labelKey, so the two had one key, one
+   was dropped, and the email lost the growth guide. A rate and an amount of the
+   same measure are two guides. */
+function unitKind(u) {
+  const x = String(u || "").toLowerCase();
+  if (/percent|%|basis points|bps|points/.test(x)) return "rate";
+  if (/per share/.test(x)) return "per-share";
+  if (/usd|\$|dollar|eur|gbp/.test(x)) return "money";
+  return "other";
+}
+
 function oneGuidePerPeriod(guides) {
   const byKey = new Map();
 
@@ -168,7 +181,7 @@ function oneGuidePerPeriod(guides) {
     if (n.low === null && n.high === null && n.value === null) continue;
     if (!g.period) continue;
 
-    const key = labelKey(g) + "|" + g.period;
+    const key = labelKey(g) + "|" + unitKind(g.unit) + "|" + g.period;
     const held = byKey.get(key);
     if (!held) { byKey.set(key, g); continue; }
 
@@ -397,7 +410,7 @@ export function revisionsBetween(rawBefore, rawAfter, opts) {
 
     // A part that is the company by the later release's name is the same
     // line as the company's (GE Aerospace, January 2024) - labelAsCompany.
-    const key = labelKey({ metric_as_written: labelAsCompany(g, laterNames) }) + "|" + g.period;
+    const key = labelKey({ metric_as_written: labelAsCompany(g, laterNames) }) + "|" + unitKind(g.unit) + "|" + g.period;
     if (!index.has(key)) index.set(key, []);
     index.get(key).push(g);
   }
@@ -430,7 +443,7 @@ export function revisionsBetween(rawBefore, rawAfter, opts) {
 
   for (const g of afterGuides) {
     const n = withBound(numbersOf(g), g);
-    const key = labelKey(g) + "|" + (g.period || "");
+    const key = labelKey(g) + "|" + unitKind(g.unit) + "|" + (g.period || "");
     const before = readingFor(key, n);
 
     if (!before) {
