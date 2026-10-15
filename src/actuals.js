@@ -417,10 +417,17 @@ function providerOf(env) {
   return String(env.ACTUALS_MODEL || "deepseek").toLowerCase() === "gemini" ? "gemini" : "deepseek";
 }
 
+/* How long one answer may take. DeepSeek in JSON mode can, on rare prompts,
+   stream whitespace until it runs out of tokens and return nothing: GE's
+   rebuild on 15 Oct 2026 hung fifteen minutes on one question, twice, and the
+   whole company failed. A normal answer takes well under a minute. */
+const ANSWER_TIMEOUT_MS = 180000;
+
 async function askDeepSeek(env, user) {
   if (!env.DEEPSEEK_API_KEY) throw new Error("DEEPSEEK_API_KEY is not set.");
 
   const r = await fetch(ENDPOINT, {
+    signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(ANSWER_TIMEOUT_MS) : undefined,
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -470,7 +477,34 @@ async function askGemini(env, user) {
   return ((cand.content && cand.content.parts) || []).map((x) => x.text || "").join("").trim();
 }
 
+/**
+ * Ask, and when the answer is empty or not JSON, ask again in halves.
+ *
+ * The question is the same as it always was the first time, so saved answers
+ * are reused exactly. Only a question that failed is split, and each half is
+ * a new, smaller question with its own saved answer. One measure that still
+ * gets nothing back is left unanswered - "not reported" - instead of failing
+ * every other measure of the company with it.
+ */
 async function callModel(env, requests, text) {
+  try {
+    return await callModelOnce(env, requests, text);
+  } catch (e) {
+    const empty = /did not return JSON|aborted|timeout|TimeoutError/i.test(String((e && (e.name + " " + e.message)) || e));
+    if (!empty) throw e;
+    if (requests.length <= 1) {
+      console.error("  No usable answer for " + (requests[0] && requests[0].query) + ": left unanswered.");
+      return [];
+    }
+    const mid = Math.ceil(requests.length / 2);
+    const first = await callModel(env, requests.slice(0, mid), text);
+    const second = await callModel(env, requests.slice(mid), text);
+    const shift = (rows, by) => rows.map((r) => (r && r.id !== undefined && r.id !== null ? { ...r, id: Number(r.id) + by } : r));
+    return shift(first, 0).concat(shift(second, mid));
+  }
+}
+
+async function callModelOnce(env, requests, text) {
   const user = [
     "METRICS TO FIND:",
     JSON.stringify(requests.map((r, i) => ({
