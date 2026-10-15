@@ -286,6 +286,7 @@ function trim(p) {
     flagged: Boolean(p.score.flags && p.score.flags.length),
     summary: p.score.summary,
     quote: p.quote,
+    computed: Boolean(p.answer && p.answer.computed && p.answer.found_as && / as a share of /.test(p.answer.found_as)),
     // Which release reported it. The email's closing section describes the
     // figures THIS release reported, and nothing else on a pair says so.
     answeredBy: p.answeredBy || null,

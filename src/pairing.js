@@ -242,6 +242,9 @@ export function pairUp(guides, actuals) {
     base.answer = {
       asked_as: a.asked_as ?? null,
       found_as: a.found_as ?? null,
+      // Arithmetic by the code on printed figures (a share of sales): its
+      // quote is the inputs, and the check before sending knows it.
+      computed: Boolean(a.computed || a.growth_computed || a.ratio_computed) || undefined,
       section: a.section ?? null,
       period_text: a.period_text ?? null,
       period: a.period ?? null,

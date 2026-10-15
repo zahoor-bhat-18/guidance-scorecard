@@ -1070,7 +1070,7 @@ function rowCells(p) {
   return [
     period,
     guide.text,
-    (formatValue(p.actual, p.unit) || String(p.actual)) + (p.flagged ? "\u2020" : ""),
+    (formatValue(p.actual, p.unit) || String(p.actual)) + (p.computed ? " (calc.)" : "") + (p.flagged ? "\u2020" : ""),
     outcomeCell(p),
   ];
 }
@@ -2147,12 +2147,12 @@ function renderQuiet(view, opts, company, metrics, sec, quiet, subject, scored) 
      they were read by. Shown once, under the tables, only when a star is. */
   const starred = quiet.rows.filter((r) => /\*$/.test(String(r.guide || "")) && r.words);
   const anyStar = starred.length > 0 || quiet.rows.some((r) => /\*/.test(String(r.was || "")))
-    || hist.some((x) => x.rows.some((r) => /\*/.test(String(r.guided || ""))))
+    || hist.some((x) => x.rows.some((r) => /\*/.test(String(r.guided || "")) || /\(calc\.\)/.test(String(r.reported || ""))))
     || (scored && scored.rows.some((r) => /\*/.test(String(r.guided || ""))));
   const wordsNote = anyStar
     ? "* The company gave this guide in words, not numbers"
       + (starred.length ? " (" + starred.slice(0, 4).map((r) => r.measure + ": \u201c" + r.words + "\u201d").join("; ") + ")" : "")
-      + ". Read by a fixed rule: low single digits 1-3%, mid 4-6%, high 7-9%; low double digits 10-13%; low, mid and high teens 11-13%, 14-16% and 17-19%; numbers written out as words are taken as written."
+      + ". Read by a fixed rule: low single digits 1-3%, mid 4-6%, high 7-9%; low double digits 10-13%; low, mid and high teens 11-13%, 14-16% and 17-19%; low, mid and high twenties 20-23%, 24-26% and 27-29%; numbers written out as words are taken as written. (calc.) = computed by us from two figures the company printed."
     : "";
 
   /* ---------------- plain text ---------------- */

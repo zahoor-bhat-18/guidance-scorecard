@@ -1655,6 +1655,86 @@ async function growthFromLevels(env, requests, actuals, adjustedFor, text, relea
 }
 
 /**
+ * A GUIDE STATED AS A SHARE OF SALES.
+ *
+ * Walmart guides capital expenditures at "approximately 3.5% of net sales";
+ * P&G "four and a half to five and a half percent of fiscal 2027 net sales";
+ * PepsiCo capital spending as a share of revenue. No release prints the ratio,
+ * so every one of these went unscored. The release prints both amounts - capex
+ * in the cash flow statement, sales on the income statement - so the code asks
+ * for the two amounts for the guided period and divides. Used only when both
+ * come back as amounts for that period, in the same unit, each printed in its
+ * own quote.
+ */
+const SHARE_OF = /\b(?:%|percent)\s+of\s+(?:(?:fiscal\s+(?:year\s+)?\d{2,4}|the\s+year'?s?|annual|full[-\s]year)\s+)?(net\s+sales|sales|net\s+revenues?|revenues?)\b/i;
+async function ratioFromAmounts(env, requests, actuals, text, release, cal) {
+  const idx = [];
+  requests.forEach((req, i) => {
+    if (req.unit !== "percent" || /^growth_/.test(String(req.shape || ""))) return;
+    if (!SHARE_OF.test(String(req.guideQuote || ""))) return;
+    if (!guidePeriodClosed(req, release, cal)) return;
+    if (actuals[i] && actuals[i].value !== null) return;
+    idx.push(i);
+  });
+  if (!idx.length) return { asked: 0, computed: 0 };
+  const asks = [];
+  for (const i of idx) {
+    const req = requests[i];
+    const denom = String(req.guideQuote).match(SHARE_OF)[1].replace(/\s+/g, " ");
+    asks.push(levelRequest(req, req, req.guidePeriod, cal));
+    asks.push(levelRequest({ ...req, query: denom.charAt(0).toUpperCase() + denom.slice(1), metric_as_written: denom },
+      { expectBasis: { ...req.expectBasis, wantsAdjusted: false, describe: "as reported (GAAP)" } }, req.guidePeriod, cal));
+  }
+  let rows;
+  try {
+    rows = await callModel(env, asks, text);
+  } catch (e) {
+    console.log("Share of sales failed for " + release.accession + ": " + e.message);
+    return { asked: idx.length, computed: 0 };
+  }
+  const byId = new Map();
+  for (const row of rows) if (row.id !== undefined && row.id !== null && !byId.has(Number(row.id))) byId.set(Number(row.id), row);
+  let computed = 0;
+  idx.forEach((i, k) => {
+    const numReq = asks[2 * k], denReq = asks[2 * k + 1];
+    const numRow = byId.get(2 * k) || {}, denRow = byId.get(2 * k + 1) || {};
+    const num = toActual(numReq, numRow, release, cal);
+    const den = toActual(denReq, denRow, release, cal);
+    const why = [];
+    if (num.value === null || den.value === null) why.push("an amount is missing");
+    else {
+      if (!num.unit || num.unit === "percent" || String(num.unit).toLowerCase() !== String(den.unit || "").toLowerCase())
+        why.push("units differ or are not amounts (" + num.unit + " / " + den.unit + ")");
+      if (!numberInQuote(num.value, numRow.quote)) why.push("the amount is not in its quote");
+      if (!numberInQuote(den.value, denRow.quote)) why.push("sales are not in their quote");
+      if (num.period !== numReq.guidePeriod || num.period_assumed) why.push("the amount is for " + num.period);
+      if (den.period !== denReq.guidePeriod || den.period_assumed) why.push("sales are for " + den.period);
+      if (!(den.value > 0)) why.push("sales are not positive");
+    }
+    const share = why.length ? null : Math.round(Math.abs(num.value) / den.value * 10000) / 100;
+    console.log("Share of sales " + release.accession + " " + requests[i].guidePeriod + ": "
+      + JSON.stringify(num.found_as) + " " + num.value + " / " + JSON.stringify(den.found_as) + " " + den.value
+      + (why.length ? " - not used (" + why.join("; ") + ")" : " = " + share + "% - USED"));
+    if (why.length) return;
+    const before = actuals[i];
+    actuals[i] = {
+      ...num,
+      metric: before.metric, metric_as_written: before.metric_as_written, basis: before.basis,
+      guided_shape: before.guided_shape, guided_unit: before.guided_unit, guide_period: before.guide_period,
+      period_wanted: before.period_wanted, expected: before.expected,
+      value: share, unit: "percent", unit_mismatch: false, basis_mismatch: null,
+      computed: true,
+      found_as: String(num.found_as || "amount") + " as a share of " + String(den.found_as || "sales")
+        + ", computed from " + Math.abs(num.value) + " and " + den.value + " " + num.unit,
+      quote: String(numRow.quote) + " | " + String(denRow.quote),
+      ratio_computed: { numerator: num.value, denominator: den.value, unit: num.unit },
+    };
+    computed++;
+  });
+  return { asked: idx.length, computed };
+}
+
+/**
  * One release and a list of metrics in, the reported figures out.
  *
  * Every requested metric comes back whether found or not. A missing row and a
@@ -1791,6 +1871,8 @@ export async function actualsFrom(env, cik, release, requests, cal) {
 
   // Any growth guide still without a usable answer: build it from two amounts.
   const growth = await growthFromLevels(env, requests, actuals, recheck.adjustedFor, filing.text, release, cal);
+  // A guide stated as a share of sales: the two amounts, divided.
+  const ratio = await ratioFromAmounts(env, requests, actuals, filing.text, release, cal);
 
   // Where the release itself measures a figure against guidance, keep the
   // sentence: it confirms the pairing (score.js).
@@ -1827,6 +1909,7 @@ export async function actualsFrom(env, cik, release, requests, cal) {
     deepLookFound: deep.found,
     growthAsked: growth.asked,
     growthComputed: growth.computed,
+    ratioComputed: ratio.computed,
     actuals,
   };
 }

@@ -1011,9 +1011,32 @@ function asChange(g) {
   return g;
 }
 
+/* A CHANGE FROM THE QUARTER BEFORE, NOT FROM A YEAR AGO.
+   Delta, October 2026: "we expect December quarter non-fuel unit cost growth to
+   improve 1 to 2 points sequentially". It was stored as unit cost growth of
+   1% to 2% - a year-on-year guide - and would have been scored against the
+   year-on-year figure in January: the company guided an improvement of 1-2
+   points from September's rate, not growth of 1-2%. A guide stated against the
+   previous quarter is kept as a guidance event with its figures recorded, and
+   is not scored, because the record holds no figure measured that way. */
+const SEQUENTIAL = /\bsequential(?:ly)?\b|\bquarter[-\s]over[-\s]quarter\b|\bq\/q\b|\b(?:from|versus|vs\.?|compared (?:to|with)) the (?:prior|previous|preceding|[a-z]+) quarter\b/i;
+const YEAR_ON_YEAR = /\byear[-\s]over[-\s]year\b|\by\/y\b|\byoy\b|\b(?:prior|previous|last)[-\s]year\b|\bsame (?:quarter|period) (?:of |in )?(?:the )?(?:prior|previous|last) year\b/i;
+function sequentialOnly(g) {
+  const q = String(g.quote || "");
+  // Only a change: "gross margin of 72% to 73%, up from the prior quarter" is
+  // a level, and the level is what is guided.
+  if (!/^growth_/.test(String(g.shape || "")) && !/\b(?:points?|pts|bps|basis points)\b/i.test(q)) return g;
+  if (g.shape === "qualitative" || !SEQUENTIAL.test(q) || YEAR_ON_YEAR.test(q)) return g;
+  return { ...g, shape: "qualitative", low: null, high: null, value: null, numbers_verified: false,
+    sequential: true, reported_numbers: { low: g.low ?? null, high: g.high ?? null, value: g.value ?? null },
+    guard_note: "Kept, not scored: the guide is a change from the previous quarter, and no result is measured that way." };
+}
+
 export function guardGuide(input, filingText) {
   const held = notOnePeriod(input);
   if (held !== input) return held;
+  const seq = sequentialOnly(input);
+  if (seq !== input) return seq;
   const g = inBasisPoints(aboutNotPlusMinus(qualifierFromQuote(input.shape === "reaffirmed" ? recoverReaffirmed(input) : input)));
 
   const pool = quoteNumbers(g.quote);
@@ -1882,11 +1905,51 @@ const SPAN_PHRASE = /\b(low|mid|high)[-\s]*single[-\s]*(?:digit)?[-\s]*(?:to|and
 const WORD_PHRASE = new RegExp(
   "\\b(flat)\\b(?:\\s+to\\s+(up|down)\\s+)?"
   + "|\\b(low|mid|high)(?:[-\\s]+(?:to|and)[-\\s]+(low|mid|high))?[-\\s]*"
-  + "(?:(single)[-\\s]*digits?|(double)[-\\s]*digits?|(teens)|(20|30|40|50)s|(20|30|40|50)[-\\s]*(?:percent|%))",
+  + "(?:(single)[-\\s]*digits?|(double)[-\\s]*digits?|(teens)|(20|30|40|50)s|(20|30|40|50)[-\\s]*(?:percent|%)|(twenties|thirties|forties|fifties))",
   "gi");
 
 const DOWN = /\b(declin\w*|decreas\w*|down|lower|drop\w*|fall\w*|contract\w*|negative)\b/i;
 const UP = /\b(grow\w*|growth|increas\w*|up|rise|rising|higher|expan\w*|positive)\b/i;
+
+/**
+ * THE GROWTH RATE A DOLLAR GUIDE "EQUATES TO".
+ *
+ * P&G, April 2025: "P&G now expects fiscal 2025 core earnings per share growth
+ * to be in the range of $6.72 to $6.82 per share, which equates to two to four
+ * percent growth versus fiscal 2024 core EPS of $6.59." The dollar guide was
+ * read; the growth guide in the same sentence was not, so the growth guide in
+ * force (5% to 7%, from January) was never replaced, and the year went
+ * unscored. Where a dollar guide's own sentence says it equates to (or
+ * represents) a range of growth, that range is a guide of its own, for the same
+ * period, as a rate. Only a range: "a mid-point ... increase of 6%" is a
+ * midpoint, not a guide.
+ */
+const EQUATES = new RegExp("\\b(?:equates?\\s+to|equating\\s+to|represents?|representing)\\s+(?:a\\s+range\\s+of\\s+|growth\\s+of\\s+)?"
+  + "((?:-?\\d+(?:\\.\\d+)?|in[-\\s]line|flat|" + NUM_WORD + ")\\s*(?:percent|%)?\\s*(?:to|-|\u2013)\\s*(?:up\\s+)?(?:\\d+(?:\\.\\d+)?|" + NUM_WORD + ")\\s*(?:percent|%))"
+  + "\\s*(growth|increase|decline|decrease)?", "i");
+export function rateFromEquates(g) {
+  if (!g || !/^USD/.test(String(g.unit || "")) || typeof g.low !== "number" || typeof g.high !== "number") return null;
+  const m = String(g.quote || "").match(EQUATES);
+  if (!m) return null;
+  const phrase = m[1];
+  const nums = [];
+  for (const x of phrase.matchAll(/-?\d+(?:\.\d+)?/g)) nums.push(Number(x[0]));
+  let lo, hi, words = null;
+  if (nums.length === 2) [lo, hi] = nums;
+  else {
+    const sp = spelledFigures(phrase.replace(/^(in[-\s]line|flat)/i, (w) => w)); // spelled forms
+    const vals = sp.map((f) => f.value);
+    if (vals.length < 2) return null;
+    [lo, hi] = [vals[0], vals[1]];
+    words = phrase.trim();
+  }
+  if (/decline|decrease/i.test(m[2] || "")) [lo, hi] = [-hi, -lo];
+  if (!(lo <= hi)) return null;
+  const label = /growth|increase|decline|change/i.test(String(g.metric_as_written || ""))
+    ? String(g.metric_as_written) : String(g.metric_as_written || "") + " growth";
+  return { ...g, metric_as_written: label, unit: "percent", shape: "growth_range", low: lo, high: hi, value: null,
+    from_words: words, numbers_verified: true, equates_from: g.metric_as_written };
+}
 
 /**
  * A FIGURE TAKEN FROM THE PAST-YEAR COLUMN OF AN OUTLOOK TABLE.
@@ -1982,7 +2045,13 @@ function expandAbbr(s) {
 
 export function rangeFromWords(g) {
   if ([g.low, g.high, g.value].some((x) => typeof x === "number")) return g;
-  const quote = expandAbbr(g.quote);
+  /* What the guide WAS is not the guide. GE, October 2025: "CES now expects
+     revenue growth of low twenties, up from our prior guide of high-teens".
+     "Low twenties" was not read, "high-teens" was, and the record held the old
+     guide as the one in force - the year was scored as 5 points above it,
+     when it was 1 point above the guide the company actually gave. The words
+     from "up from our prior guide" on are cut before any phrase is read. */
+  const quote = expandAbbr(g.quote).replace(/[,;]?\s*(?:(?:up|down|raised|lowered|increased|reduced|changed)\s+)?from\s+(?:our|the|its)?\s*(?:prior|previous|earlier|original)\b[\s\S]*$/i, "");
   const found = [];
   let m;
   const taken = [];
@@ -2002,7 +2071,11 @@ export function rangeFromWords(g) {
     else if (m[6]) r = phraseRange(m[3], m[4], "double");
     else if (m[7]) r = phraseRange(m[3], m[4], "teens");
     else if (m[8] || m[9]) r = phraseRange(m[3], m[4], "decade", m[8] || m[9]);
-    found.push({ at: m.index, text: m[0].trim(), r, flat, flatTo, isLevel: Boolean(m[8] || m[9]) });
+    /* "Low twenties" is "low 20s" written out: GE's CES revenue growth guide
+       of October 2025. Read as growth when the sentence speaks of growth. */
+    else if (m[10]) r = phraseRange(m[3], m[4], "decade", { twenties: 20, thirties: 30, forties: 40, fifties: 50 }[m[10].toLowerCase()]);
+    const spelledDecade = Boolean(m[10]) && !/\b(grow\w*|growth|increas\w*|declin\w*|decreas\w*)\b/i.test(quote);
+    found.push({ at: m.index, text: m[0].trim(), r, flat, flatTo, isLevel: Boolean(m[8] || m[9]) || spelledDecade });
   }
   if (!found.length) return g;
   found.sort((x, y) => x.at - y.at);
@@ -2117,7 +2190,10 @@ export async function guidanceFrom(env, cik, release, cal, readAlready) {
       ? resolvePeriod(g.period_text, calendar, { referenceDate: release.filed, direction: "future" })
       : { period: null, why: "No fiscal calendar was supplied." };
     return { ...g, period: r.period, period_how: r.how || null, period_why: r.why || null };
-  }).map((g) => rangeFromWords(pastYearColumn(g, filing.text)));
+  }).map((g) => rangeFromWords(pastYearColumn(g, filing.text))).flatMap((g) => {
+    const twin = rateFromEquates(g);
+    return twin ? [g, twin] : [g];
+  });
   const withPeriods = impliedYear(dropEarlierColumn(withPeriodsAll, filing.text), filing.text);
 
   // Every guide as extracted, in order - what the next release is ASKED
