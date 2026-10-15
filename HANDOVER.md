@@ -167,3 +167,16 @@ with the 10-Q's Baseten sentence as one changed sentence - two different deals. 
 - GE 2025 adjusted revenue growth (LDD, later raised) has no scored row: the guide is not carried to the Jan 2026 release.
 - GE 2023 "Free cash flow* Flat to slightly improved" stored as 0% (a dollar measure guided in words).
 - GE 2024 CES guides labelled "Commercial Engines & Services: ..." while 2025-26 say "CES: ..." (two tables, one part).
+
+## Oct 15 2026 (afternoon): UNH fixed; product direction
+
+- UNH: parts named by their table row are scoped (`rowLabelPart`): Optum Health / Insight / Rx and Community & State
+  rows were stored as the company's revenue and operating earnings. Company revenue guide >$439bn now captured.
+  Lines of several guides separated by ";" or bullets are now judged clause by clause for the second look.
+  Full rebuild: only CCL, DAL, UNH, WFC changed; checked.
+- DAL Q3 2024 revenue guide is now "Up 2% - 4%" (was read as 0); WFC's 3Q26 dividend guide ($0.50) is now scored.
+
+**Product direction (Zahoor, 15 Oct):** one subscription, three emails a quarter per company -
+(1) a PREVIEW before the report: guide in force, record against own guides, how much it usually beats by
+(sandbagging) and what the rest of the year needs; (2) Release Watch minutes after the 8-K; (3) Filing Watch when the
+10-Q lands. The preview is the piece still to build; report dates to be estimated from the web.
