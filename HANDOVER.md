@@ -208,3 +208,23 @@ PREVIEW (src/preview.js, scripts/preview.mjs, .github/workflows/preview.yml):
 **Open for the preview:** report dates are estimates from last year (Zahoor wanted dates from the web - no free,
 licensed calendar API is wired; a company's own "will report on" 8-K could confirm the date); "what the rest of the
 year needs" (FY guide minus year to date) is not built; Abbott's estimate (14 Oct) passed before the job existed.
+
+## Oct 15 2026 (night): Prologis email review - STATE AT HANDOVER
+
+Zahoor got Prologis's live email (15 Oct). Checked line by line against the release: every figure shown was right, but:
+- Acquisitions was RAISED ($1.5-2.0bn -> $2.1-2.3bn) and left out of the email: called a "scope change" because the
+  low end moved 40%. Fixed: scale changes are judged on midpoints (revisions.js).
+- "Core FFO excluding Net Promote Income" (same $6.25-6.29 as Core FFO) was dropped as a duplicate. Fixed in
+  dedupeGuides: an "excluding ..." twin is kept only when its label is the other label plus that clause. (A first
+  version keyed on the whole "excluding" phrase and un-folded Carnival's table columns; replaced.)
+- The "[Check] PLD" email's two "guidance not read" lines were definitions/headings: definition lines are now skipped.
+
+**A full rebuild (run 38749981107) was started with commit e7d75fd and NOT yet checked.** First thing next chat:
+1. Confirm it succeeded; diff every record against the previous build (pairs scored, currentGuidance, revisions).
+2. Check specifically: PLD (Acquisitions raised; Core FFO excl. promote present), CCL (2026 Q4/FY cost guides back to
+   one per period: current $ 1.9%/3.5%, constant currency 1.7%/2.2% - no false "cut"), DAL Q3 2024 revenue guide
+   (should be up 2%-4%, not 0), MKC 2025/2026 revisions (adjusted EPS 2025 cut and gross margin 2026 should be present).
+3. Re-send PLD with send.yml test ticked and read it.
+
+Report dates for the preview: Zahoor decided to wait for real subscribers (or use the signup page) before adding a
+date source.
