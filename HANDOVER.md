@@ -151,3 +151,19 @@ History is a rolling 14 releases (~3.5 years); older guides fall out as new rele
 (10-K said "not raised") sits in "Also noted"; $2.7bn contracts at #6; $328.2m prepayments only a related link;
 (b) Parker note x3, Ekso sale x3, Grid Note x3; (c) #10 pairs the 10-K's Microsoft "two-year partnership" sentence
 with the 10-Q's Baseten sentence as one changed sentence - two different deals. (c) first; it implies a falsehood.
+
+## Oct 15 2026: after batch 2 (rebuilt and checked)
+
+- Hang fix: a model call during rebuilds is cut off at 3 minutes and logged (scripts/answers.mjs); a failed actuals
+  question is asked again in halves (actuals.js). GE had failed the rebuild twice on one question.
+- Revisions treat a rate and an amount of one measure as two guides (unitKind in revisions.js). Recovered guides that
+  had been silently dropped: P&G core EPS growth path, J&J adjusted operational sales %, Carnival net income %,
+  McCormick EPS growth, Netflix quarterly revenue in dollars, FactSet's 2024 EPS path.
+- All 40 rebuilt 15 Oct 05:02 UTC, no failures; 1,741 answers, 1 paid. Test emails for PG, GE, RPM checked against
+  the releases: correct.
+
+**Open, found while checking (add to the list above):**
+- P&G FY2025 core EPS growth (guided 5-7%, then cut) has no scored row; the dollar table has it.
+- GE 2025 adjusted revenue growth (LDD, later raised) has no scored row: the guide is not carried to the Jan 2026 release.
+- GE 2023 "Free cash flow* Flat to slightly improved" stored as 0% (a dollar measure guided in words).
+- GE 2024 CES guides labelled "Commercial Engines & Services: ..." while 2025-26 say "CES: ..." (two tables, one part).
