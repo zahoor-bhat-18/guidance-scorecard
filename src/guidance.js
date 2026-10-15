@@ -1044,15 +1044,30 @@ function sequentialOnly(g) {
    With more than one such phrase in the sentence nothing is guessed. */
 function flatRange(g) {
   const isChange = g.unit === "percent" || /growth/.test(String(g.shape || ""));
-  const zeroPoint = g.value === 0 && g.low == null && g.high == null;
-  const zeroLow = g.low === 0 && g.high == null && g.value == null;
-  if (!isChange || !(zeroPoint || zeroLow)) return g;
+  if (!isChange) return g;
   const re = /\bflat\s*(?:-|–|—|to)\s*(up|down)?\s*(?:approximately\s+|about\s+|~\s?)?(\d+(?:\.\d+)?)\s*(?:%|percent\b|pts?\b|points?\b)/gi;
   const all = [...String(g.quote || "").matchAll(re)];
   if (all.length !== 1) return g;
   const n = Number(all[0][2]);
   if (!(n > 0)) return g;
   const down = /down/i.test(all[0][1] || "");
+  /* Which readings this repairs: a single 0, a 0 with no top, or a range
+     whose far end is the printed figure but whose other end is not printed
+     (the model read Delta's "Flat - Up 1%" as -1 to 1, and once as -2.5 to
+     1, taking the "(2.5pts)" beside it). A range the sentence prints is
+     left alone. */
+  const text = String(g.quote || "").replace(/\(\s*\d+(?:\.\d+)?\s*pts?\s*\)/gi, " ");
+  const num = (v) => String(Math.abs(v)).replace(".", "\\.") + "(?![\\d.])";
+  // The other end counts as printed only with its sign: "-1%", "(1)%",
+  // "down 1%" for a negative; "up 1%" for a positive on a "flat to down".
+  const printed = (v) => v < 0
+    ? new RegExp("(?:\\(\\s*|[-\u2212\u2013]\\s?|\\bdown\\s+|\\bdecline\\s+(?:of\\s+)?)" + num(v), "i").test(text)
+    : new RegExp("\\bup\\s+(?:approximately\\s+)?" + num(v), "i").test(text);
+  const zeroPoint = g.value === 0 && g.low == null && g.high == null;
+  const zeroLow = g.low === 0 && g.high == null && g.value == null;
+  const farEnd = down ? g.low : g.high, nearEnd = down ? g.high : g.low;
+  const brokenRange = g.value == null && farEnd === (down ? -n : n) && typeof nearEnd === "number" && nearEnd !== 0 && !printed(nearEnd);
+  if (!(zeroPoint || zeroLow || brokenRange)) return g;
   return { ...g, shape: "growth_range", value: null, low: down ? -n : 0, high: down ? 0 : n,
     guard_note: ((g.guard_note ? g.guard_note + " " : "") + "\"Flat\" to " + (down ? "-" : "") + n + " read as a range.").trim() };
 }
@@ -1508,19 +1523,6 @@ export function missedGuideHits(text, guides) {
   return hits;
 }
 
-/* A period as written, reduced to its year and quarter: "fiscal year 2025",
-   "fiscal 2025" and "full year 2025" are one; "4Q 2026" and "the fourth
-   quarter of 2026" are one. Text with neither is kept as written. */
-function periodSignature(text) {
-  const t = String(text || "").toLowerCase();
-  const years = [...new Set((t.match(/\b(?:19|20)\d{2}\b/g) || []).concat((t.match(/\b(?:fy|q[1-4]|[1-4]q)\s?'?(\d{2})\b/g) || []).map((x) => "20" + x.slice(-2))))].sort();
-  const q = /\b(?:first|1st)\s+quarter\b|\bq1\b|\b1q/.test(t) ? "q1" : /\b(?:second|2nd)\s+quarter\b|\bq2\b|\b2q/.test(t) ? "q2"
-    : /\b(?:third|3rd)\s+quarter\b|\bq3\b|\b3q/.test(t) ? "q3" : /\b(?:fourth|4th)\s+quarter\b|\bq4\b|\b4q/.test(t) ? "q4"
-    : /\b(?:second half|h2|2h)\b/.test(t) ? "h2" : /\b(?:first half|h1|1h)\b/.test(t) ? "h1" : "";
-  if (!years.length && !q) return t.replace(/\s+/g, " ").trim();
-  return years.join(",") + "|" + q;
-}
-
 async function secondLookGuides(env, filing, guides) {
   const snippets = missedGuideLines(filing.text, guides);
   if (!snippets.length) return { asked: 0, found: [] };
@@ -1538,21 +1540,8 @@ async function secondLookGuides(env, filing, guides) {
   // Only what the first reading did not already have.
   const pool = new Set();
   for (const g of guides) for (const k of ["low", "high", "value"]) if (typeof g[k] === "number") pool.add(g[k]);
-  /* Only guides the first reading missed - not a second reading of one it
-     has. McCormick's October 2025 table set the current guide beside the
-     prior one; the first reading took adjusted operating income growth from
-     the current column (2% to 4%), the second look from the prior column
-     (3% to 5%), and the record showed the guide held when it had been cut.
-     A measure the first reading already has for that period, unit and
-     basis is left as the first reading gave it. */
-  const sig = (g) => [metricKey(g), g.unit || "", g.basis || "", periodSignature(g.period_text)].join("|");
-  const had = new Set(guides.map(sig));
   const found = extra.filter((g) => {
     const v = [g.low, g.high, g.value].filter((x) => typeof x === "number");
-    if (had.has(sig(g))) {
-      console.log("Guidance second look " + filing.accession + ": " + g.metric_as_written + " " + (g.period_text || "") + " " + JSON.stringify([g.low, g.high, g.value]) + " - already read, first reading kept");
-      return false;
-    }
     return v.length && !v.every((x) => pool.has(x));
   }).map((g) => ({ ...g, second_look: true }));
   for (const g of found) console.log("Guidance second look " + filing.accession + ": found " + g.metric_as_written + " " + (g.period_text || "") + " " + JSON.stringify([g.low, g.high, g.value]));
