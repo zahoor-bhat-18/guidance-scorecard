@@ -1,0 +1,58 @@
+name: preview
+
+# The email before a company reports. Daily at 02:30 UTC (08:00 in India),
+# for every company a Guidance Scorecard subscriber follows: when the next
+# report is estimated one to three days ahead, its followers get the preview,
+# once. Reads stored records only - no EDGAR, no model.
+#
+# Run by hand with "test" ticked to send chosen companies to TEST_EMAIL only,
+# whatever their dates.
+
+on:
+  schedule:
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+    inputs:
+      tickers:
+        description: "Comma-separated tickers (empty = every followed company)."
+        required: false
+        default: ""
+      test:
+        description: "Test: send to TEST_EMAIL only, whatever the date."
+        type: boolean
+        default: true
+      dry:
+        description: "Dry run: list who is due, send nothing."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Send previews
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          UNSUB_SECRET: ${{ secrets.UNSUB_SECRET }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          KV_NAMESPACE_ID: ${{ vars.KV_NAMESPACE_ID }}
+          SITE_URL: "https://zahoorbhat.com"
+          EMAIL_FROM: ${{ vars.EMAIL_FROM }}
+          REPLY_TO: ${{ vars.REPLY_TO }}
+          POSTAL_ADDRESS: ${{ vars.POSTAL_ADDRESS }}
+          TEST_EMAIL: ${{ vars.TEST_EMAIL }}
+        run: |
+          node scripts/preview.mjs ${{ inputs.test && '--test' || '' }} ${{ inputs.dry && '--dry' || '' }} "${{ inputs.tickers }}"
