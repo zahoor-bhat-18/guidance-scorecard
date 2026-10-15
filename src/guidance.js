@@ -1019,8 +1019,12 @@ function asChange(g) {
    points from September's rate, not growth of 1-2%. A guide stated against the
    previous quarter is kept as a guidance event with its figures recorded, and
    is not scored, because the record holds no figure measured that way. */
-const SEQUENTIAL = /\bsequential(?:ly)?\b|\bquarter[-\s]over[-\s]quarter\b|\bq\/q\b|\b(?:from|versus|vs\.?|compared (?:to|with)) the (?:prior|previous|preceding|[a-z]+) quarter\b/i;
-const YEAR_ON_YEAR = /\byear[-\s]over[-\s]year\b|\by\/y\b|\byoy\b|\b(?:prior|previous|last)[-\s]year\b|\bsame (?:quarter|period) (?:of |in )?(?:the )?(?:prior|previous|last) year\b/i;
+/* "Compared to the third quarter of 2024" is a year ago, not the quarter
+   before: Carnival's cost guides say it every quarter, and the first version
+   of this rule read it as sequential and dropped them (15 Oct 2026). Only the
+   prior, previous or preceding quarter is the quarter before. */
+const SEQUENTIAL = /\bsequential(?:ly)?\b|\bquarter[-\s]over[-\s]quarter\b|\bq\/q\b|\b(?:from|versus|vs\.?|compared (?:to|with)|over) the (?:prior|previous|preceding|immediately preceding) quarter\b(?!\s+of\s+(?:fiscal\s+)?\d)/i;
+const YEAR_ON_YEAR = /\byear[-\s]over[-\s]year\b|\by\/y\b|\byoy\b|\b(?:prior|previous|last)[-\s]year\b|\bsame (?:quarter|period) (?:of |in )?(?:the )?(?:prior|previous|last) year\b|\b(?:quarter|period|months) of (?:fiscal )?(?:19|20)\d{2}\b/i;
 function sequentialOnly(g) {
   const q = String(g.quote || "");
   // Only a change: "gross margin of 72% to 73%, up from the prior quarter" is
