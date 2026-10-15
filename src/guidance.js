@@ -1596,6 +1596,31 @@ function periodWords(text) {
   return y + "|" + q;
 }
 
+/* Is this guide the PREVIOUS column of a "Previous | Revised" table?
+   Prologis's July 2025 supplement prints "Cash Same Store NOI* 4.00% to
+   5.00% 4.25% to 4.75%" under the heading "Previous Revised"; the second
+   look took 4.00-5.00% - April's guide - as July's. True when the nearest
+   heading above names previous (or prior) before revised (or updated,
+   current, new), and the row prints another figure of the same kind right
+   after this guide's. */
+function inPreviousColumn(flat, g) {
+  const q = String(g.quote || "").replace(/\s+/g, " ").trim();
+  if (q.length < 12) return false;
+  const at = flat.indexOf(q);
+  if (at < 0) return false;
+  const above = flat.slice(Math.max(0, at - 800), at);
+  const heads = [...above.matchAll(/\b(previous|prior)\b[^.]{0,40}?\b(revised|updated|current|new)\b|\b(revised|updated|current|new)\b[^.]{0,40}?\b(previous|prior)\b/gi)];
+  if (!heads.length) return false;
+  const h = heads[heads.length - 1];
+  if (!h[1]) return false;                         // revised first: the first column is current
+  // The same table: no sentence ends between the heading and the row.
+  if (/[.!?]["\u201d]?\s+["\u201c]?[A-Z]/.test(above.slice(h.index + h[0].length).replace(/\d\.\d/g, "0"))) return false;
+  const after = flat.slice(at + q.length, at + q.length + 40);
+  const pct = /%/.test(q), usd = /\$/.test(q);
+  const next = pct ? /^\s*\(?-?\d[\d.,]*\s?%/ : usd ? /^\s*\$\s?\(?\d/ : /^\s*\(?-?\d[\d.,]*/;
+  return next.test(after);
+}
+
 async function secondLookGuides(env, filing, guides) {
   const snippets = missedGuideLines(filing.text, guides);
   if (!snippets.length) return { asked: 0, found: [] };
@@ -1630,8 +1655,13 @@ async function secondLookGuides(env, filing, guides) {
     return guides.some((f) => f.unit in SCALE && metricKey(f) === metricKey(g) && (f.period_text || "") && periodWords(f.period_text) === periodWords(g.period_text)
       && typeof mid(f) === "number" && mid(f) !== 0 && Math.abs(a * SCALE[g.unit] - mid(f) * SCALE[f.unit]) / Math.abs(mid(f) * SCALE[f.unit]) > 0.33);
   };
+  const flatText = String(filing.text || "").replace(/\s+/g, " ");
   const found = extra.filter((g) => {
     const v = [g.low, g.high, g.value].filter((x) => typeof x === "number");
+    if (v.length && inPreviousColumn(flatText, g)) {
+      console.log("Guidance second look " + filing.accession + ": " + g.metric_as_written + " " + (g.period_text || "") + " " + JSON.stringify([g.low, g.high, g.value]) + " - the previous column of a previous/revised table, set aside");
+      return false;
+    }
     if (v.length && farFromFirst(g)) {
       console.log("Guidance second look " + filing.accession + ": " + g.metric_as_written + " " + (g.period_text || "") + " " + JSON.stringify([g.low, g.high, g.value]) + " - far from the first reading of the same measure, set aside as a part's");
       return false;
