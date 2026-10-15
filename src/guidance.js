@@ -1350,6 +1350,22 @@ export function missedGuideHits(text, guides) {
        billion" - no range, no band, and a guide all the same. */
     const sentenceGuide = OUTLOOK_WORD.test(line) && /\$\s?\d|\d\s?%/.test(line);
     if (!GUIDE_SHAPED.test(line) && !sentenceGuide) return;
+    /* ONE CLAUSE AT A TIME. UnitedHealth's headline lists its outlook as one
+       line: "Full Year 2026 Revenue Outlook Greater Than $439.0 Billion;
+       Earnings Outlook Greater Than $17.10 Per Share; Adjusted Earnings
+       Greater Than $17.75 Per Share". The EPS guide was read, so the line
+       counted as covered - and the revenue guide, never read, was never
+       looked for again. A line of guides separated by semicolons or bullets
+       is judged clause by clause. */
+    const clauses = String(line).split(/;\s+|\s[\u2022\u00b7]\s/).filter((c) => /\d/.test(c));
+    if (clauses.length > 1) {
+      const open = clauses.filter((c) => {
+        const ns = [...statedNumbers(c)].filter((n) => n !== 0 && !(Number.isInteger(n) && n >= 1990 && n <= 2100));
+        return ns.length && !ns.some(covered) && /\$\s?\d|\d\s?%|\d\s?(billion|million)/i.test(c);
+      });
+      if (open.length) hits.push({ i, line });
+      return;
+    }
     const nums = [...statedNumbers(line)].filter((n) => n !== 0 || /\b0(\.0+)?\s?%/.test(line));
     if (!nums.length) return;
     /* A results row, not a guide row. FactSet's results table carries a
@@ -1557,7 +1573,47 @@ const escapeRe = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
  * and Spirits decline of 17% - 20%" gives each range its own part).
  * Deterministic and free.
  */
+/**
+ * A PART NAMED BY ITS TABLE ROW.
+ *
+ * UnitedHealth's "Optum 2026 Outlook" table has the parts as rows and the
+ * measures as columns: "Optum Health > $91,000 > $2,200 ~2.4%". The model took
+ * the column heading for the label and the row for the quote, and stored
+ * "Revenue at least $91bn" and "Revenues at least $150.5bn" as the COMPANY's
+ * revenue - a company guiding more than $439bn. In January it would have been
+ * scored as a beat of $350bn.
+ *
+ * Where the quote does not name the measure at all and opens with a short
+ * name before the figure, that name is the row, and the row is the part.
+ * "Total Optum" is Optum. The company's own row (its name at the top of the
+ * release) is the company.
+ */
+function rowLabelPart(g, intro) {
+  const label = String(g.metric_as_written || "").toLowerCase();
+  const quote = String(g.quote || "").trim();
+  const words = label.replace(/[^a-z\s]/g, " ").split(/\s+/).filter((w) => w.length > 3);
+  if (!words.length || words.some((w) => quote.toLowerCase().includes(w.replace(/s$/, "")))) return null;
+  const m = quote.match(/^([A-Z][A-Za-z&'.\- ]{1,40}?)\s*(?:\(\d+\)|\d)?\s*(?:[>~<]|\$|\d)/);
+  if (!m) return null;
+  const name = m[1].replace(/^(Total|Consolidated)\s+/i, "").trim();
+  if (!name || !isPartName(name) || MEASURE_WORD.test(name)) return null;
+  // A name: every word capitalised (or "&", "and", "of"), not a verb or an
+  // adverb opening the line ("Increase 3.75% to 4.75%", "Expanding to 10.9%",
+  // "Estimated FY 2025").
+  if (!name.split(/\s+/).every((w) => /^[A-Z&]/.test(w) || /^(and|of|&)$/.test(w))) return null;
+  if (/^(Increase|Increasing|Decrease|Decreasing|Estimated|Expected|Expect|Approximately|Approx|About|Around|Roughly|Up|Down|Flat|Growth|Expanding|Provides|Full|Fiscal|FY|Raised|Lowered|Reaffirmed|Updated|Prior|Current|New|Between|At|Low|Mid|High)\b/.test(name)) return null;
+  // Already the label's part, or the company itself.
+  if (label.includes(name.toLowerCase())) return null;
+  if (intro && (isTheCompany(name, intro) || String(intro).toLowerCase().includes(name.toLowerCase()))) return null;
+  return name;
+}
+
 export function scopeByName(guides, intro) {
+  guides = (guides || []).map((g) => {
+    if (g.segment) return g;
+    const part = rowLabelPart(g, intro);
+    return part ? { ...g, segment: part, metric_as_written: part + ": " + g.metric_as_written, scope_from: "the table row it sits in" } : g;
+  });
   const parts = partsNamed(guides, intro);
   if (!parts.length) return guides;
   return guides.map((g) => {
