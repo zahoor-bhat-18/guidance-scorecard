@@ -102,11 +102,24 @@ export async function startAnswers({ from, fresh = false }) {
       return replay(saved[key]);
     }
 
-    const r = await realFetch(input, init);
-    stats.asked += 1;
-    if (!r.ok) return r;
-
-    const text = await r.text();
+    /* A model answer that hangs is cut off after three minutes and logged
+       with what was being asked, so a stall can be found in the run log. The
+       request body is unchanged, so the saved-answer key is too. */
+    const started = Date.now();
+    const what = String((init && init.body) || "").replace(/\s+/g, " ").match(/"content":"((?:[^"\\]|\\.){0,160})/g);
+    const note = what ? what[what.length - 1].slice(11, 171) : "";
+    let r, text;
+    try {
+      r = await realFetch(input, { ...init, signal: (init && init.signal) || AbortSignal.timeout(180000) });
+      stats.asked += 1;
+      if (!r.ok) return r;
+      text = await r.text();
+    } catch (e) {
+      console.error("  Model call stopped after " + Math.round((Date.now() - started) / 1000) + "s (" + e.name + "): " + note);
+      throw e;
+    }
+    const took = Math.round((Date.now() - started) / 1000);
+    if (took > 60) console.error("  Model call took " + took + "s: " + note);
     if (usable(text)) saved[key] = text;
     else stats.notSaved += 1;
     return replay(text);
