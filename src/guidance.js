@@ -1206,11 +1206,7 @@ function dedupeGuides(guides) {
   for (const g of guides) {
     const key = [
       g.metric || "",
-      /* "Core FFO" and "Core FFO, excluding Net Promote Income" are two guides
-         even when the company gives them the same figures (Prologis, October
-         2026: both $6.25 to $6.29). Read as one guide stated twice, the second
-         was dropped, and its record table showed no guide at all. */
-      /\bexcluding\b|\bex[-\s]/i.test(String(g.metric_as_written || "")) ? "ex:" + String(g.metric_as_written).toLowerCase().replace(/^.*?\b(excluding|ex[-\s])/, "$1").replace(/[^a-z ]/g, "").trim() : "",
+
       g.basis || "",
       g.unit || "",
       g.low ?? "-",
@@ -1220,10 +1216,23 @@ function dedupeGuides(guides) {
     ].join("|");
 
     const held = seen.get(key);
-    if (held) {
+    /* "Core FFO" and "Core FFO, excluding Net Promote Income" are two guides
+       even when the company gives them the same figures (Prologis, October
+       2026: both $6.25 to $6.29). Read as one guide stated twice, the second
+       was dropped and its record table showed no guide. Kept apart only when
+       one label is the other with an "excluding ..." clause added; any other
+       collision is the same guide stated twice, as before. */
+    const bare = (x) => String(x || "").toLowerCase().replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
+    const addsExclusion = held && (() => {
+      const a = bare(held.metric_as_written), b = bare(g.metric_as_written);
+      const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+      return short.length >= 6 && long !== short && long.startsWith(short) && /^\s*(excluding|ex)\b/.test(long.slice(short.length));
+    })();
+    if (held && !addsExclusion) {
       held.duplicates = (held.duplicates || 0) + 1;
       continue;
     }
+    if (held && addsExclusion) { out.push(g); continue; }
     seen.set(key, g);
     out.push(g);
   }
