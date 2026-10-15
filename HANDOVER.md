@@ -228,3 +228,36 @@ Zahoor got Prologis's live email (15 Oct). Checked line by line against the rele
 
 Report dates for the preview: Zahoor decided to wait for real subscribers (or use the signup page) before adding a
 date source.
+
+## Oct 15 2026 (late night): rebuild checked, five capture fixes - STATE AT HANDOVER
+
+The e7d75fd rebuild was checked: PLD right (acquisitions raise, Core FFO excl. promote), CCL back to normal, but it
+had lost MKC's 2026 gross margin guide (+100-120bp) and Oct 2025 EPS-growth cut, and DAL Q3 2024 revenue was 0%.
+Fixed, all general (commits b8ff961 .. a42e77e), all 40 rebuilt (run 38774934430) and diffed against e7d75fd:
+- Definitions: only the definition's sentence is set aside, not its line (MKC's table shared a 2,500-char line with
+  "is defined as"). Basis-point guides count as guide-shaped.
+- De-dup: guides with no named class merge only when their labels name the same measure (CCL Q4 cost per ALBD cc
+  1.7% was dropped as a repeat of net yields cc 1.7%).
+- "Flat - Up 1%" = 0 to 1 (DAL Sep 2024 update; also mis-signed low ends like -1 or -2.5). DAL Q3 2024 now within.
+- Current-dollar / constant-currency table columns: the later figure is labelled "(in constant currency)" (CCL;
+  also fixed CCL Mar 2026 and 2023 labels, which had cc figures under the plain label). Same unit and each figure
+  once in the row required.
+- columnOrder reads a "Current Guide ... Prior Guide" heading inside a long line: MKC Oct 2025 opinc stays a cut.
+- Second look: a money figure more than a third from the first reading of the same measure/period is set aside as a
+  part's (UNH UnitedHealthcare $9.0-9.3bn, WFC Markets NII); a figure from the previous column of a
+  "Previous | Revised" table is set aside (PLD Jul 2025 same-store NOI 4-5%, LW capex). Logged in backfill.
+- Tried and withdrawn: limiting the second look to measures the first reading missed (blocked better figures).
+- Net change vs e7d75fd: CCL, DAL, MKC, PLD, UAL, UNH only; each checked against the filings. MKC Mar 2026 "raise"
+  of adjusted opinc was false (Jan guide was already 16-20%) and is now "unchanged".
+- PLD re-sent as test and read: correct.
+
+**Pending, by priority:**
+1. Ask Zahoor: the PLD headline counts only the guides shown ("1 raised, 1 cut, 2 narrowed") while the line below
+   lists 5 more raised and 4 more cut. Count all, or keep?
+2. MKC Oct 2025 four-column table (current/prior x reported/cc): net sales shows a false "raise" 0-2% -> 1-3% (the
+   cc column under the plain label). Needs a proper table reader; do alone.
+3. UNH July 2025 parts: scoping does not know UnitedHealthcare/Optum when the verb is "are expected"; guarded now,
+   not fixed (scopeByPlace verb list, partsNamed).
+4. The older list above (Carnival 2023 cost basis - now labels right, recheck the pair; prose guides missed; ratio
+   actuals; investor-site slides; preview "rest of year").
+Filing Watch: no new briefings since CHRN (14 Oct); its HANDOVER open items unchanged.
