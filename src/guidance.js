@@ -2078,7 +2078,7 @@ export function rangeFromWords(g) {
     /* "Low twenties" is "low 20s" written out: GE's CES revenue growth guide
        of October 2025. Read as growth when the sentence speaks of growth. */
     else if (m[10]) r = phraseRange(m[3], m[4], "decade", { twenties: 20, thirties: 30, forties: 40, fifties: 50 }[m[10].toLowerCase()]);
-    const spelledDecade = Boolean(m[10]) && !/\b(grow\w*|growth|increas\w*|declin\w*|decreas\w*)\b/i.test(quote);
+    const spelledDecade = Boolean(m[10]) && !/\b(grow\w*|growth|increas\w*|declin\w*|decreas\w*)\b/i.test(quote + " " + String(g.metric_as_written || ""));
     found.push({ at: m.index, text: m[0].trim(), r, flat, flatTo, isLevel: Boolean(m[8] || m[9]) || spelledDecade });
   }
   if (!found.length) return g;
@@ -2088,6 +2088,17 @@ export function rangeFromWords(g) {
   const merged = [];
   for (let i = 0; i < found.length; i++) {
     const f = found[i];
+    /* Two phrases joined only by "to" are one range: Elevance's Carelon
+       Services revenue growth "High-teens to low-twenties" is 17% to 23%. It
+       had been read as high-teens alone, and a 27% result scored as 8 points
+       above a guide whose top was 23. */
+    const n = found[i + 1];
+    if (f.r && n && n.r && !f.flat && !n.flat && f.isLevel === n.isLevel
+      && /^\s*(?:to|-|\u2013|\u2014)\s*$/i.test(quote.slice(f.at + f.text.length, n.at))) {
+      merged.push({ at: f.at, text: quote.slice(f.at, n.at + n.text.length), r: [f.r[0], n.r[1]], flat: false, flatTo: null, isLevel: f.isLevel });
+      i++;
+      continue;
+    }
     /* "Flat to up slightly" has no second phrase to read: Walmart's capex
        guide. The whole guide stays as words rather than become "flat". */
     if (f.flat && f.flatTo && !(found[i + 1] && found[i + 1].r)) return g;
