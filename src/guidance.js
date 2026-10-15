@@ -799,7 +799,24 @@ function columnOrder(text, quote) {
     if (line.length > 200 || !NOW.test(line) || !WAS.test(line)) continue;
     return line.search(NOW) < line.search(WAS) ? "updated-first" : "previous-first";
   }
-  return null;
+  /* A heading inside a long line. McCormick's October 2025 table arrives as
+     one line of thousands of characters: "Current Guide October 2025 Prior
+     Guide June 2025 Reported Constant Currency ... Adjusted operating income
+     2% to 4% 3% to 5% ...". Read the few hundred characters above the row
+     itself; both headings must name a guide or outlook. */
+  const flat = t.replace(/\s+/g, " ");
+  const q = String(quote || "").replace(/\s+/g, " ").trim();
+  const d = q.search(/\d/);
+  const rowKey = q.slice(0, d < 0 ? 28 : Math.min(q.length, d + 4));
+  const rat = rowKey.length >= 8 ? flat.indexOf(rowKey) : -1;
+  if (rat < 0) return null;
+  const win = flat.slice(Math.max(0, rat - 600), rat);
+  const nowH = [...win.matchAll(/\b(?:updated|current|revised|new)\s+(?:[A-Za-z0-9]+\s+){0,3}?(?:guid\w*|outlook)\b/gi)];
+  const wasH = [...win.matchAll(/\b(?:previous|prior|previously)\s+(?:[A-Za-z0-9]+\s+){0,3}?(?:guid\w*|outlook)\b/gi)];
+  if (!nowH.length || !wasH.length) return null;
+  const n = nowH[nowH.length - 1].index, w = wasH[wasH.length - 1].index;
+  if (Math.abs(n - w) > 120) return null;
+  return n < w ? "updated-first" : "previous-first";
 }
 
 /* Where in its row a guide's own expression starts: the range "5.5 ... 6",
@@ -853,6 +870,9 @@ export function dropEarlierColumn(guides, text) {
       const x = list[a], y = list[b];
       if (drop.has(x) || drop.has(y) || !x.period || x.period !== y.period) continue;
       if (metricKey(x) !== metricKey(y)) continue;
+      // A dollar guide and a growth guide of one measure are two guides
+      // (McCormick: "Adjusted EPS $3.05 to $3.13 | 2% to 5%").
+      if ((x.unit || "") !== (y.unit || "")) continue;
       // The same row: one quote holds the other, or they begin alike.
       const qx = String(x.quote || "").replace(/\s+/g, " ").trim();
       const qy = String(y.quote || "").replace(/\s+/g, " ").trim();
@@ -866,7 +886,10 @@ export function dropEarlierColumn(guides, text) {
       /* Current dollars, then constant currency: the later figure is the
          constant currency guide, whatever label the reading gave it. It is
          relabelled, not dropped - it is a guide the company gave. */
-      if (!order && (first.basis || "") === (second.basis || "") && !SAYS_CURRENCY.test(String(first.metric_as_written || ""))
+      const once = (g) => [g.low, g.high, g.value].filter((n) => typeof n === "number")
+        .every((n) => (row.match(new RegExp("(?<![\\d.])" + String(Math.abs(n)).replace(".", "\\.") + "(?:\\.0+)?(?![\\d])", "g")) || []).length === 1);
+      if (!order && (first.unit || "") === (second.unit || "") && once(first) && once(second)
+        && (first.basis || "") === (second.basis || "") && !SAYS_CURRENCY.test(String(first.metric_as_written || ""))
         && !SAYS_CURRENCY.test(String(second.metric_as_written || "")) && currencyColumns(text, row)) {
         relabel.set(second, { ...second, metric_as_written: String(second.metric_as_written || "").trim() + " (in constant currency)",
           guard_note: ((second.guard_note ? second.guard_note + " " : "") + "Later column of a current-dollar / constant-currency table: labelled constant currency.").trim() });
@@ -1563,6 +1586,16 @@ export function missedGuideHits(text, guides) {
   return hits;
 }
 
+/* A period's words reduced to its years and quarter, to compare two readings
+   of one release ("full year 2025" and "2025"). */
+function periodWords(text) {
+  const t = String(text || "").toLowerCase();
+  const y = (t.match(/\b(?:19|20)\d{2}\b/g) || []).sort().join(",");
+  const q = (t.match(/\b(?:first|second|third|fourth)\s+quarter\b|\bq[1-4]\b|\b[1-4]q\b/) || [""])[0]
+    .replace(/first quarter/, "q1").replace(/second quarter/, "q2").replace(/third quarter/, "q3").replace(/fourth quarter/, "q4").replace(/^([1-4])q$/, "q$1");
+  return y + "|" + q;
+}
+
 async function secondLookGuides(env, filing, guides) {
   const snippets = missedGuideLines(filing.text, guides);
   if (!snippets.length) return { asked: 0, found: [] };
@@ -1580,8 +1613,29 @@ async function secondLookGuides(env, filing, guides) {
   // Only what the first reading did not already have.
   const pool = new Set();
   for (const g of guides) for (const k of ["low", "high", "value"]) if (typeof g[k] === "number") pool.add(g[k]);
+  /* A second-look money figure far from the first reading's figure for the
+     same measure and period is a part's, not the company's. UnitedHealth's
+     July 2025 release gives each segment's outlook in prose; the second look
+     read UnitedHealthcare's "earnings from operations ... $9.0 billion to
+     $9.3 billion" as the company's ($21.55bn-22.15bn, read first). More than
+     a third apart, in money: set aside and logged. Close figures still
+     pass - a second look may read a range the first took as a point. */
+  const SCALE = { "USD billions": 1000, "USD millions": 1, "USD thousands": 0.001 };
+  const mid = (g) => (typeof g.low === "number" && typeof g.high === "number" ? (g.low + g.high) / 2
+    : typeof g.value === "number" ? g.value : typeof g.low === "number" ? g.low : g.high);
+  const farFromFirst = (g) => {
+    if (!(g.unit in SCALE)) return false;
+    const a = mid(g);
+    if (typeof a !== "number") return false;
+    return guides.some((f) => f.unit in SCALE && metricKey(f) === metricKey(g) && (f.period_text || "") && periodWords(f.period_text) === periodWords(g.period_text)
+      && typeof mid(f) === "number" && mid(f) !== 0 && Math.abs(a * SCALE[g.unit] - mid(f) * SCALE[f.unit]) / Math.abs(mid(f) * SCALE[f.unit]) > 0.33);
+  };
   const found = extra.filter((g) => {
     const v = [g.low, g.high, g.value].filter((x) => typeof x === "number");
+    if (v.length && farFromFirst(g)) {
+      console.log("Guidance second look " + filing.accession + ": " + g.metric_as_written + " " + (g.period_text || "") + " " + JSON.stringify([g.low, g.high, g.value]) + " - far from the first reading of the same measure, set aside as a part's");
+      return false;
+    }
     return v.length && !v.every((x) => pool.has(x));
   }).map((g) => ({ ...g, second_look: true }));
   for (const g of found) console.log("Guidance second look " + filing.accession + ": found " + g.metric_as_written + " " + (g.period_text || "") + " " + JSON.stringify([g.low, g.high, g.value]));
