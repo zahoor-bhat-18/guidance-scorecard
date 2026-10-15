@@ -816,8 +816,37 @@ function placeInRow(row, g) {
   return typeof v === "number" ? edge(num(v)) : -1;
 }
 
+/* Is this row in a table whose columns are the same period in current
+   dollars and then in constant currency? Carnival's outlook table heads its
+   columns "Current Dollars | Constant Currency" for each period (headings on
+   short lines of their own), and a row reads "Approx. 1.9% Approx. 1.7%".
+   The heading must sit in the few hundred characters above the row and name
+   both, current/reported first; a heading naming updated and previous
+   guides is a different table (columnOrder). */
+function currencyColumns(text, quote) {
+  const t = String(text || "").replace(/\s+/g, " ");
+  // The row itself, label and its first figure: the label alone is often
+  // found first in the narrative.
+  const q = String(quote || "").replace(/\s+/g, " ").trim();
+  const d = q.search(/\d/);
+  const key = q.slice(0, d < 0 ? 28 : Math.min(q.length, d + 4));
+  if (!t || key.length < 8) return false;
+  const at = t.indexOf(key);
+  if (at < 0) return false;
+  const above = t.slice(Math.max(0, at - 400), at);
+  // The heading nearest the row: the last "constant currency", with a
+  // current-dollar or reported heading before it.
+  const ccs = [...above.matchAll(/\bconstant currency\b/gi)];
+  if (!ccs.length) return false;
+  const cc = ccs[ccs.length - 1].index;
+  if (!/\b(?:current dollars|as reported|reported)\b/i.test(above.slice(Math.max(0, cc - 120), cc))) return false;
+  return !(/\b(?:updated|revised|previous|prior|previously)\b/i.test(above));
+}
+const SAYS_CURRENCY = /constant currency|\bcc\b|currency[-\s]neutral|fx[-\s]neutral/i;
+
 export function dropEarlierColumn(guides, text) {
   const drop = new Set();
+  const relabel = new Map();
   const list = guides || [];
   for (let a = 0; a < list.length; a++) {
     for (let b = a + 1; b < list.length; b++) {
@@ -834,6 +863,16 @@ export function dropEarlierColumn(guides, text) {
       if (px < 0 || py < 0 || px === py) continue;
       const first = px < py ? x : y, second = px < py ? y : x;
       const order = columnOrder(text, row);
+      /* Current dollars, then constant currency: the later figure is the
+         constant currency guide, whatever label the reading gave it. It is
+         relabelled, not dropped - it is a guide the company gave. */
+      if (!order && (first.basis || "") === (second.basis || "") && !SAYS_CURRENCY.test(String(first.metric_as_written || ""))
+        && !SAYS_CURRENCY.test(String(second.metric_as_written || "")) && currencyColumns(text, row)) {
+        relabel.set(second, { ...second, metric_as_written: String(second.metric_as_written || "").trim() + " (in constant currency)",
+          guard_note: ((second.guard_note ? second.guard_note + " " : "") + "Later column of a current-dollar / constant-currency table: labelled constant currency.").trim() });
+        drop.add(second);
+        continue;
+      }
       if (order) {
         drop.add(order === "updated-first" ? second : first);
         continue;
@@ -845,7 +884,8 @@ export function dropEarlierColumn(guides, text) {
         && !/\d/.test(row.slice(placeInRow(row, second) + String(second.from_words).length))) drop.add(first);
     }
   }
-  return drop.size ? list.filter((g) => !drop.has(g)) : list;
+  if (!drop.size) return list;
+  return list.flatMap((g) => (relabel.has(g) ? [relabel.get(g)] : drop.has(g) ? [] : [g]));
 }
 
 /* A table row labelled as the guide is, whose last numbers are the guide's
