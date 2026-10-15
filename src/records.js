@@ -13,7 +13,7 @@
  * something has gone wrong upstream.
  */
 
-import { basisSide } from "./metrics.js";
+import { emailSide } from "./metrics.js";
 import { revisionSentence } from "./summary.js";
 import { withBound } from "./revisions.js";
 
@@ -169,6 +169,11 @@ export function forEmail(record) {
 
     revisions: (record.revisions || []).map((r) => ({
       metric: r.metric,
+      /* The side the email groups this guide on, the same rule as the
+         tables. A revision carries no basis of its own, so it is taken from
+         the guide with the same label and unit in the current guidance or
+         the pairs, which do. */
+      side: emailSide({ metric_as_written: r.metric_as_written, quote: r.quote, basis: basisOfLabel(record, r) }),
       // The label as the company wrote it, so a new guide can be set beside
       // the record of the same measure. metric alone is a broad class
       // ("operating_income") that two different measures can share.
@@ -182,6 +187,7 @@ export function forEmail(record) {
       // Records built before floors were kept on the figure get theirs here.
       after: r.after ? (r.after.bound ? r.after : withBound(r.after, r)) : null,
       words: r.words || null,
+      beforeWords: r.before_words || null,
       // Kept so the email can show "about 20%" when the company wrote "Approx. 20%".
       quote: r.quote ? String(r.quote).slice(0, 400) : null,
       // The sentence is BUILT HERE, from the untrimmed revision, and not read
@@ -204,6 +210,19 @@ export function forEmail(record) {
     latestRelease: latestRelease(record),
     currentGuidance: record.currentGuidance || [],
   };
+}
+
+/* The basis the record holds for a guide's label and unit, from the current
+   guidance first and then the pairs. */
+function basisOfLabel(record, r) {
+  const k = String(r.metric_as_written || "").toLowerCase() + "|" + String(r.unit || "");
+  for (const g of record.currentGuidance || []) {
+    if (String(g.metric_as_written || "").toLowerCase() + "|" + String(g.unit || "") === k && g.basis) return g.basis;
+  }
+  for (const p of record.pairs || []) {
+    if (String(p.metric_as_written || "").toLowerCase() + "|" + String(p.unit || "") === k && p.basis) return p.basis;
+  }
+  return null;
 }
 
 /* Which release is the newest? The record lists them newest first, but a
@@ -241,7 +260,7 @@ function trim(p) {
   return {
     metric: p.metric_as_written,
     // GAAP or adjusted side, for the email's tables (see basisSide).
-    side: basisSide(p),
+    side: emailSide(p),
     period: p.guide_period,
     basis: p.basis,
     unit: p.unit,

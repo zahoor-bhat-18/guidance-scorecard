@@ -165,6 +165,28 @@ export function namesSaidBy(guides, into) {
    UnitedHealth's "net earnings of $22.50 to $22.90 per share and adjusted
    net earnings of $24.85 to $25.00 per share" - there the bare one is the
    GAAP figure, and treating both as adjusted dropped one of them. */
+/**
+ * The GAAP or adjusted side, for the EMAIL's grouping only.
+ *
+ * P&G's July 2026 email put "diluted net earnings per share growth" (GAAP,
+ * 1% to 6%) under the heading "Core net earnings per share growth": the bare
+ * label read as adjusted, the two guides shared a name once "core" and
+ * "diluted" were set aside, and FY2024 appeared twice with two different
+ * guides. A label that says it is the GAAP figure - diluted, net earnings,
+ * net income, reported - and whose guide the record holds as GAAP is the GAAP
+ * side. Both tests, not one: Micron labels its NON-GAAP EPS "Diluted earnings
+ * per share", and its record holds it as non-GAAP. Pairing still uses
+ * basisSide; only how the email groups rows changes.
+ */
+export function emailSide(p) {
+  const s = basisSide(p);
+  if (s === "gaap") return s;
+  const l = String((p && p.metric_as_written) || "");
+  if (/adjusted|non-?gaap|comparable|\bcore\b|underlying/i.test(l)) return "adj";
+  if (p && p.basis === "gaap" && /\b(diluted|net (earnings|income)|reported|gaap)\b/i.test(l)) return "gaap";
+  return s;
+}
+
 export function basisSide(p) {
   if (p && p.side_hint) return p.side_hint;
   const l = String((p && p.metric_as_written) || "");

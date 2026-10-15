@@ -1459,7 +1459,15 @@ function isPartName(name) {
 
 /* "Wine and Spirits: organic net sales decline" -> "Wine and Spirits". */
 function prefixPart(text) {
-  const m = String(text || "").match(/^\s*([A-Z][A-Za-z&'.\- ]{1,48}?)\s*:\s/);
+  /* "Commercial Engines & Services (CES): Continue to expect revenue growth
+     in the mid-teens" names its part with the short form in brackets. The
+     brackets stopped the match, and GE's CES and DPT guides were filed as the
+     whole company's revenue growth. The short form is the name the company
+     uses everywhere else ("CES: revenue growth"), so it is the one kept. */
+  const t = String(text || "");
+  const b = t.match(/^\s*([A-Z][A-Za-z&'.\- ]{1,60}?)\s*\(([A-Z][A-Za-z&]{1,10})\)\s*:\s/);
+  if (b && isPartName(b[1])) return b[2].trim();
+  const m = t.match(/^\s*([A-Z][A-Za-z&'.\- ]{1,48}?)\s*:\s/);
   return m && isPartName(m[1]) ? m[1].trim() : null;
 }
 
@@ -1563,6 +1571,14 @@ export function scopeByName(guides, intro) {
     if (typeof fig === "number") {
       const forms = [String(Math.abs(fig)), Math.abs(fig).toFixed(1), Math.abs(fig).toFixed(2)];
       for (const f of forms) { const i = quote.indexOf(f); if (i >= 0 && (at < 0 || i < at)) at = i; }
+    }
+    /* A guide in words has no figure yet (they are read later): its place is
+       where the measure is named. "Commercial Engines & Services (CES):
+       Continue to expect revenue growth in the mid-teens" is CES's revenue
+       growth, and was filed as the whole of GE's. */
+    if (at < 0 && typeof fig !== "number") {
+      const word = label.toLowerCase().replace(/[^a-z\s]/g, " ").trim().split(/\s+/).find((w) => w.length > 3);
+      if (word) at = quote.toLowerCase().indexOf(word);
     }
     if (at < 0) return g;
     let best = null, bestAt = -1;
@@ -1797,6 +1813,74 @@ const DOWN = /\b(declin\w*|decreas\w*|down|lower|drop\w*|fall\w*|contract\w*|neg
 const UP = /\b(grow\w*|growth|increas\w*|up|rise|rising|higher|expan\w*|positive)\b/i;
 
 /**
+ * A FIGURE TAKEN FROM THE PAST-YEAR COLUMN OF AN OUTLOOK TABLE.
+ *
+ * GE, July 2026. The outlook table reads, under the heading
+ * "2025 | 2026 Guide Prior | 2026 Guide Current":
+ *     Adjusted Revenue* Growth   +21% ($42.3B)   LDD   High-teens
+ * The guide came back as 21% for 2026 - the 2025 RESULT - and the email told
+ * subscribers GE guided 21% when it guided high-teens (17-19%). The same table
+ * in 2025 gave "+10%" (the 2024 result) for a guide of "LDD".
+ *
+ * Where the guide's label opens a row under a heading whose first column is a
+ * year before the guided one, and the row carries the company's words AFTER
+ * the guide's figure, the figure is the past year's result and the words in
+ * the last column are the guide in force. The figure is dropped and the words
+ * are read by the fixed table (rangeFromWords). Only words are taken this
+ * way: where the later columns are numbers, the reading already has them.
+ */
+const PHRASE_TEST = new RegExp(WORD_PHRASE.source, "i");
+const ABBR_TEST = /\b(LSD|MSD|HSD|LDD)\b/;
+export function pastYearColumn(g, text) {
+  if (!g || g.from_words) return g;
+  const vals = [g.low, g.high, g.value].filter((n) => typeof n === "number");
+  const year = parseInt(String(g.period || "").slice(0, 4), 10);
+  const label = String(g.metric_as_written || "").trim();
+  const T = String(text || "");
+  if (!vals.length || !year || label.length < 4 || !T) return g;
+  const fig = new RegExp("(?<![\\d.])" + String(Math.abs(vals[0])).replace(".", "\\.") + "(?:\\.0+)?(?!\\d)");
+  let from = 0, i;
+  while ((i = T.indexOf(label, from)) >= 0) {
+    from = i + label.length;
+    const above = T.slice(Math.max(0, i - 600), i).split("\n").reverse().slice(0, 6);
+    let header = null;
+    for (const line of above) {
+      const m = line.match(/\b((?:19|20)\d{2})\b.*\b(guid\w*|outlook|prior|current|expect\w*)\b/i);
+      if (m && parseInt(m[1], 10) < year && line.length < 160) { header = line.trim(); break; }
+    }
+    if (!header) continue;
+    // The row's cells: the rest of the label's line, then value lines, until
+    // a line that is neither a figure nor the company's words.
+    const lines = T.slice(i + label.length, i + label.length + 400).split("\n");
+    const isValue = (x) => /\d/.test(x) || PHRASE_TEST.test(x) || ABBR_TEST.test(x);
+    const cells = [];
+    let started = false;
+    for (const raw of lines.slice(0, 10)) {
+      const x = raw.trim();
+      if (!x) { if (started) break; continue; }
+      if (isValue(x)) { cells.push(x); started = true; } else if (started) break;
+    }
+    const row = cells.join(" ");
+    const at = row.search(fig);
+    if (at < 0) continue;
+    const rest = expandAbbr(row.slice(at));
+    const phrases = Array.from(rest.matchAll(new RegExp(WORD_PHRASE.source, "gi")));
+    if (!phrases.length) continue;
+    const last = phrases[phrases.length - 1];
+    if (/\d/.test(rest.slice(last.index + last[0].length))) continue;   // numbers after the words: not this shape
+    return {
+      ...g, low: null, high: null, value: null,
+      quote: label + " " + last[0].trim(),
+      quote_was: g.quote,
+      from_column: header,
+      column_note: "The figure " + vals[0] + " sits in the " + header.match(/(?:19|20)\d{2}/)[0]
+        + " column of the outlook table; the guide in force is the last column.",
+    };
+  }
+  return g;
+}
+
+/**
  * Read a guide given in words as a range, the way the street reads it.
  *
  * Nike's October 2026 release: "Revenues are expected to decline high-single
@@ -1810,9 +1894,19 @@ const UP = /\b(grow\w*|growth|increas\w*|up|rise|rising|higher|expan\w*|positive
  * Anything less clear is left as words. The words are kept on the guide
  * (from_words) so the email always shows what the company actually said.
  */
+/* The street's short forms, read as the words they stand for: GE's outlook
+   table writes its prior revenue growth guide as "LDD". */
+const STREET_ABBR = [[/\bLSD\b/g, "low-single-digit"], [/\bMSD\b/g, "mid-single-digit"],
+  [/\bHSD\b/g, "high-single-digit"], [/\bLDD\b/g, "low-double-digit"]];
+function expandAbbr(s) {
+  let out = String(s || "");
+  for (const [re, w] of STREET_ABBR) out = out.replace(re, w);
+  return out;
+}
+
 export function rangeFromWords(g) {
   if ([g.low, g.high, g.value].some((x) => typeof x === "number")) return g;
-  const quote = String(g.quote || "");
+  const quote = expandAbbr(g.quote);
   const found = [];
   let m;
   const taken = [];
@@ -1942,12 +2036,12 @@ export async function guidanceFrom(env, cik, release, cal, readAlready) {
   const scoped = await scopeByModel(env, named, release.accession);
   const raw = scoped.guides;
 
-  const withPeriodsAll = raw.map((g) => guardGuide(g, filing.text)).map(rangeFromWords).map((g) => {
+  const withPeriodsAll = raw.map((g) => guardGuide(g, filing.text)).map((g) => {
     const r = calendar
       ? resolvePeriod(g.period_text, calendar, { referenceDate: release.filed, direction: "future" })
       : { period: null, why: "No fiscal calendar was supplied." };
     return { ...g, period: r.period, period_how: r.how || null, period_why: r.why || null };
-  });
+  }).map((g) => rangeFromWords(pastYearColumn(g, filing.text)));
   const withPeriods = impliedYear(dropEarlierColumn(withPeriodsAll, filing.text), filing.text);
 
   // Every guide as extracted, in order - what the next release is ASKED

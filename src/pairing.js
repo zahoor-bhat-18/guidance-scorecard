@@ -23,6 +23,7 @@
 
 import { metricKey, labelAsCompany, namesSaidBy } from "./metrics.js";
 import { samePeriod, periodIsClosedBy } from "./period.js";
+import { spelledFigures } from "./guidance.js";
 
 /**
  * A RANGE WHOSE ENDS ARE EQUAL IS A POINT.
@@ -116,6 +117,10 @@ export function traceable(value, quote, unit) {
     if (Number.isFinite(x)) nums.push(x);
   }
   if (v === 0) return nums.includes(0) || /\b(flat|unchanged|zero)\b/i.test(String(quote));
+  /* Figures written in words count: P&G reports "Organic sales ... increased
+     two percent", and its FY2025 result of 2% was refused for having no 2 in
+     the line. Only a spelled figure followed by its unit is read. */
+  for (const f of spelledFigures(quote)) if (Math.abs(f.value - v) <= 0.0005) return true;
   const close = (a, b) => b !== 0 && Math.abs(a - b) / Math.abs(b) <= 0.005;
   const dec = (n) => { const t = String(n); return t.includes(".") ? t.split(".")[1].length : 0; };
   const roundTo = (n, d) => Number(n.toFixed(d));

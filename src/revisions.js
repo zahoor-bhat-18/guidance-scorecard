@@ -473,6 +473,9 @@ export function revisionsBetween(rawBefore, rawAfter, opts) {
       before: b,
       after: n,
       words: g.from_words || null,
+      // The earlier guide's own words, so "was 4% to 9%" carries its star
+      // when the company wrote "mid- to high-single digits".
+      before_words: before.from_words || null,
       moveLow: b.low !== null && n.low !== null ? tidy(n.low - b.low) : null,
       moveHigh: b.high !== null && n.high !== null ? tidy(n.high - b.high) : null,
       movePoint: b.value !== null && n.value !== null ? tidy(n.value - b.value) : null,

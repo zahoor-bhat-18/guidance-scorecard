@@ -867,21 +867,33 @@ function isPart(g) {
   return labels.every((l) => /^[A-Z][A-Za-z&' ]{1,40}:\s/.test(l) && !/^(Enterprise|Consolidated|Total|Company|Tax rate)\b/i.test(l));
 }
 
+function isGaapTable(g) { return /\|gaap$/.test(String(g.key || "")) ? 1 : 0; }
+
 export function keyMeasures(metrics) {
   const scored = metrics.filter((g) => g.rows.some((p) => !p.notGuided && !p.unanswered));
   const ranked = scored
     .map((g) => ({ g, rank: keyRank(g) }))
     .sort((a, b) => a.rank - b.rank || (isPart(a.g) - isPart(b.g)) || b.g.total - a.g.total);
-  // One table per measure among the key ones: where a measure is guided both
-  // as an amount and as a growth rate, the amount leads and the rate goes to
-  // the site with the rest.
-  const seenBase = new Set();
-  const single = ranked.filter((x) => {
+  // One table per measure among the key ones. Which of a measure's tables:
+  // the adjusted one before the GAAP one - P&G guides core EPS in dollars and
+  // GAAP EPS as a growth rate, and the GAAP rate, with four rows to the core
+  // figure's two, took the one EPS place - then the one with more history.
+  // The measure keeps the place its best-ranked table earned.
+  const bestOf = new Map();
+  for (const x of ranked) {
     const base = String(x.g.key || "").split("|")[0];
-    if (seenBase.has(base)) return false;
+    const cur = bestOf.get(base);
+    if (!cur || isGaapTable(x.g) < isGaapTable(cur.g)
+      || (isGaapTable(x.g) === isGaapTable(cur.g) && x.g.total > cur.g.total)) bestOf.set(base, x);
+  }
+  const seenBase = new Set();
+  const single = [];
+  for (const x of ranked) {
+    const base = String(x.g.key || "").split("|")[0];
+    if (seenBase.has(base)) continue;
     seenBase.add(base);
-    return true;
-  });
+    single.push(bestOf.get(base));
+  }
   let keys = single.filter((x) => x.rank < 99).slice(0, KEY_LIMIT).map((x) => x.g);
   if (keys.length < 2) keys = single.slice(0, 3).map((x) => x.g);
   const others = metrics.filter((g) => !keys.includes(g));
@@ -1454,14 +1466,19 @@ export function sectionsOf(view, keys) {
    * share", the record's tables "GAAP revenues" and "GAAP diluted EPS", and a
    * guide that did not match a table's name was not shown. A company renaming
    * a line is not a reason to hide what it just guided. */
-  const keyBases = new Set(keys.map((g) => String(g.key).split("|")[0]));
-  const nameOf = new Map(keys.map((g) => [String(g.key).split("|")[0], g.metric]));
+  /* Grouped on the SAME key as the tables: the measure, its kind of unit and
+     its side. On the measure alone, P&G's FY2027 core EPS ($6.89 to $7.11),
+     core EPS growth (in-line to 3%) and GAAP EPS growth (1% to 5%) were one
+     group, named for the first table, and the dollar guide printed as
+     "Core net earnings per share growth: $6.89 to $7.11". */
+  const outlookKey = (r) => unitKey(r.label || r.metric, r.unit) + (r.side === "gaap" ? "|gaap" : "");
+  const nameOf = new Map(keys.map((g) => [String(g.key), g.metric]));
   const byBase = new Map();
   for (const r of moved) {
-    const base = metricKey(r.label || r.metric);
+    const base = outlookKey(r);
     // Ordered by kind (EPS, revenue, profit, cash flow) like the tables,
     // then by the tables' own order within a kind.
-    const table = keys.findIndex((g) => String(g.key).split("|")[0] === base);
+    const table = keys.findIndex((g) => String(g.key) === base);
     /* A bridge, not a measure. Carnival guided "operational improvement in
        adjusted net income compared to June" - a $150m step within its net
        income guide - and it reached the outlook as though it were a sixth
@@ -1473,11 +1490,19 @@ export function sectionsOf(view, keys) {
     if (table < 0 && BRIDGE.test(String(r.label || r.metric || ""))) continue;
     const kind = table >= 0 ? keyRank(keys[table]) : keyRank({ labels: [r.label || r.metric || ""] });
     const rank = kind === 99 && table < 0 ? 99 : kind * 100 + (table >= 0 ? table : 50);
-    if (!byBase.has(base)) byBase.set(base, { base, rank, rows: [] });
+    if (!byBase.has(base)) byBase.set(base, { base, rank, inTable: table >= 0, rows: [] });
     byBase.get(base).rows.push(r);
   }
   const groupsOut = Array.from(byBase.values()).filter((x) => x.rank !== 99).sort((a, b) => a.rank - b.rank);
-  const shownGroups = groupsOut.slice(0, OUTLOOK_LIMIT);
+  /* A measure with its own record table is never cut from the outlook. GE's
+     July 2026 free cash flow guide was raised from $8.0-8.4bn to $8.9-9.2bn,
+     and with six places taken by parts of the company and a new measure, it
+     appeared only as a name in "Raised: Free Cash Flow" - while its record
+     sat in full further down. The limit is for the rest. */
+  const tabled = groupsOut.filter((x) => x.inTable);
+  const room = Math.max(0, OUTLOOK_LIMIT - tabled.length);
+  const extra = new Set(groupsOut.filter((x) => !x.inTable).slice(0, room));
+  const shownGroups = groupsOut.filter((x) => x.inTable || extra.has(x));
   let otherMoves = moved.length - shownGroups.reduce((n, x) => n + x.rows.length, 0);
 
   const outlook = [];
@@ -1964,7 +1989,7 @@ function quietDesign(sec, d) {
     if (seen.has(k)) continue;
     seen.add(k);
     const dir = r.direction === "unchanged" ? "held" : r.direction;
-    const was = r.before && dir !== "held" && dir !== "new" ? formatFigure(r.before, r.unit) : "";
+    const was = r.before && dir !== "held" && dir !== "new" ? formatFigure(r.before, r.unit) + (r.beforeWords ? "*" : "") : "";
     // Narrowed to which end? "Approximately 6.0%" from "5.5% to 6.0%" is the
     // top of the earlier range; "approximately 7.0%" from "7.0% to 7.5%" the
     // bottom. That is the news in a narrowing.
@@ -2121,7 +2146,8 @@ function renderQuiet(view, opts, company, metrics, sec, quiet, subject, scored) 
   /* The star's footnote: which guides were given in words, and the fixed rule
      they were read by. Shown once, under the tables, only when a star is. */
   const starred = quiet.rows.filter((r) => /\*$/.test(String(r.guide || "")) && r.words);
-  const anyStar = starred.length > 0 || hist.some((x) => x.rows.some((r) => /\*/.test(String(r.guided || ""))))
+  const anyStar = starred.length > 0 || quiet.rows.some((r) => /\*/.test(String(r.was || "")))
+    || hist.some((x) => x.rows.some((r) => /\*/.test(String(r.guided || ""))))
     || (scored && scored.rows.some((r) => /\*/.test(String(r.guided || ""))));
   const wordsNote = anyStar
     ? "* The company gave this guide in words, not numbers"

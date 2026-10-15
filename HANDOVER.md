@@ -121,3 +121,33 @@ History is a rolling 14 releases (~3.5 years); older guides fall out as new rele
 3. Half-year guides (Honeywell "second half") are refused by design; score H2 as Q3+Q4.
 4. Investor-site slides and transcripts (MSFT, C, CSX, TRV), then webcast transcription.
 5. Widen coverage beyond 40; then the preview email, the adjusted guide, report dates.
+
+## Oct 15 2026: batch 2 (accuracy and email grouping)
+
+- **GAAP and adjusted kept apart in the email** (`emailSide` in metrics.js; records.js; email.js). P&G's GAAP EPS growth
+  had been shown under "Core net earnings per share growth" with FY2024 twice. The outlook now groups on the same
+  key as the tables (measure + unit kind + side). Within one measure the adjusted table is chosen before the GAAP one,
+  then the one with more history. Effect: P&G and UNH now lead with core/adjusted EPS.
+- **Past-year column of an outlook table** (`pastYearColumn`, guidance.js). GE's July 2026 "Adjusted Revenue Growth
+  21%" was the 2025 RESULT; the guide was "High-teens" (17-19%). Emails since July carried 21% as the guide. Street
+  abbreviations LSD/MSD/HSD/LDD are read.
+- **Words guides scoped to their part**: "Commercial Engines & Services (CES): ... revenue growth in the mid-teens" is
+  CES, not GE (scopeByName, prefixPart).
+- **Spelled-out results pass the trace check** (pairing.js `traceable`): P&G "increased two percent".
+- **"Was" figures from words carry the star** (`before_words` on revisions).
+- **A measure with its own record table is never cut from "What they guide now"** (GE free cash flow raise).
+
+**Found, not fixed (in priority order):**
+1. UNH Feb 2026: rows of the Optum outlook table (Optum Health revenue >$91bn, Optum Rx >$150.5bn, Optum Rx
+   operating earnings >$6.25bn) are stored as the COMPANY's revenue/operating earnings; the company's own revenue
+   guide (>$439bn) is missing. Would be scored as a huge beat in Jan 2027. A table with parts as rows and measures as
+   columns needs scoping by row label.
+2. Delta "improve 1 to 2 points sequentially" stored as 1-2% growth.
+3. Ratio actuals to compute: capex % of sales (WMT, PG, PEP); EPS growth from two levels (P&G core).
+4. Prose guides missed (Netflix ads ~$3bn, content amortization ~+10%; McCormick gross margin +100-120bp).
+5. Investor-site slides/transcripts (MSFT, C, CSX, TRV); widen coverage; preview email; adjusted guide.
+
+**Filing Watch (CHRN 10-Q, 14 Oct) - verified accurate, but:** (a) going-concern doubt now raised-then-alleviated
+(10-K said "not raised") sits in "Also noted"; $2.7bn contracts at #6; $328.2m prepayments only a related link;
+(b) Parker note x3, Ekso sale x3, Grid Note x3; (c) #10 pairs the 10-K's Microsoft "two-year partnership" sentence
+with the 10-Q's Baseten sentence as one changed sentence - two different deals. (c) first; it implies a falsehood.
