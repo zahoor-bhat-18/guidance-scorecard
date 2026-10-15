@@ -1206,6 +1206,11 @@ function dedupeGuides(guides) {
   for (const g of guides) {
     const key = [
       g.metric || "",
+      /* "Core FFO" and "Core FFO, excluding Net Promote Income" are two guides
+         even when the company gives them the same figures (Prologis, October
+         2026: both $6.25 to $6.29). Read as one guide stated twice, the second
+         was dropped, and its record table showed no guide at all. */
+      /\bexcluding\b|\bex[-\s]/i.test(String(g.metric_as_written || "")) ? "ex:" + String(g.metric_as_written).toLowerCase().replace(/^.*?\b(excluding|ex[-\s])/, "$1").replace(/[^a-z ]/g, "").trim() : "",
       g.basis || "",
       g.unit || "",
       g.low ?? "-",
@@ -1370,6 +1375,10 @@ export function missedGuideHits(text, guides) {
   const hits = [];
   lines.forEach((line, i) => {
     if (BOILERPLATE.test(line)) { lastOutlook = -1000; return; }
+    /* A definition is not a guide: Prologis's "Notes and Definitions ...
+       Estimated Weighted Average Margin is calculated on development
+       properties as ..." was reported as guidance not read. */
+    if (/\bnotes and definitions\b|\bis calculated (?:as|on|by|using)\b|\bis defined as\b|\bwe define\b/i.test(line)) return;
     if (OUTLOOK_WORD.test(line)) lastOutlook = i;
     if (i - lastOutlook > 40) return;
     /* Guide-shaped, or a sentence that says it is a guide. Broadcom writes

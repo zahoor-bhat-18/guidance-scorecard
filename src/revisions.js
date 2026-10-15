@@ -235,8 +235,13 @@ function looksLikeScopeChange(before, after, unit, label) {
   // reasons. Revenue and cash flow cannot: those halve when the company does.
   if (/eps|earnings per share|earnings/i.test(String(label || ""))) return false;
 
-  const b = before.low !== null ? before.low : before.value;
-  const a = after.low !== null ? after.low : after.value;
+  /* Midpoints, not low ends. Prologis raised 2026 acquisitions from
+     $1.5-2.0bn to $2.1-2.3bn: the low end rose 40%, the guide's middle 26%.
+     Read on the low end it was called a change of scope and left out of the
+     email entirely - an ordinary raise, hidden (15 Oct 2026). */
+  const mid = (g) => (g.low !== null && g.high !== null ? (g.low + g.high) / 2 : g.low !== null ? g.low : g.value);
+  const b = mid(before);
+  const a = mid(after);
   if (typeof b !== "number" || typeof a !== "number" || b === 0) return false;
 
   return Math.abs(a - b) / Math.abs(b) > 0.33;
