@@ -1036,12 +1036,33 @@ function sequentialOnly(g) {
     guard_note: "Kept, not scored: the guide is a change from the previous quarter, and no result is measured that way." };
 }
 
+/* "Flat - Up 1%" is 0 to 1, not 0. Delta's September 2024 update cut
+   September-quarter revenue from "Up 2% - 4%" to "Flat - Up 1%", and it was
+   read as exactly 0% - the top of the range lost, so a 0.3% result would
+   have scored above a guide it landed inside. When a change is reported as a
+   single 0 and its sentence prints "flat" to a figure, the range is restored.
+   With more than one such phrase in the sentence nothing is guessed. */
+function flatRange(g) {
+  const isChange = g.unit === "percent" || /growth/.test(String(g.shape || ""));
+  const zeroPoint = g.value === 0 && g.low == null && g.high == null;
+  const zeroLow = g.low === 0 && g.high == null && g.value == null;
+  if (!isChange || !(zeroPoint || zeroLow)) return g;
+  const re = /\bflat\s*(?:-|–|—|to)\s*(up|down)?\s*(?:approximately\s+|about\s+|~\s?)?(\d+(?:\.\d+)?)\s*(?:%|percent\b|pts?\b|points?\b)/gi;
+  const all = [...String(g.quote || "").matchAll(re)];
+  if (all.length !== 1) return g;
+  const n = Number(all[0][2]);
+  if (!(n > 0)) return g;
+  const down = /down/i.test(all[0][1] || "");
+  return { ...g, shape: "growth_range", value: null, low: down ? -n : 0, high: down ? 0 : n,
+    guard_note: ((g.guard_note ? g.guard_note + " " : "") + "\"Flat\" to " + (down ? "-" : "") + n + " read as a range.").trim() };
+}
+
 export function guardGuide(input, filingText) {
   const held = notOnePeriod(input);
   if (held !== input) return held;
   const seq = sequentialOnly(input);
   if (seq !== input) return seq;
-  const g = inBasisPoints(aboutNotPlusMinus(qualifierFromQuote(input.shape === "reaffirmed" ? recoverReaffirmed(input) : input)));
+  const g = flatRange(inBasisPoints(aboutNotPlusMinus(qualifierFromQuote(input.shape === "reaffirmed" ? recoverReaffirmed(input) : input))));
 
   const pool = quoteNumbers(g.quote);
   for (const e of bandEnds(g.quote)) pool.add(e);
@@ -1215,7 +1236,21 @@ function dedupeGuides(guides) {
       g.period || String(g.period_text || "").toLowerCase().replace(/\s+/g, " ").trim(),
     ].join("|");
 
-    const held = seen.get(key);
+    /* A guide with no named class ("other") is only the same guide as one
+       whose label names the same measure. Carnival's September 2026 table
+       gave fourth-quarter net yields AND adjusted cruise costs per ALBD, in
+       constant currency, both "approx. 1.7%": same class, period and figure,
+       so the cost guide was dropped as a repeat of the yield guide. Two
+       labels name one measure when their keys match or one contains the
+       other ("Net yields" and "Net yields (in constant currency)"). */
+    const related = (a, b) => {
+      if (g.metric && g.metric !== "other") return true;
+      const x = metricKey(a), y = metricKey(b);
+      if (!x || !y || x === y) return true;
+      const pad = (s) => " " + s + " ";
+      return pad(x).includes(pad(y)) || pad(y).includes(pad(x));
+    };
+    const held = (seen.get(key) || []).find((h) => related(h, g)) || null;
     /* "Core FFO" and "Core FFO, excluding Net Promote Income" are two guides
        even when the company gives them the same figures (Prologis, October
        2026: both $6.25 to $6.29). Read as one guide stated twice, the second
@@ -1233,7 +1268,7 @@ function dedupeGuides(guides) {
       continue;
     }
     if (held && addsExclusion) { out.push(g); continue; }
-    seen.set(key, g);
+    seen.set(key, [...(seen.get(key) || []), g]);
     out.push(g);
   }
   return out;
@@ -1334,6 +1369,31 @@ async function callModel(env, text) {
 const GUIDE_SHAPED = /±|\+\s?\/\s?-\s?\$?\s?\d|(?:\$\s?\d[\d.,]*|\d[\d.,]*\s?%)\s*(?:-|–|—|to)\s*\$?\s?\d[\d.,]*\s?(?:%|billion|million)?/i;
 const OUTLOOK_WORD = /\b(outlook|guidance|expects?|expected|anticipates?|forecast|targets?)\b/i;
 const BOILERPLATE = /forward[-\s]looking statements?|safe harbor|private securities litigation/i;
+/* A figure with a unit a guide is given in. Basis points count: McCormick's
+   "Adjusted gross margin is now expected to expand by 100 to 120 basis
+   points" was a guide the check could not see on its own (15 Oct 2026). */
+const GUIDE_UNIT = /\$\s?\d|\d\s?%|\d\s?(?:billion|million)\b|\d\s?(?:bps|bp|basis points?)\b/i;
+/* A line with each definition's sentence taken out. The sentence starts after
+   the last full stop (". " - not the point in "$3.13"), footnote marker
+   ("(2) ") or bullet before the phrase, and ends at the next full stop. */
+const DEFINITION_WORDS = /\b(?:notes and definitions|is calculated (?:as|on|by|using)|is defined as|we define)\b/i;
+function withoutDefinitions(line) {
+  let s = String(line);
+  for (let guard = 0; guard < 20; guard++) {
+    const m = DEFINITION_WORDS.exec(s);
+    if (!m) break;
+    const head = s.slice(0, m.index);
+    let start = 0;
+    for (const re of [/\.\s+(?=\S)/g, /\(\d{1,2}\)\s/g, /[•◦·]\s/g]) {
+      for (const x of head.matchAll(re)) start = Math.max(start, x.index + x[0].length);
+    }
+    const tail = s.slice(m.index);
+    const stop = tail.search(/\.(?:\s|$)/);
+    const end = stop < 0 ? s.length : m.index + stop + 1;
+    s = s.slice(0, start) + " " + s.slice(end);
+  }
+  return s;
+}
 
 /* The figures a line states, without the width of a "±" band: "38.5% ± 1.0%"
    states 38.5. */
@@ -1382,18 +1442,23 @@ export function missedGuideHits(text, guides) {
 
   let lastOutlook = -1000;
   const hits = [];
-  lines.forEach((line, i) => {
-    if (BOILERPLATE.test(line)) { lastOutlook = -1000; return; }
+  lines.forEach((raw, i) => {
+    if (BOILERPLATE.test(raw)) { lastOutlook = -1000; return; }
     /* A definition is not a guide: Prologis's "Notes and Definitions ...
        Estimated Weighted Average Margin is calculated on development
-       properties as ..." was reported as guidance not read. */
-    if (/\bnotes and definitions\b|\bis calculated (?:as|on|by|using)\b|\bis defined as\b|\bwe define\b/i.test(line)) return;
+       properties as ..." was reported as guidance not read. Only the
+       definition's SENTENCE is set aside, not its line: a release's text
+       often arrives as lines thousands of characters long, and McCormick's
+       June 2026 outlook table shared one with the footnote "Organic sales
+       growth is defined as ...". Skipping the whole line lost the table and
+       the gross margin guide read from beside it (15 Oct 2026). */
+    const line = withoutDefinitions(raw);
     if (OUTLOOK_WORD.test(line)) lastOutlook = i;
     if (i - lastOutlook > 40) return;
     /* Guide-shaped, or a sentence that says it is a guide. Broadcom writes
        "we expect AI semiconductor revenue to double year-over-year to $8.2
        billion" - no range, no band, and a guide all the same. */
-    const sentenceGuide = OUTLOOK_WORD.test(line) && /\$\s?\d|\d\s?%/.test(line);
+    const sentenceGuide = OUTLOOK_WORD.test(line) && GUIDE_UNIT.test(line);
     if (!GUIDE_SHAPED.test(line) && !sentenceGuide) return;
     /* ONE CLAUSE AT A TIME. UnitedHealth's headline lists its outlook as one
        line: "Full Year 2026 Revenue Outlook Greater Than $439.0 Billion;
@@ -1406,7 +1471,7 @@ export function missedGuideHits(text, guides) {
     if (clauses.length > 1) {
       const open = clauses.filter((c) => {
         const ns = [...statedNumbers(c)].filter((n) => n !== 0 && !(Number.isInteger(n) && n >= 1990 && n <= 2100));
-        return ns.length && !ns.some(covered) && /\$\s?\d|\d\s?%|\d\s?(billion|million)/i.test(c);
+        return ns.length && !ns.some(covered) && GUIDE_UNIT.test(c);
       });
       if (open.length) hits.push({ i, line });
       return;
@@ -1443,6 +1508,19 @@ export function missedGuideHits(text, guides) {
   return hits;
 }
 
+/* A period as written, reduced to its year and quarter: "fiscal year 2025",
+   "fiscal 2025" and "full year 2025" are one; "4Q 2026" and "the fourth
+   quarter of 2026" are one. Text with neither is kept as written. */
+function periodSignature(text) {
+  const t = String(text || "").toLowerCase();
+  const years = [...new Set((t.match(/\b(?:19|20)\d{2}\b/g) || []).concat((t.match(/\b(?:fy|q[1-4]|[1-4]q)\s?'?(\d{2})\b/g) || []).map((x) => "20" + x.slice(-2))))].sort();
+  const q = /\b(?:first|1st)\s+quarter\b|\bq1\b|\b1q/.test(t) ? "q1" : /\b(?:second|2nd)\s+quarter\b|\bq2\b|\b2q/.test(t) ? "q2"
+    : /\b(?:third|3rd)\s+quarter\b|\bq3\b|\b3q/.test(t) ? "q3" : /\b(?:fourth|4th)\s+quarter\b|\bq4\b|\b4q/.test(t) ? "q4"
+    : /\b(?:second half|h2|2h)\b/.test(t) ? "h2" : /\b(?:first half|h1|1h)\b/.test(t) ? "h1" : "";
+  if (!years.length && !q) return t.replace(/\s+/g, " ").trim();
+  return years.join(",") + "|" + q;
+}
+
 async function secondLookGuides(env, filing, guides) {
   const snippets = missedGuideLines(filing.text, guides);
   if (!snippets.length) return { asked: 0, found: [] };
@@ -1460,8 +1538,21 @@ async function secondLookGuides(env, filing, guides) {
   // Only what the first reading did not already have.
   const pool = new Set();
   for (const g of guides) for (const k of ["low", "high", "value"]) if (typeof g[k] === "number") pool.add(g[k]);
+  /* Only guides the first reading missed - not a second reading of one it
+     has. McCormick's October 2025 table set the current guide beside the
+     prior one; the first reading took adjusted operating income growth from
+     the current column (2% to 4%), the second look from the prior column
+     (3% to 5%), and the record showed the guide held when it had been cut.
+     A measure the first reading already has for that period, unit and
+     basis is left as the first reading gave it. */
+  const sig = (g) => [metricKey(g), g.unit || "", g.basis || "", periodSignature(g.period_text)].join("|");
+  const had = new Set(guides.map(sig));
   const found = extra.filter((g) => {
     const v = [g.low, g.high, g.value].filter((x) => typeof x === "number");
+    if (had.has(sig(g))) {
+      console.log("Guidance second look " + filing.accession + ": " + g.metric_as_written + " " + (g.period_text || "") + " " + JSON.stringify([g.low, g.high, g.value]) + " - already read, first reading kept");
+      return false;
+    }
     return v.length && !v.every((x) => pool.has(x));
   }).map((g) => ({ ...g, second_look: true }));
   for (const g of found) console.log("Guidance second look " + filing.accession + ": found " + g.metric_as_written + " " + (g.period_text || "") + " " + JSON.stringify([g.low, g.high, g.value]));
