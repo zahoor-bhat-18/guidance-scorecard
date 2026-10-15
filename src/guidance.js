@@ -1592,10 +1592,30 @@ function rowLabelPart(g, intro) {
   const label = String(g.metric_as_written || "").toLowerCase();
   const quote = String(g.quote || "").trim();
   const words = label.replace(/[^a-z\s]/g, " ").split(/\s+/).filter((w) => w.length > 3);
-  if (!words.length || words.some((w) => quote.toLowerCase().includes(w.replace(/s$/, "")))) return null;
-  const m = quote.match(/^([A-Z][A-Za-z&'.\- ]{1,40}?)\s*(?:\(\d+\)|\d)?\s*(?:[>~<]|\$|\d)/);
-  if (!m) return null;
-  const name = m[1].replace(/^(Total|Consolidated)\s+/i, "").trim();
+  if (!words.length) return null;
+  let name = null;
+  const lowerQ = quote.toLowerCase();
+  const first = words.map((w) => lowerQ.indexOf(w.replace(/s$/, ""))).filter((k) => k >= 0);
+  if (!first.length) {
+    // The row's name, and no measure: "Optum Rx > $150,500".
+    const m = quote.match(/^([A-Z][A-Za-z&'.\- ]{1,40}?)\s*(?:\(\d+\)|\d)?\s*(?:[>~<]|\$|\d)/);
+    if (!m) return null;
+    name = m[1];
+  } else {
+    // The row's name in front of the measure: "Community & State Revenue >
+    // $95,000" is a part of UnitedHealthcare's revenue, not the company's.
+    const k = Math.min(...first);
+    if (k <= 0) return null;
+    name = quote.slice(0, k);
+    if (/[^A-Za-z&.\- ]/.test(name)) return null;
+    // Only a table row: the measure's name, then straight to the figure.
+    // "Raises Adjusted EBITDA to $203-$210 Million" and "FactSet's annual
+    // effective tax rate is expected ..." are sentences, not rows.
+    const rest = quote.slice(k).replace(new RegExp("^" + String(g.metric_as_written || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"), "");
+    if (rest === quote.slice(k)) return null;
+    if (!/^\s*(?:\(\d+\)\s*)?(?:[>~<\u2248]|\$|\d)/.test(rest)) return null;
+  }
+  name = name.replace(/^(Total|Consolidated)\s+/i, "").trim();
   if (!name || !isPartName(name) || MEASURE_WORD.test(name)) return null;
   // A name: every word capitalised (or "&", "and", "of"), not a verb or an
   // adverb opening the line ("Increase 3.75% to 4.75%", "Expanding to 10.9%",
