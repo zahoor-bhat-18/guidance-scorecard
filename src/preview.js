@@ -131,13 +131,23 @@ export function nextReport(record) {
   const years = answered.filter((p) => /FY$/.test(p)).sort();
   if (quarters.length) period = plusYear(quarters[quarters.length - 1]);
   else if (years.length) period = plusYear(years[years.length - 1]);
+  let interim = false;
   if (!period) {
     // No pair answered by that release: the earliest quarter now guided.
     const guided = (record.currentGuidance || []).map((g) => g.period).filter(isQuarter).sort();
     period = guided[0] || null;
   }
+  if (!period) {
+    /* A company that guides only the year (P&G, Elevance, Intuitive) has
+       nothing scored at its interim reports, so the release a year earlier
+       answered nothing. Its next report is a quarter inside the year now
+       guided; the preview is about that year's guide. */
+    const years = (record.currentGuidance || []).map((g) => g.period).filter((p) => /FY$/.test(String(p))).sort();
+    period = years[0] || null;
+    interim = Boolean(period);
+  }
   const expected = addDays(sameLastYear.filed, 364);
-  return { period, expected, lastYear: sameLastYear.filed, latestFiled: rel[0].filed, latestAccession: rel[0].accession };
+  return { period, interim, expected, lastYear: sameLastYear.filed, latestFiled: rel[0].filed, latestAccession: rel[0].accession };
 }
 
 /**
@@ -260,7 +270,7 @@ export function renderPreview(record, opts = {}) {
   const company = displayName(record.company || record.ticker);
   const short = company.replace(/,?\s+(Inc|Corp|Corporation|Co|Company|Ltd|plc|Holdings?|Group)\.?$/i, "").replace(/,\s*$/, "");
   const when = longDate(pv.next.expected);
-  const period = periodLabel(pv.next.period);
+  const period = pv.next.interim ? "its next quarter" : periodLabel(pv.next.period);
   const subject = short + " reports " + period + " around " + when.replace(/,? \d{4}$/, "") + ": the guide and its record";
   const lead = short + " is expected to report " + period + " on or around " + when + ". Estimated: it reported the same quarter last year on " + longDate(pv.next.lastYear) + ".";
   const anyWords = pv.rows.some((r) => r.words);
@@ -282,7 +292,7 @@ export function renderPreview(record, opts = {}) {
   }
   t.push("");
   if (anyArith) t.push("\"Applied to this guide\" is arithmetic on the company's own record: today's guide moved by the gaps it has had before. It is not a forecast.");
-  if (anyWords) t.push("* Given in words, read by a fixed rule (low single digits 1-3%, mid 4-6%, high 7-9%).");
+  if (anyWords) t.push("* Given in words, read by a fixed rule (low single digits 1-3%, mid 4-6%, high 7-9%; figures written out as words taken as written).");
   t.push("Results marked as possibly misread are left out of the record above. Dates are estimates until the company announces them.");
   t.push("");
   t.push("Thanks,");
@@ -329,7 +339,7 @@ export function renderPreview(record, opts = {}) {
 
   const notes = [];
   if (anyArith) notes.push("“Applied to this guide” is arithmetic on the company’s own record: today’s guide moved by the gaps it has had before. It is not a forecast.");
-  if (anyWords) notes.push("* Given in words, read by a fixed rule (low single digits 1-3%, mid 4-6%, high 7-9%).");
+  if (anyWords) notes.push("* Given in words, read by a fixed rule (low single digits 1-3%, mid 4-6%, high 7-9%; figures written out as words taken as written).");
   notes.push("Results marked as possibly misread are left out. Dates are estimates until the company announces them.");
   h.push('<div style="padding:12px 22px 0;font-size:12px;color:' + SOFT + ';">' + notes.map(esc).join("<br>") + "</div>");
   h.push('<div style="padding:16px 22px 20px;font-size:12px;line-height:1.5;color:' + SOFT + ";border-top:1px solid " + LINE + ';margin-top:14px;">'
