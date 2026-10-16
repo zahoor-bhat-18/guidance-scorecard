@@ -71,6 +71,9 @@ async function kvPut(key, value) {
    one key, so the Worker's poller can see a hold that has run past
    HOLD_HOURS with a single read and start the send that releases it. */
 const HOLD_HOURS = 6;
+/* Releases filed from this date carry a sent mark (see markSent). Earlier ones
+   were sent before the mark existed and must not be sent again. */
+const SENT_MARKERS_FROM = "2026-10-17";
 async function holdIndex(ticker, at) {
   let idx = {};
   try { idx = JSON.parse((await kvGet("awaiting:index")) || "{}") || {}; } catch { idx = {}; }
@@ -238,7 +241,26 @@ async function handle(ticker) {
     let waiting = null;
     try { waiting = JSON.parse((await kvGet("awaiting:" + ticker)) || "null"); } catch { waiting = null; }
     if (!waiting || waiting.accession !== current.accession || waiting.done || !waiting.record) {
-      return { ticker, skipped: "Already in the record: " + current.accession };
+      /* IN THE RECORD IS NOT THE SAME AS SENT. A rebuild reads every release
+         on EDGAR, so one run between a company's 8-K and its email puts the
+         new release into the record - and this script then took it as
+         already sent. Johnson & Johnson's 13 October 2026 email never went
+         out that way. Since SENT_MARKERS_FROM every email writes
+         sent:<ticker>:<accession>; a recent release in the record without
+         that mark is sent now, from the record as it stands. */
+      const sentMark = await kvGet("sent:" + ticker + ":" + current.accession);
+      const ageDays = (Date.now() - Date.parse(current.filed + "T00:00:00Z")) / 86400000;
+      if (!sentMark && current.filed >= SENT_MARKERS_FROM && ageDays <= 3) {
+        const res = await deliver({
+          ticker, cik, name, current, updated: record,
+          movedRevisions: (record.revisions || []).filter((r) => r.release === current.accession),
+          newPairs: (record.pairs || []).filter((p) => p.comparable && p.answeredBy === current.accession).length,
+          note: null, prefix: "",
+          pass: "release already in the record (added by a rebuild), email not yet sent",
+        });
+        return res;
+      }
+      return { ticker, skipped: "Already in the record: " + current.accession + (sentMark ? " (sent " + sentMark + ")" : "") };
     }
     let beside = [];
     try {
@@ -588,6 +610,7 @@ async function deliver({ ticker, cik, name, current, updated, movedRevisions, ne
       await sendMail(email, withNote(mail), unsub);
       sent += 1;
     }
+    if (!only) await markSent(ticker, current.accession);
     return {
       ticker,
       release: current.accession,
@@ -619,6 +642,7 @@ async function deliver({ ticker, cik, name, current, updated, movedRevisions, ne
     sent += 1;
   }
 
+  if (!only) await markSent(ticker, current.accession);
   return {
     ticker,
     release: current.accession,
@@ -629,6 +653,12 @@ async function deliver({ ticker, cik, name, current, updated, movedRevisions, ne
     followers: followers.length,
     sent,
   };
+}
+
+/* The email for this release has gone to the followers. Kept 60 days. */
+async function markSent(ticker, accession) {
+  try { await kvPut("sent:" + ticker + ":" + accession, new Date().toISOString()); }
+  catch (e) { console.error(ticker + ": the sent mark could not be written - " + e.message); }
 }
 
 async function releaseHeld(ticker) {
