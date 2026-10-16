@@ -1530,7 +1530,11 @@ export function missedGuideHits(text, guides) {
        June 2026 outlook table shared one with the footnote "Organic sales
        growth is defined as ...". Skipping the whole line lost the table and
        the gross margin guide read from beside it (15 Oct 2026). */
-    const line = withoutDefinitions(raw);
+    /* "Expected" that is not a company expecting anything: "allowance for
+       expected credit losses", "better than expected loss experience"
+       (Travelers, October 2026 - five false alarms). Taken out before the
+       outlook-word tests. */
+    const line = withoutDefinitions(raw).replace(/\bexpected credit loss(?:es)?\b|\b(?:better|worse|higher|lower|more|less|stronger|weaker)\s+than\s+(?:we\s+|previously\s+|had\s+been\s+)?(?:expected|anticipated)\b|\bunexpected\b|\breasonably expected\b/gi, " ");
     if (OUTLOOK_WORD.test(line)) lastOutlook = i;
     if (i - lastOutlook > 40) return;
     /* Guide-shaped, or a sentence that says it is a guide. Broadcom writes
