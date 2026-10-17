@@ -8,8 +8,10 @@
 4. **Seconds after the release**: the earnings email (Release Watch).
 5. **When the 10-Q / 10-K reaches SEC**: the filings email (Filing Watch).
 
-The preview workflow was DISABLED on 17 Oct: it sent on a date estimated from last year, 1-3 days early
-(NFLX, PM, RTX on a Saturday). It stays off until stored earnings dates exist and it sends exactly one day before.
+Built 17 Oct (commit 36a071d): dates.yml (20:40 UTC daily, Alpha Vantage calendar, secret ALPHAVANTAGE_KEY, KV
+date:<T>); preview.yml (21:30 UTC, only when the stored date is tomorrow in New York; no-guidance note otherwise);
+send.mjs sends no Guidance email on release day (record still updated; GUIDANCE_DAYOF_EMAIL=on restores it); the
+Guidance sample is the preview. The old preview (estimated dates, 1-3 days early) sent NFLX/PM/RTX on Sat 17 Oct.
 
 # Guidance Scorecard: handover (14 Oct 2026)
 
