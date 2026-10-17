@@ -861,6 +861,70 @@ function currencyColumns(text, quote) {
 }
 const SAYS_CURRENCY = /constant currency|\bcc\b|currency[-\s]neutral|fx[-\s]neutral/i;
 
+/* FOUR-COLUMN OUTLOOK TABLES: current and prior guide, each reported and in
+   constant currency. McCormick's October 2025 table:
+     Current Guide October 2025 | Prior Guide June 2025
+     Reported | Constant Currency | Reported | Constant Currency
+     Net sales growth 0% to 2% | 1% to 3%(1) | 0% to 2% | 1% to 3%(1)
+   The reading took "1% to 3%" - the current constant-currency cell - as net
+   sales growth, and the record showed a raise from 0-2% that never happened.
+   Where the row has exactly four cells and the heading above names both
+   pairs, the cell a guide came from decides: a prior-guide cell is dropped
+   (the prior guide is the previous release's own), a constant-currency cell
+   is labelled so. The guide's figure is matched at its FIRST place in the
+   row, which is the current column when both columns print it. */
+const CELL = /\(?-?\$?\s?\d[\d,]*(?:\.\d+)?\)?\s?%?(?:\s*(?:to|-|\u2013)\s*\(?-?\$?\s?\d[\d,]*(?:\.\d+)?\)?\s?%?)?(?:\(\d\))?|-{2,3}|\u2014/g;
+function fourColumnCell(flat, g) {
+  const label = String(g.metric_as_written || "").replace(/\s+/g, " ").trim();
+  if (label.length < 4) return null;
+  const nums = [g.low, g.high, g.value].filter((n) => typeof n === "number");
+  if (!nums.length) return null;
+  let from = 0;
+  while (true) {
+    const at = flat.indexOf(label, from);
+    if (at < 0) return null;
+    from = at + 1;
+    // The row: the label, then cells, up to the next word.
+    const after = flat.slice(at + label.length, at + label.length + 260);
+    const stop = after.search(/[A-Za-z]{3,}/);
+    const rowText = stop < 0 ? after : after.slice(0, stop);
+    const cells = (rowText.match(CELL) || []).map((c) => c.trim()).filter(Boolean);
+    if (cells.length !== 4) continue;
+    const above = flat.slice(Math.max(0, at - 700), at);
+    const nowM = [...above.matchAll(/\b(?:current|updated|revised|new)\s+(?:[A-Za-z0-9]+\s+){0,3}?(?:guid\w*|outlook)\b/gi)].pop();
+    const wasM = [...above.matchAll(/\b(?:prior|previous|previously)\s+(?:[A-Za-z0-9]+\s+){0,3}?(?:guid\w*|outlook)\b/gi)].pop();
+    const ccM = [...above.matchAll(/\bconstant currency\b/gi)].pop();
+    const repM = [...above.matchAll(/\b(?:reported|current dollars|as reported)\b/gi)].pop();
+    if (!nowM || !wasM || !ccM || !repM) return null;
+    const nowFirst = nowM.index < wasM.index;
+    const repFirst = repM.index < ccM.index;     // the nearest headings: "Reported | Constant Currency"
+    const numsIn = (c) => (c.replace(/(\d),(?=\d{3})/g, "$1").match(/-?\d+(?:\.\d+)?/g) || []).map((x) => Math.abs(Number(x)));
+    const idx = cells.findIndex((c) => { const ns = numsIn(c); return nums.every((n) => ns.some((x) => Math.abs(x - Math.abs(n)) < 1e-9)); });
+    if (idx < 0) return null;
+    const current = nowFirst ? idx < 2 : idx >= 2;
+    const cc = repFirst ? idx % 2 === 1 : idx % 2 === 0;
+    return { idx, current, cc, row: label + " " + cells.join(" | ") };
+  }
+}
+
+export function fourColumnTables(guides, text) {
+  const flat = String(text || "").replace(/\s+/g, " ");
+  if (!/constant currency/i.test(flat) || !/\b(?:prior|previous)\b/i.test(flat)) return guides;
+  const out = [];
+  for (const g of guides || []) {
+    const cell = fourColumnCell(flat, g);
+    if (!cell) { out.push(g); continue; }
+    if (!cell.current) continue;                                  // the prior guide's cell
+    if (cell.cc && !/constant currency|\bcc\b/i.test(String(g.metric_as_written || ""))) {
+      out.push({ ...g, metric_as_written: String(g.metric_as_written).trim() + " (in constant currency)",
+        guard_note: ((g.guard_note ? g.guard_note + " " : "") + "Constant-currency column of a four-column table (" + cell.row + ").").trim() });
+      continue;
+    }
+    out.push(g);
+  }
+  return out;
+}
+
 export function dropEarlierColumn(guides, text) {
   const drop = new Set();
   const relabel = new Map();
@@ -2435,7 +2499,7 @@ export async function guidanceFrom(env, cik, release, cal, readAlready) {
     const twin = rateFromEquates(g);
     return twin ? [g, twin] : [g];
   });
-  const withPeriods = impliedYear(dropEarlierColumn(withPeriodsAll, filing.text), filing.text);
+  const withPeriods = impliedYear(dropEarlierColumn(fourColumnTables(withPeriodsAll, filing.text), filing.text), filing.text);
 
   // Every guide as extracted, in order - what the next release is ASKED
   // about. Kept unchanged so the backfill sends the model the same questions
