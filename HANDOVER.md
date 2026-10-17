@@ -1,3 +1,16 @@
+# THE PRODUCT STRUCTURE (set by Zahoor, 17 Oct 2026 - never change it)
+
+1. **Signup**: one sample company, one email per product - three emails at most. Then everything runs in the
+   background.
+2. **Earnings dates** are found and stored for every followed company, so we know who reports when.
+3. **One day before** a company reports: the Guidance email (the preview: guide in force and its record). A company
+   with no guidance, after every source is tried, gets an email saying so, at the same time.
+4. **Seconds after the release**: the earnings email (Release Watch).
+5. **When the 10-Q / 10-K reaches SEC**: the filings email (Filing Watch).
+
+The preview workflow was DISABLED on 17 Oct: it sent on a date estimated from last year, 1-3 days early
+(NFLX, PM, RTX on a Saturday). It stays off until stored earnings dates exist and it sends exactly one day before.
+
 # Guidance Scorecard: handover (14 Oct 2026)
 
 For the next chat. Read this first, then ARCHITECTURE.md if you need the code layout.
