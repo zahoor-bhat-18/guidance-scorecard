@@ -219,6 +219,11 @@ export function resolvePeriod(text, cal, opts) {
     // and Constellation Brands lost 24 full-year results to "reported for
     // Q4". It is the singular with more than one column.
     .replace(/\b(fiscal )?years (ended|ending)\b/g, "$1year $2")
+    /* "June 2026 quarter" is "June quarter 2026". Lam Research writes the
+       year before the word quarter, and it was read as the full year 2026 -
+       so every quarterly revenue result was refused as a different period
+       (October 2026). */
+    .replace(/\b(january|february|march|april|may|june|july|august|september|october|november|december) ((?:19|20)\d{2}) quarter\b/g, "$1 quarter $2")
     .replace(/\s+/g, " ")
     .trim();
 
