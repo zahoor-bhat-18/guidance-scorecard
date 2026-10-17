@@ -5,6 +5,11 @@ name: whois
 
 on:
   workflow_dispatch:
+    inputs:
+      clear:
+        description: "Type CLEAR to empty the shared subscriber list (all products, all addresses). Leave blank to list."
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -24,4 +29,5 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           KV_NAMESPACE_ID: ${{ vars.KV_NAMESPACE_ID }}
           TEST_EMAIL: ${{ vars.TEST_EMAIL }}
+          CLEAR: ${{ inputs.clear }}
         run: node scripts/whois.mjs
