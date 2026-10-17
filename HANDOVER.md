@@ -297,3 +297,17 @@ Zahoor asked to start from fresh. Both subscriber lists are EMPTY: the shared KV
 Watch, Filing Watch) was cleared with `whois.yml` (input CLEAR), and filing-agent `config/subscribers.json` has
 `"subscribers": []` (his three addresses and two other people removed, his decision). Company records (40) were kept.
 Everyone, including him, signs up again at zahoorbhat.com/subscribe.
+
+## Oct 17 2026 (after re-signup)
+Zahoor signed up again: FITB, STLD, GE, NFLX, RTX, TSLA, LRCX, PM on all three products. New records built for
+FITB, STLD, RTX, TSLA, LRCX, PM (FITB, STLD, TSLA not publishable - they guide on the call or in separate filings).
+Fixed, each rebuilt (46 companies) and diffed:
+- **Periods**: "June 2026 quarter" and a bare "March 2026" column (not the year-end month) are quarters, not years
+  (period.js). Lam Research went from 3 to 31 scored pairs. June-quarter answers at Lam stay refused (could be the year).
+- **Pairing basis** (pairing.js forPeriod): two results for one period are settled by the guide's basis; none if
+  neither matches. MU EPS now scored against non-GAAP, as guided (was GAAP - FQ4 2024 had shown "below", is "above").
+- **Gap format** (format.js formatGap): money gaps as $93m / $1.18bn, not $92.757m / $0.1bn.
+- **Signup**: banks/insurers (SIC 6000-6499) kept off Release Watch only, with a note (subscribers.js `skip`).
+- Filing Watch: an empty subscriber list made the Heartbeat report "watcher stopped" - fixed in filing-agent.
+- Release Watch: the guide comparison borrowed from this record now uses only pairs the briefed release answered
+  (GE's July email had shown Q1 2024 "revenue growth 11% vs 7-9%"). In release-watch src/scorecard.mjs.
