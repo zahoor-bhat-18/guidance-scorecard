@@ -98,6 +98,21 @@ export function formatGap(d, unit, signed) {
   const x = Number(d.toFixed(4));
   const lead = signed ? (x > 0 ? "+" : x < 0 ? "\u2212" : "") : "";
   const size = Math.abs(x);
+  /* A gap is a size, not a figure to the dollar: "above by $92.757m" claimed
+     precision the comparison does not have, and "$0.1bn" beside "$91m" read
+     as two scales (Netflix, October 2026). Money gaps are shown in millions
+     below a billion - whole millions from $10m, one decimal below - and in
+     billions to two decimals above. */
+  const PER = { "USD thousands": 1e3, "USD millions": 1e6, "USD billions": 1e9, "USD": 1 };
+  if (PER[unit]) {
+    const usd = size * PER[unit];
+    const trim = (t) => t.replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
+    if (usd >= 1e9) return lead + "$" + trim((usd / 1e9).toFixed(2)) + "bn";
+    if (usd >= 1e7) return lead + "$" + Math.round(usd / 1e6) + "m";
+    if (usd >= 1e6) return lead + "$" + trim((usd / 1e6).toFixed(1)) + "m";
+    if (usd >= 1e3) return lead + "$" + Math.round(usd / 1e3) + "k";
+    return lead + "$" + Math.round(usd);
+  }
   const m = moneyScale(size, unit);
   if (m) return lead + "$" + m.size + m.suffix;
   switch (unit) {
