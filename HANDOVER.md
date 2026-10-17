@@ -291,3 +291,9 @@ Fixed (each rebuilt and diffed against the build before it):
    Deliberate in the code; changing it touches every company - do alone with a full diff. (CCL 2023 cost item.)
 3. UNH Jul 2025 UnitedHealthcare earnings from operations $9.0-9.3bn is set aside, not captured as the segment's.
 4. Release Watch has never sent live (he never signed up for it); TSM 6-K support if wanted.
+
+## Oct 17 2026 (later): fresh start
+Zahoor asked to start from fresh. Both subscriber lists are EMPTY: the shared KV `subscribers` (Guidance, Release
+Watch, Filing Watch) was cleared with `whois.yml` (input CLEAR), and filing-agent `config/subscribers.json` has
+`"subscribers": []` (his three addresses and two other people removed, his decision). Company records (40) were kept.
+Everyone, including him, signs up again at zahoorbhat.com/subscribe.
