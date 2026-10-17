@@ -119,11 +119,13 @@ export function cleanProducts(raw) {
   return list.length ? Array.from(new Set(list)) : ["guidance"];
 }
 
-export async function hold(env, email, tickers, products = ["guidance"]) {
+export async function hold(env, email, tickers, products = ["guidance"], skip = {}) {
   const token = bytesToHex(crypto.getRandomValues(new Uint8Array(16)));
   await env.CACHE.put(
     PENDING_PREFIX + token,
-    JSON.stringify({ email, tickers, products, at: new Date().toISOString() }),
+    // skip: tickers one product cannot cover, by product - Release Watch does
+    // not cover banks and insurers, so they are kept off it alone.
+    JSON.stringify({ email, tickers, products, skip, at: new Date().toISOString() }),
     { expirationTtl: PENDING_TTL }
   );
   return token;
@@ -146,9 +148,12 @@ export async function confirm(env, token) {
 
   const products = cleanProducts(pending.products);
   const record = { ...(existing || {}) };
+  const skip = pending.skip || {};
+  const addedFor = {};
   for (const p of products) {
     const field = PRODUCTS[p];
-    record[field] = Array.from(new Set([...(record[field] || []), ...pending.tickers]));
+    addedFor[p] = pending.tickers.filter((t) => !(skip[p] || []).includes(t));
+    record[field] = Array.from(new Set([...(record[field] || []), ...addedFor[p]]));
   }
   if (!record.tickers) record.tickers = [];
   record.confirmedAt = existing ? existing.confirmedAt : new Date().toISOString();
@@ -161,7 +166,7 @@ export async function confirm(env, token) {
   const had = (p) => (existing && existing[PRODUCTS[p]]) || [];
   return {
     email: pending.email, products, record,
-    tickers: record.tickers, added: pending.tickers,
+    tickers: record.tickers, added: pending.tickers, addedFor, skipped: skip,
     // Guidance Scorecard's view, which the backfill below uses.
     alreadyHad: had("guidance"),
     guidanceAdded: products.includes("guidance") ? pending.tickers : [],

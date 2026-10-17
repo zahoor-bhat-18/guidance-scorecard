@@ -982,9 +982,17 @@ export default {
            2026). Read from the company's own filing list; when EDGAR cannot
            be reached the ticker is let through rather than refused. */
         const foreign = [];
+        const products = cleanProducts(body.products);
+        /* Release Watch does not cover banks, insurers and other financials
+           (SIC 6000-6499; see release-watch src/review.mjs): FITB was taken
+           for it and its sample came back "held" (17 Oct 2026). Such a
+           company stays on the other products and is kept off this one. */
+        const notOnEarnings = [];
         for (const t of known.slice(0, 25)) {
           try {
             const sub = await secJson(env, "https://data.sec.gov/submissions/CIK" + String(secTickers[t]).padStart(10, "0") + ".json");
+            const sic = Number(sub.sic || 0);
+            if (products.includes("earnings") && sic >= 6000 && sic <= 6499) notOnEarnings.push(t);
             const forms = ((sub.filings && sub.filings.recent && sub.filings.recent.form) || []).slice(0, 200);
             const us = forms.some((f) => /^(8-K|10-Q|10-K)(\/A)?$/.test(f));
             const abroad = forms.some((f) => /^(6-K|20-F|40-F)(\/A)?$/.test(f));
@@ -1000,8 +1008,12 @@ export default {
         }
         known.length = 0; known.push(...covered);
 
-        const products = cleanProducts(body.products);
-        const token = await hold(env, email, known, products);
+        const rwSkip = notOnEarnings.filter((t) => known.includes(t));
+        const token = await hold(env, email, known, products, rwSkip.length ? { earnings: rwSkip } : {});
+        const rwNote = rwSkip.length
+          ? "Release Watch does not cover banks and insurers yet, so " + rwSkip.join(", ") + (rwSkip.length > 1 ? " are" : " is")
+            + " on your other products only."
+          : "";
         const site = env.SITE_URL || url.origin;
         const mail = confirmationEmail(known, confirmUrl(site, token), env.POSTAL_ADDRESS, products);
 
@@ -1010,9 +1022,9 @@ export default {
         return json({
           ok: true,
           following: known,
-          notCovered: [...unknown, ...foreign],
-          message: unknown.length || foreign.length
-            ? "Check your inbox." + (unknown.length ? " EDGAR has no company under " + unknown.join(", ") + "." : "") + (foreignNote ? " " + foreignNote : "")
+          notCovered: [...unknown, ...foreign, ...rwSkip.map((t) => t + " (Release Watch)")],
+          message: unknown.length || foreign.length || rwSkip.length
+            ? "Check your inbox." + (unknown.length ? " EDGAR has no company under " + unknown.join(", ") + "." : "") + (foreignNote ? " " + foreignNote : "") + (rwNote ? " " + rwNote : "")
             : "Check your inbox and click the link to confirm.",
         });
       } catch (e) {
@@ -1049,7 +1061,7 @@ export default {
         const fresh = gAdded.filter((t) => !recorded.has(t));
         const req = await requestBackfill(env, fresh);
         const sample = await requestSamples(env, done.email,
-          done.products.includes("earnings") ? done.added : [], covered,
+          done.products.includes("earnings") ? ((done.addedFor && done.addedFor.earnings) || done.added) : [], covered,
           done.products.includes("filings") ? done.added : []);
 
         const para = (text) => "<p>" + text + "</p>";
@@ -1059,6 +1071,10 @@ export default {
           "<h1>Confirmed</h1>" + following.map((x) => para(x)).join("")
           + (done.products.includes("earnings")
               ? para("<b>Release Watch</b>: an email arrives within minutes of each company's next earnings release.")
+              : "")
+          + (done.skipped && (done.skipped.earnings || []).length
+              ? para("<b>Release Watch</b> does not cover banks and insurers yet, so " + names(done.skipped.earnings)
+                + " " + (done.skipped.earnings.length > 1 ? "are" : "is") + " on your other products only.")
               : "")
           + (done.products.includes("filings")
               ? para("<b>Filing Watch</b>: a briefing arrives when each company files its next 10-Q or 10-K.")
