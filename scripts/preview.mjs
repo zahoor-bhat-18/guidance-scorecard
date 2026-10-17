@@ -98,7 +98,7 @@ async function main() {
     const to = test ? [process.env.TEST_EMAIL].filter(Boolean) : followersOf(ticker);
     for (const email of to) {
       const unsub = SITE + "/unsubscribe?e=" + encodeURIComponent(email) + "&s=" + (await hmac(process.env.UNSUB_SECRET, email)) + "&p=guidance";
-      const opts = { unsubscribeUrl: unsub, postalAddress: process.env.POSTAL_ADDRESS, reportDate: date.date, reportTime: date.time, tomorrow: due };
+      const opts = { unsubscribeUrl: unsub, postalAddress: process.env.POSTAL_ADDRESS, reportDate: date.date, reportTime: date.time, dateByCompany: Boolean(date.company && date.company.date === date.date), tomorrow: due };
       // No guide in force: the short note that there is nothing to set the results against.
       const mail = renderPreview(record, opts) || renderNoGuidePreview(record, opts);
       if (test) mail.subject = "[TEST] " + mail.subject;

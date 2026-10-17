@@ -187,7 +187,7 @@ async function q4Events(host) {
 async function companyDate(t, rec, today, horizon) {
   let ir = null;
   try { ir = JSON.parse((await kvGet("ir:" + t)) || "null"); } catch { ir = null; }
-  if (!ir || !(ir.urls || []).length) {
+  if (!ir || !(ir.urls || []).length || Date.now() - Date.parse(ir.at || 0) > 30 * 86400000) {
     const fromSite = await irPages(t);
     let fromRel = []; try { fromRel = await irFromRelease(t, rec); } catch { fromRel = []; }
     ir = { site: fromSite.site, urls: Array.from(new Set([...fromSite.urls, ...fromRel])), at: new Date().toISOString() };
