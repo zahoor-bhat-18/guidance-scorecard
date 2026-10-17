@@ -47,8 +47,23 @@ export function metricKey(guide) {
 }
 
 function baseKey(written) {
+  const k = baseKeyOf(written);
+  // "cc" in one place, whatever the wording's order: "net sales growth cc".
+  return /\bcc\b/.test(k) ? (k.replace(/\bcc\b/g, " ").replace(/\s+/g, " ").trim() + " cc").trim() : k;
+}
+
+function baseKeyOf(written) {
   return String(written || "")
     .toLowerCase()
+    /* Constant currency is part of the measure. Carnival's "Net yields" and
+       "Net yields (in constant currency)", McCormick's "Net sales growth" and
+       "Net sales growth in constant currency", Philip Morris's EPS "excluding
+       currency" are each two guides; keyed as one, a constant-currency guide
+       could be scored against the reported result, and one replaced the
+       other in the record (October 2026). Every wording reads " cc ". */
+    .replace(/\(\s*(?:in\s+|on\s+a\s+)?(?:constant[-\s]currency|cc|fx[-\s]neutral|currency[-\s]neutral)(?:\s+basis)?\s*\)/g, " cc ")
+    .replace(/\b(?:in|on a|at)\s+constant[-\s]currenc(?:y|ies)(?:\s+basis)?\b/g, " cc ")
+    .replace(/\bconstant[-\s]currency\b|\bexcluding (?:foreign )?currency(?: impacts?| effects?)?\b|\bex[-\s]currency\b|\b(?:fx|f\/x|currency)[-\s]neutral\b/g, " cc ")
     .replace(/\([^)]*\)/g, " ")
     .replace(/\b(first|second|third|fourth)\s+quarter\b/g, " ")
     .replace(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+quarter\b/g, " ")
@@ -62,7 +77,6 @@ function baseKey(written) {
     .replace(/\b(guidance|outlook|forecast|expectations?|expected|projected)\b/g, " ")
     .replace(/\badj(\.|usted)?\b/g, " ")
     .replace(/\bcore\b/g, " ")
-    .replace(/\bconstant[-\s]currency\b/g, " ")
     // "Enterprise" is Constellation's word for the whole company.
     .replace(/\b(consolidated|total|company|enterprise)\b/g, " ")
     .replace(/\beps\b/g, "earnings per share")
