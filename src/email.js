@@ -1569,7 +1569,35 @@ export function sectionsOf(view, keys) {
     });
   }
 
-  return { quarter, quarterLine, outlook, record, otherMoves };
+  /* EVERY OTHER GUIDE THE RELEASE MOVED, with its figures. Prologis's October
+     2026 email showed four guides in full and put "Cut: Net earnings
+     attributable to common stockholders" in a list of names - a 9% cut,
+     the largest move in the release, with no figure. Each guide the outlook
+     above does not show gets a was / now line here, largest move first. */
+  const shownR = new Set(outlook.map((o) => o.r));
+  const seenRest = new Set(outlook.map((o) => String(o.measure) + "|" + o.period));
+  const midOf = (g) => (g ? (g.low != null && g.high != null ? (g.low + g.high) / 2 : g.value != null ? g.value : g.low != null ? g.low : g.high) : null);
+  const rest = [];
+  for (const r of moved) {
+    if (shownR.has(r)) continue;
+    const dir = r.direction === "unchanged" ? "held" : r.direction;
+    if (!["raised", "cut", "narrowed", "widened", "held", "new"].includes(dir)) continue;
+    const name = displayLabel([String(r.label || r.metric || "")]).replace(/\s+(outlook|target|guidance)\b/gi, "").trim();
+    if (!name || BRIDGE.test(name)) continue;
+    const period = periodLabel(r.period);
+    const k = name + "|" + period;
+    if (seenRest.has(k)) continue;
+    seenRest.add(k);
+    const b = midOf(r.before), a = midOf(r.after);
+    const size = typeof a === "number" && typeof b === "number" && b !== 0 ? Math.abs(a - b) / Math.abs(b) : 0;
+    rest.push({
+      r, measure: name, period, dir, size,
+      guide: r.after ? (r.words ? formatFigure(r.after, r.unit) + "*" : roughly(r) + formatFigure(r.after, r.unit)) : "",
+      was: r.before && dir !== "held" && dir !== "new" ? formatFigure(r.before, r.unit) + (r.beforeWords ? "*" : "") : "",
+    });
+  }
+  rest.sort((x, y) => y.size - x.size);
+  return { quarter, quarterLine, outlook, record, otherMoves, rest };
 }
 
 /* The plain-text version has no emoji problem to guard against, and the
@@ -2002,7 +2030,7 @@ function quietDesign(sec, d) {
         else if (al === bl && ah < bh) end = "bottom";
       }
     }
-    rows.push({ measure, period: o.period, guide: o.guide, words: r.words || null, dir: QUIET_ORDER.includes(dir) ? dir : "new", was, end,
+    rows.push({ src: r, measure, period: o.period, guide: o.guide, words: r.words || null, dir: QUIET_ORDER.includes(dir) ? dir : "new", was, end,
       group, adj: basisOfLabel(own || measure) !== "gaap" && /adjusted|non-?gaap|\bcore\b|comparable/i.test(own || measure) });
   }
   // Within one measure, the adjusted guide first: it is the one the company
@@ -2010,15 +2038,24 @@ function quietDesign(sec, d) {
   rows.sort((a, b) => (a.group - b.group) || ((b.adj ? 1 : 0) - (a.adj ? 1 : 0)));
   const count = {};
   for (const r of rows) count[r.dir] = (count[r.dir] || 0) + 1;
+  // The headline counts every guide in the release, not only those shown in full.
+  for (const r of sec.rest || []) count[r.dir] = (count[r.dir] || 0) + 1;
   const parts = QUIET_ORDER.filter((k) => count[k]).map((k) => count[k] + " " + k);
   const periods = Array.from(new Set(rows.map((r) => r.period)));
-  const title = !rows.length ? "No new guidance in this release"
+  const anyGuide = rows.length || (sec.rest || []).length;
+  const title = !anyGuide ? "No new guidance in this release"
     : parts.length === 1 && count.new ? "New guidance" + (periods.length === 1 ? " for " + periods[0] : "")
     : "Guidance: " + parts.join(", ");
   // Two sentences: what moved first, then the first thing that did not.
   const says = (r) => r.measure + " " + (r.dir === "new" ? "guided at" : r.dir === "held" ? "held at"
     : r.dir + " to" + (r.end ? " the " + r.end + " of its range," : "")) + " " + r.guide + ".";
-  const movedRows = rows.filter((r) => r.dir !== "held" && r.dir !== "new");
+  /* The two lines under the headline are the two largest moves in the
+     release, wherever they are listed (by the change in the guide's middle). */
+  const midOf = (g) => (g ? (g.low != null && g.high != null ? (g.low + g.high) / 2 : g.value != null ? g.value : g.low != null ? g.low : g.high) : null);
+  const sizeOf = (r) => { const b = midOf(r.before), a = midOf(r.after); return typeof a === "number" && typeof b === "number" && b !== 0 ? Math.abs(a - b) / Math.abs(b) : 0; };
+  const movedRows = rows.filter((r) => r.dir !== "held" && r.dir !== "new").map((r) => ({ ...r, size: sizeOf(r.src || {}) }))
+    .concat((sec.rest || []).filter((r) => r.dir !== "held" && r.dir !== "new"))
+    .sort((a, b) => b.size - a.size);
   const stillRows = rows.filter((r) => r.dir === "held" || r.dir === "new");
   const lines = movedRows.slice(0, 2).concat(stillRows.slice(0, movedRows.length ? 1 : 2)).slice(0, 2).map(says);
   const kind = count.raised && !count.cut ? "beat" : count.cut && !count.raised ? "miss" : "mixed";
@@ -2110,7 +2147,8 @@ function renderQuiet(view, opts, company, metrics, sec, quiet, subject, scored) 
      cut by a quarter. Every raised, cut, narrowed or widened guide gets one
      line under the score, above the tables. */
   if (scored) {
-    const moves = quiet.rows.filter((r) => ["raised", "cut", "narrowed", "widened", "withdrawn"].includes(r.dir));
+    const moves = quiet.rows.filter((r) => ["raised", "cut", "narrowed", "widened", "withdrawn"].includes(r.dir))
+      .concat((sec.rest || []).filter((r) => ["raised", "cut", "narrowed", "widened"].includes(r.dir)));
     if (moves.length) {
       const bit = (r) => r.measure + " " + r.period + " " + r.dir
         + (r.dir === "withdrawn" ? "" : " to " + r.guide) + (r.was ? " (was " + r.was + ")" : "");
@@ -2119,22 +2157,15 @@ function renderQuiet(view, opts, company, metrics, sec, quiet, subject, scored) 
       scored = { ...scored, lines: [...scored.lines, line] };
     }
   }
-  // Every other guide in the release, by what happened to it: names only.
-  const latest = view.latestRelease && view.latestRelease.accession;
-  const shown = new Set(sec.outlook.map((o) => o.r));
+  // Every other guide in the release: changes with figures, held and new by name.
+  const restMoves = (sec.rest || []).filter((r) => r.dir !== "held" && r.dir !== "new");
   const also = {};
-  for (const r of view.revisions || []) {
-    if (!latest || r.release !== latest || shown.has(r)) continue;
-    const dir = r.direction === "unchanged" ? "held" : r.direction;
-    if (!QUIET_ORDER.includes(dir)) continue;
-    const name = displayLabel([String(r.label || r.metric || "")]).replace(/\s+(outlook|target|guidance)\b/gi, "").trim();
-    if (!name || BRIDGE.test(name)) continue;
-    (also[dir] = also[dir] || new Set()).add(name);
-  }
-  const alsoLine = QUIET_ORDER.filter((k) => also[k]).map((k) =>
-    (k === "held" ? "Also held" : k === "new" ? "Also guided" : k.charAt(0).toUpperCase() + k.slice(1))
-    + ": " + Array.from(also[k]).slice(0, 6).join(", ")
-    + (also[k].size > 6 ? " and " + (also[k].size - 6) + " more" : "")).join(". ");
+  for (const r of sec.rest || []) if (r.dir === "held" || r.dir === "new") (also[r.dir] = also[r.dir] || new Set()).add(r.measure);
+  const alsoLine = ["held", "new"].filter((k) => also[k]).map((k) =>
+    (k === "held" ? "Also held" : "Also guided")
+    + ": " + Array.from(also[k]).slice(0, 8).join(", ")
+    + (also[k].size > 8 ? " and " + (also[k].size - 8) + " more" : "")).join(". ");
+  const moveText = (r) => r.measure + ", " + r.period + ": " + r.guide + " - " + r.dir + (r.was ? ", was " + r.was : "");
 
   const hist = metrics.map((g) => {
     const rec = (quiet.record || []).find((r) => r.measure === g.metric);
@@ -2170,10 +2201,15 @@ function renderQuiet(view, opts, company, metrics, sec, quiet, subject, scored) 
     t.push(quiet.why);
     t.push("");
   }
-  if (quiet.rows.length) {
+  if (quiet.rows.length || (sec.rest || []).length) {
     t.push("WHAT THEY GUIDE NOW");
     for (const r of quiet.rows) {
       t.push("- " + r.measure + ", " + r.period + ": " + r.guide + " - " + r.dir + (r.end ? " to the " + r.end + " of the range" : "") + (r.was ? ", was " + r.was : ""));
+    }
+    if (restMoves.length) {
+      t.push("");
+      t.push("OTHER GUIDANCE CHANGES, LARGEST FIRST");
+      for (const r of restMoves) t.push("- " + moveText(r));
     }
     if (alsoLine) t.push(alsoLine + ".");
     if (wordsNote && !hist.length) t.push(wordsNote);
@@ -2229,7 +2265,7 @@ function renderQuiet(view, opts, company, metrics, sec, quiet, subject, scored) 
     h.push('</table></div>');
   }
 
-  if (quiet.rows.length) {
+  if (quiet.rows.length || (sec.rest || []).length) {
     h.push('<div style="padding:18px 22px 6px;">' + label("What they guide now"));
     h.push('<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;margin-top:8px;font-size:14px;">');
     for (const r of quiet.rows) {
@@ -2247,6 +2283,18 @@ function renderQuiet(view, opts, company, metrics, sec, quiet, subject, scored) 
       }
     }
     h.push('</table>');
+    if (restMoves.length) {
+      h.push('<div style="margin-top:16px;">' + label("Other guidance changes, largest first") + '</div>');
+      h.push('<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;margin-top:6px;font-size:13px;">');
+      for (const r of restMoves) {
+        h.push('<tr><td style="padding:7px 8px 7px 0;vertical-align:top;border-bottom:1px solid ' + LINE + ';">' + esc(r.measure)
+          + '<div style="font-size:12px;color:' + SOFT + ';">' + esc(r.period) + '</div></td>'
+          + '<td align="right" style="padding:7px 0;vertical-align:top;border-bottom:1px solid ' + LINE + ';"><b>' + esc(r.guide) + '</b>'
+          + '<div style="font-size:12px;color:' + (TONE[r.dir] || INK) + ';">' + esc(r.dir.charAt(0).toUpperCase() + r.dir.slice(1))
+          + (r.was ? ' <span style="color:' + SOFT + ';">\u00b7 was ' + esc(r.was) + '</span>' : '') + '</div></td></tr>');
+      }
+      h.push('</table>');
+    }
     if (alsoLine) h.push('<div style="font-size:13px;color:' + SOFT + ';margin-top:10px;">' + esc(alsoLine) + '.</div>');
     if (wordsNote && !hist.length) h.push('<div style="font-size:12px;color:' + SOFT + ';margin-top:10px;">' + esc(wordsNote) + '</div>');
     h.push('</div>');
