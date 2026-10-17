@@ -73,30 +73,35 @@ async function cikOf(t) {
 const plain = (html) => String(html || "").replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, " ")
   .replace(/<[^>]+>/g, " ").replace(/&nbsp;|&#160;/g, " ").replace(/&amp;/g, "&").replace(/&#8217;|&rsquo;/g, "'").replace(/\s+/g, " ");
 
-/* The investor pages a company's last release points to. */
-async function irPagesFromRelease(t, accession) {
+/* The company's investor pages. SEC does not record websites, so the official
+   website comes from Wikidata (looked up by SEC CIK, property P5531; official
+   website P856), and the investor site is the link on it named "Investors".
+   Kept in KV as ir:<TICKER> once found. */
+async function officialSite(t) {
   const cik = await cikOf(t);
-  if (!cik || !accession) return [];
-  const base = "https://www.sec.gov/Archives/edgar/data/" + cik + "/" + accession.replace(/-/g, "") + "/";
-  const idx = await fetch(base + "index.json", { headers: { "User-Agent": UA } });
-  if (!idx.ok) return [];
-  const items = (((await idx.json()) || {}).directory || {}).item || [];
-  const ex = items.map((i) => i.name).filter((n) => /\.htm$/i.test(n) && /99/.test(n));
+  if (!cik) return null;
+  const pad = cik.padStart(10, "0");
+  const q = 'SELECT ?site WHERE { VALUES ?k { "' + pad + '" "' + cik + '" } ?c wdt:P5531 ?k ; wdt:P856 ?site . }';
+  const r = await fetch("https://query.wikidata.org/sparql?format=json&query=" + encodeURIComponent(q),
+    { headers: { "User-Agent": UA, Accept: "application/sparql-results+json" }, signal: AbortSignal.timeout(20000) });
+  if (!r.ok) return null;
+  const rows = (((await r.json()) || {}).results || {}).bindings || [];
+  return rows.map((x) => x.site.value)[0] || null;
+}
+async function irPages(t) {
+  const site = await officialSite(t);
+  if (!site) return { site: null, urls: [] };
+  const home = await getPage(site);
   const urls = new Set();
-  for (const n of ex.slice(0, 2)) {
-    const r = await fetch(base + n, { headers: { "User-Agent": UA } });
-    if (!r.ok) continue;
-    const html = await r.text();
-    const found = [...html.matchAll(/https?:\/\/[^\s"'<>)]+|\bwww\.[a-z0-9-]+\.[a-z.]+[^\s"'<>)]*/gi)].map((m) => m[0].replace(/[.,;]+$/, ""));
-    for (const u of found) {
-      const url = /^https?:/i.test(u) ? u : "https://" + u;
-      let h; try { h = new URL(url); } catch { continue; }
-      if (/sec\.gov|xbrl|w3\.org|fasb|youtube|twitter|x\.com|linkedin|facebook|instagram/i.test(h.hostname)) continue;
-      if (/investor|^ir\.|\.ir\.|event|earnings|webcast|presentation/i.test(h.hostname + h.pathname)) urls.add(h.origin + h.pathname);
-      else if (h.pathname === "/" || h.pathname === "") urls.add(h.origin + "/");
+  if (home) {
+    for (const m of home.html.matchAll(/<a\b[^>]*href=["']([^"'#]+)["'][^>]*>([\s\S]{0,300}?)<\/a>/gi)) {
+      let u; try { u = new URL(m[1], home.url); } catch { continue; }
+      if (!/^https?:$/.test(u.protocol)) continue;
+      const label = plain(m[2]).trim();
+      if (/investor/i.test(label) || /investor|^ir\./i.test(u.hostname) || /\/investors?(?:-relations)?\/?$|\/ir\/?$/i.test(u.pathname)) urls.add(u.origin + u.pathname);
     }
   }
-  return [...urls].slice(0, 6);
+  return { site, urls: [...urls].slice(0, 4) };
 }
 
 async function getPage(url) {
@@ -131,8 +136,7 @@ async function companyDate(t, rec, today, horizon) {
   let ir = null;
   try { ir = JSON.parse((await kvGet("ir:" + t)) || "null"); } catch { ir = null; }
   if (!ir || !(ir.urls || []).length) {
-    const acc = (((rec && rec.releasesRead) || []).slice().sort((a, b) => String(b.filed).localeCompare(String(a.filed)))[0] || {}).accession;
-    ir = { urls: await irPagesFromRelease(t, acc), from: acc || null, at: new Date().toISOString() };
+    ir = { ...(await irPages(t)), at: new Date().toISOString() };
     if (ir.urls.length && !process.argv.includes("--dry")) { try { await kvPut("ir:" + t, JSON.stringify(ir)); } catch { /* kept next time */ } }
   }
   const seen = new Set(), hits = [], read = [];
@@ -224,7 +228,7 @@ async function main() {
         co = near.find((h) => h.date === best && h.time) || near.find((h) => h.date === best);
         if (dates.length > 1) console.log("  " + t.padEnd(6) + " company pages show several dates: " + dates.join(", ") + "; kept " + best);
       } else {
-        console.log("  " + t.padEnd(6) + " company site: no date found (read " + found.read.length + " of " + found.urls.length + " start pages: " + found.urls.join(" ") + ")"
+        console.log("  " + t.padEnd(6) + " company site: no date found (read " + found.read.length + " pages from " + (found.urls.join(" ") || "no investor page found") + ")" + (process.argv.includes("--dry") && found.read.length ? "\n         read: " + found.read.join(" ") : "")
           + (found.hits.length ? "; dates far from the calendars ignored: " + Array.from(new Set(found.hits.map((h) => h.date))).join(", ") : ""));
       }
     } catch (e) { console.log("  " + t.padEnd(6) + " company site check failed: " + e.message); }
