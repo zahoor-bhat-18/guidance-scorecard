@@ -2123,8 +2123,20 @@ export function scopeByPlace(guides, text) {
     let part = null;
     if (before) {
       const cand = lastPartIn(before);
-      const verb = "[^.]{0,40}\\b(expects?|continues|affirm\\w*|reaffirm\\w*|guid\\w*|anticipates?|projects?|sees|(?:are|is) (?:now |still )?(?:expected|projected|anticipated))\\b";
-      if (cand && new RegExp("\\b" + escapeRe(cand) + "\\b" + verb, "i").test(before)) {
+      const verb = "[^.]{0,40}\\b(expects?|continues|affirm\\w*|reaffirm\\w*|guid\\w*|anticipates?|projects?|sees)\\b";
+      /* The passive ("revenues for UnitedHealthcare are expected ...") counts
+         only from the sentence DIRECTLY before the guide's: UnitedHealth's
+         January 2026 "Optum earnings from operations are expected ..." is
+         followed by the company's data table, and the table's rows were
+         given to Optum (October 2026). */
+      const passive = "[^.]{0,40}\\b(?:are|is) (?:now |still )?(?:expected|projected|anticipated)\\b";
+      const passiveNear = cand && (() => {
+        const m = [...before.matchAll(new RegExp("\\b" + escapeRe(cand) + "\\b" + passive, "gi"))].pop();
+        if (!m) return false;
+        const tail = before.slice(m.index).replace(/(\d)\.(\d)/g, "$10$2").replace(/\b(?:approx|vs|inc|no|ltd|co)\./gi, "x");
+        return (tail.match(/[.!?]\s+(?=[A-Z])/g) || []).length <= 1;
+      })();
+      if (cand && (new RegExp("\\b" + escapeRe(cand) + "\\b" + verb, "i").test(before) || passiveNear)) {
         /* ...unless the company itself speaks AFTER that part and before the
            guide. GE's January 2024 paragraph gives GE Vernova's outlook,
            then "GE Aerospace expects adjusted revenue to grow low double
