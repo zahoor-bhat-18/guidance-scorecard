@@ -261,3 +261,33 @@ Fixed, all general (commits b8ff961 .. a42e77e), all 40 rebuilt (run 38774934430
 4. The older list above (Carnival 2023 cost basis - now labels right, recheck the pair; prose guides missed; ratio
    actuals; investor-site slides; preview "rest of year").
 Filing Watch: no new briefings since CHRN (14 Oct); its HANDOVER open items unchanged.
+
+## Oct 17 2026: subscriber clean-up and fixes 1-3, 5 - STATE AT HANDOVER
+
+Zahoor unsubscribed from everything and will sign up again once fixes are in. Nothing is sent to him meanwhile.
+- **Filing Watch's old list** (`filing-agent/config/subscribers.json`, not touched by the unsubscribe page): his three
+  addresses (zahoorbhatdotcom@, zahoorf6@, zahoor.bhat@icloud) set `active: false`. Two other people's stay active.
+- **Shared list (KV `subscribers`)**: one address left, za***@gmail.com - DAL, MU, MSFT (Guidance), MSFT (Release
+  Watch), MSFT (Filing Watch). Not TEST_EMAIL; probably zahoorf6@. Asked him whether to remove it.
+- New: `whois.yml` / `scripts/whois.mjs` - read-only, prints the shared list with addresses masked.
+
+Fixed (each rebuilt and diffed against the build before it):
+1. **Email** (email.js): headline counts every guide in the release; every guide not shown in full gets a was/now
+   line, largest move first; the two lines under the headline are the two largest moves. PLD now "6 raised, 5 cut,
+   2 narrowed, 2 held", net earnings cut listed with figures. Render-only, no rebuild needed.
+2. **Four-column tables** (fourColumnTables, guidance.js): current/prior x reported/constant currency. MKC Oct 2025
+   net sales now held 0-2% (not raised), cc guides scored. Constant-currency relabels use the company's own wording
+   (ccLabel).
+3. **Passive segment guides**: "revenues for UnitedHealthcare are expected" names a part (PASSIVE_PART); the previous
+   sentence scopes only when directly before. UNH Jul 2025 UnitedHealthcare revenue now a segment guide. A first
+   version gave UNH Jan 2026 company table rows to Optum - caught in the diff and fixed before any send.
+5. **Signup** refuses companies filing abroad (6-K/20-F, e.g. TSM) and shows what was not added.
+- **Send**: a sent mark per release (`sent:<T>:<acc>`), so a rebuild can no longer swallow an email (JNJ 13 Oct).
+- **Check**: "expected credit losses" / "better than expected" are not guidance words (TRV false alarms).
+
+**Pending, by priority:**
+1. Investor-site transcripts/slides (TRV, MSFT, C, CSX) - companies that guide on the call. Biggest piece; alone.
+2. metricKey drops "constant currency" (metrics.js baseKey), so a plain and a cc guide of one measure share a key.
+   Deliberate in the code; changing it touches every company - do alone with a full diff. (CCL 2023 cost item.)
+3. UNH Jul 2025 UnitedHealthcare earnings from operations $9.0-9.3bn is set aside, not captured as the segment's.
+4. Release Watch has never sent live (he never signed up for it); TSM 6-K support if wanted.
