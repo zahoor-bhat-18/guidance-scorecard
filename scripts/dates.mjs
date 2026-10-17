@@ -101,15 +101,48 @@ async function irPages(t) {
       if (/investor/i.test(label) || /investor|^ir\./i.test(u.hostname) || /\/investors?(?:-relations)?\/?$|\/ir\/?$/i.test(u.pathname)) urls.add(u.origin + u.pathname);
     }
   }
-  return { site, urls: [...urls].slice(0, 4) };
+  // Common investor hosts and paths on the company's own domain.
+  let host = ""; try { host = new URL(site).hostname.replace(/^www\./, ""); } catch { host = ""; }
+  if (host) for (const g of ["https://ir." + host + "/", "https://investor." + host + "/", "https://investors." + host + "/", "https://www." + host + "/investors", "https://www." + host + "/investor-relations"]) urls.add(g);
+  return { site, urls: [...urls].slice(0, 9) };
 }
 
+/* Investor hosts the company's last earnings release names (Netflix's
+   ir.netflix.net is not on netflix.com). Investor / IR hosts only. */
+async function irFromRelease(t, rec) {
+  const acc = (((rec && rec.releasesRead) || []).slice().sort((a, b) => String(b.filed).localeCompare(String(a.filed)))[0] || {}).accession;
+  const cik = await cikOf(t);
+  if (!cik || !acc) return [];
+  const base = "https://www.sec.gov/Archives/edgar/data/" + cik + "/" + acc.replace(/-/g, "") + "/";
+  const idx = await fetch(base + "index.json", { headers: { "User-Agent": UA } });
+  if (!idx.ok) return [];
+  const names = ((((await idx.json()) || {}).directory || {}).item || []).map((i) => i.name).filter((n) => /\.htm$/i.test(n) && /99/.test(n));
+  const out = new Set();
+  for (const n of names.slice(0, 2)) {
+    const r = await fetch(base + n, { headers: { "User-Agent": UA } });
+    if (!r.ok) continue;
+    for (const m of (await r.text()).matchAll(/https?:\/\/[^\s"'<>)&]+|\bwww\.[a-z0-9-]+\.[a-z.]+[^\s"'<>)&]*/gi)) {
+      let u; try { u = new URL(/^https?:/i.test(m[0]) ? m[0].replace(/[.,;]+$/, "") : "https://" + m[0].replace(/[.,;]+$/, "")); } catch { continue; }
+      if (/^(ir|investors?)\./i.test(u.hostname)) out.add(u.origin + "/");
+      else if (/investor/i.test(u.pathname) && !/sec\.gov/i.test(u.hostname)) out.add(u.origin + u.pathname);
+    }
+  }
+  return [...out].slice(0, 3);
+}
+
+const DEBUG = process.argv.includes("--dry");
 async function getPage(url) {
   try {
     const r = await fetch(url, { headers: BROWSER, redirect: "follow", signal: AbortSignal.timeout(15000) });
-    if (!r.ok) return null;
-    return { url: r.url || url, html: await r.text() };
-  } catch { return null; }
+    if (!r.ok) { if (DEBUG) console.log("         " + r.status + " " + url); return null; }
+    const html = await r.text();
+    if (DEBUG) {
+      const t = plain(html);
+      const ds = [...t.matchAll(/\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+2026/gi)].map((m) => m[0]).slice(-4);
+      console.log("         200 " + url + " -> " + (r.url !== url ? r.url + " " : "") + t.length + " chars; dates: " + (ds.join(" | ") || "none"));
+    }
+    return { url: r.url || url, html };
+  } catch (e) { if (DEBUG) console.log("         ERR " + url + " " + e.message); return null; }
 }
 
 /* Dates the company itself shows for its coming results. */
@@ -136,12 +169,14 @@ async function companyDate(t, rec, today, horizon) {
   let ir = null;
   try { ir = JSON.parse((await kvGet("ir:" + t)) || "null"); } catch { ir = null; }
   if (!ir || !(ir.urls || []).length) {
-    ir = { ...(await irPages(t)), at: new Date().toISOString() };
+    const fromSite = await irPages(t);
+    let fromRel = []; try { fromRel = await irFromRelease(t, rec); } catch { fromRel = []; }
+    ir = { site: fromSite.site, urls: Array.from(new Set([...fromSite.urls, ...fromRel])), at: new Date().toISOString() };
     if (ir.urls.length && !process.argv.includes("--dry")) { try { await kvPut("ir:" + t, JSON.stringify(ir)); } catch { /* kept next time */ } }
   }
   const seen = new Set(), hits = [], read = [];
   const queue = [...ir.urls];
-  while (queue.length && read.length < 10) {
+  while (queue.length && read.length < 16) {
     const u = queue.shift();
     if (seen.has(u)) continue;
     seen.add(u);
@@ -154,9 +189,12 @@ async function companyDate(t, rec, today, horizon) {
     for (const m of p.html.matchAll(/<a\b[^>]*href=["']([^"'#]+)["'][^>]*>([\s\S]{0,200}?)<\/a>/gi)) {
       let next; try { next = new URL(m[1], p.url); } catch { continue; }
       if (next.host !== host) continue;
-      if (!/event|calendar|earnings|quarter|webcast|results/i.test(next.pathname + " " + plain(m[2]))) continue;
+      const label = plain(m[2]);
+      if (!/event|calendar|earnings|quarter|webcast|results|conference call|press|news/i.test(next.pathname + " " + label)) continue;
       const key = next.origin + next.pathname;
-      if (!seen.has(key) && queue.length < 20) queue.push(key);
+      if (seen.has(key) || queue.length >= 40) continue;
+      // Announcements of the call itself go to the front of the queue.
+      if (/conference call|webcast|announces? (?:date|timing)|to (?:report|release|announce|host)|(?:earnings|results) (?:date|call)/i.test(label)) queue.unshift(key); else queue.push(key);
     }
   }
   return { hits, read, urls: ir.urls };
