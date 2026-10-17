@@ -1,0 +1,27 @@
+name: whois
+
+# Read-only: who is on the shared subscriber list, addresses masked. Run by
+# hand from Actions.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  list:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: List the shared subscribers (masked)
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          KV_NAMESPACE_ID: ${{ vars.KV_NAMESPACE_ID }}
+          TEST_EMAIL: ${{ vars.TEST_EMAIL }}
+        run: node scripts/whois.mjs
