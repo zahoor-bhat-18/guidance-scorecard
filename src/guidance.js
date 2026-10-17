@@ -1744,8 +1744,11 @@ async function secondLookGuides(env, filing, guides) {
       return false;
     }
     if (v.length && farFromFirst(g)) {
-      console.log("Guidance second look " + filing.accession + ": " + g.metric_as_written + " " + (g.period_text || "") + " " + JSON.stringify([g.low, g.high, g.value]) + " - far from the first reading of the same measure, set aside as a part's");
-      return false;
+      /* Kept only if the release places it in a part (scopeByPlace, next):
+         UnitedHealthcare's "earnings from operations ... $9.0 billion to $9.3
+         billion" is its segment's guide, not lost. Unplaced, it is dropped. */
+      g.maybe_part = true;
+      return true;
     }
     return v.length && !v.every((x) => pool.has(x));
   }).map((g) => ({ ...g, second_look: true }));
@@ -2541,9 +2544,14 @@ export async function guidanceFrom(env, cik, release, cal, readAlready) {
   // A NEW question, paid once and saved; the first answer is untouched.
   const second = await secondLookGuides(env, { ...filing, accession: release.accession }, first);
   // Which part of the company each guide covers, when it is a part.
-  const named = scopeByPlace(
+  const namedAll = scopeByPlace(
     scopeByName(first.concat(second.found), String(filing.text || "").slice(0, 600)),
     filing.text);
+  const named = namedAll.filter((g) => {
+    if (!g.maybe_part || g.segment) return true;
+    console.log("Guidance second look " + release.accession + ": " + g.metric_as_written + " " + (g.period_text || "") + " " + JSON.stringify([g.low, g.high, g.value]) + " - far from the first reading of the same measure and placed in no part, set aside");
+    return false;
+  });
   const scoped = await scopeByModel(env, named, release.accession);
   const raw = scoped.guides;
 
