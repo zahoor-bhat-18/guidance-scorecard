@@ -341,3 +341,13 @@ Fixed, each rebuilt (46 companies) and diffed:
 
 **Pending:** investor-site transcripts/slides for call-guiders (TRV, MSFT, C, CSX; also FITB, STLD, TSLA) - a new
 data source, needs a decision; Lam June-quarter answers (year-end month) still refused.
+
+## Oct 17 2026 (evening): earnings dates, company first - STATE AT HANDOVER
+Owner: "rely on company website first and then third party websites."
+- scripts/dates.mjs order: (1) a date confirmed by hand (`manual: true`, kept until it passes); (2) the company's own investor site; (3) Nasdaq + Alpha Vantage calendars, the earlier kept.
+- Investor site: official website from Wikidata (SEC CIK -> P856), then its "Investors" link, ir./investor./investors. hosts, and investor links in the last 8-K release. Cached as `ir:<T>`, refreshed monthly. Pages one level down (events, press, webcast) are read; Q4-platform feeds tried on script-only pages.
+- A company date counts only when it is next to results/webcast words, in the next 45 days, and within 14 days of the calendars.
+- Works today for GE (20 Oct 7:30 am) and LRCX (21 Oct, 2 pm PT). Blocked (403 to automated readers): TSLA, NFLX, RTX, FITB. Script-only sites: PM (Sitecore), STLD (b2i plugin). Those fall back to the calendars.
+- Hand confirmation: dates workflow input `confirm` = "TICKER YYYY-MM-DD pre-market|post-market URL". PM set to 2026-10-21 pre-market (company's Business Wire release).
+- Preview wording: "Date as announced by the company." / calendars disagree -> both dates named, no "tomorrow" / otherwise "Date from the earnings calendars; the company has not confirmed it...".
+- Dry run of the dates workflow logs every page read (status, size, dates seen).
