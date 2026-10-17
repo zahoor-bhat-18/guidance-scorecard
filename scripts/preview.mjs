@@ -91,7 +91,8 @@ async function main() {
     const due = date.date === tomorrow;
     console.log("  " + ticker + ": reports " + date.date + (date.time ? " " + date.time : "") + (due ? " - DUE" : ""));
     if (dry || (!test && !due)) continue;
-    const mark = "preview:" + ticker + ":" + date.date;
+    // "preview2:": the marks left by the old, estimated previews (17 Oct) do not block the real ones.
+    const mark = "preview2:" + ticker + ":" + date.date;
     if (!test && (await kvGet(mark))) { console.log("    already sent"); continue; }
 
     const to = test ? [process.env.TEST_EMAIL].filter(Boolean) : followersOf(ticker);
