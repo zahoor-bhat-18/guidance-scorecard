@@ -277,13 +277,17 @@ export function renderPreview(record, opts = {}) {
   const slot = opts.reportTime === "pre-market" ? ", before the market opens" : opts.reportTime === "post-market" ? ", after the market closes" : "";
   const period = pv.next.interim ? "its next quarter" : periodLabel(pv.next.period);
   const subject = dated
-    ? short + " reports " + period + (opts.tomorrow ? " tomorrow" : " on " + when.replace(/,? \d{4}$/, "")) + ": the guide and its record"
+    ? (opts.altDate
+      ? short + " reports " + period + " on " + when.replace(/,? \d{4}$/, "") + " or " + longDate(opts.altDate).replace(/,? \d{4}$/, "") + ": the guide and its record"
+      : short + " reports " + period + (opts.tomorrow ? " tomorrow" : " on " + when.replace(/,? \d{4}$/, "")) + ": the guide and its record")
     : short + " reports " + period + " around " + when.replace(/,? \d{4}$/, "") + ": the guide and its record";
   const dateLine = dated
-    ? (opts.dateByCompany ? "Date as announced on the company's own investor site." : "Date from the earnings calendars; the company has not confirmed it on a page we can read, and can still move it.")
+    ? (opts.dateByCompany ? "Date as announced by the company."
+      : opts.altDate ? "The earnings calendars disagree (" + longDate(opts.reportDate) + " or " + longDate(opts.altDate) + ") and the company's own page could not be read, so this comes before the earlier one."
+      : "Date from the earnings calendars; the company has not confirmed it on a page we can read, and can still move it.")
     : "Estimated: it reported the same quarter last year on " + longDate(pv.next.lastYear) + ".";
   const lead = dated
-    ? short + " reports " + period + " on " + when + slot + ". " + dateLine
+    ? (opts.altDate ? short + " reports " + period + " on " + when + " or " + longDate(opts.altDate) + ". " + dateLine : short + " reports " + period + " on " + when + slot + ". " + dateLine)
     : short + " is expected to report " + period + " on or around " + when + ". " + dateLine;
   const anyWords = pv.rows.some((r) => r.words);
   const anyArith = pv.rows.some((r) => r.arithmetic);

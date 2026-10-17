@@ -232,6 +232,16 @@ const days = (a, b) => Math.round((Date.parse(b + "T00:00:00Z") - Date.parse(a +
 
 async function main() {
   const dry = process.argv.includes("--dry");
+  /* Confirm a date by hand from the company's own announcement:
+     CONFIRM="PM 2026-10-21 pre-market https://link-to-the-announcement". */
+  if ((process.env.CONFIRM || "").trim()) {
+    const [t, date, time, url] = process.env.CONFIRM.trim().split(/\s+/);
+    if (!/^[A-Z.]{1,6}$/i.test(t || "") || !/^\d{4}-\d{2}-\d{2}$/.test(date || "") || !/^(pre-market|post-market|-)$/.test(time || "")) throw new Error("CONFIRM must read: TICKER YYYY-MM-DD pre-market|post-market|- URL");
+    const rec = { date, time: time === "-" ? "" : time, manual: true, company: { date, url: url || null }, source: "company announcement, checked by hand" + (url ? " (" + url + ")" : ""), at: new Date().toISOString() };
+    if (!dry) await kvPut("date:" + t.toUpperCase(), JSON.stringify(rec));
+    console.log((dry ? "Would store " : "Stored ") + t.toUpperCase() + " " + JSON.stringify(rec));
+    return;
+  }
   if (!KEY) throw new Error("ALPHAVANTAGE_KEY is not set (Actions secret).");
   const r = await fetch("https://www.alphavantage.co/query?function=EARNINGS_CALENDAR&horizon=3month&apikey=" + encodeURIComponent(KEY));
   if (!r.ok) throw new Error("Alpha Vantage " + r.status);
@@ -279,6 +289,13 @@ async function main() {
   let stored = 0;
   for (const t of followed) {
     const av = next.get(t), nq = nasdaq.get(t);
+    /* A date confirmed by hand from the company's own announcement (source
+       "company announcement, checked by hand") is kept until it has passed;
+       the calendars never overwrite it. */
+    try {
+      const had = JSON.parse((await kvGet("date:" + t)) || "null");
+      if (had && had.manual && had.date >= today) { console.log("  " + t.padEnd(6) + " " + had.date + " " + (had.time || "") + " kept: " + had.source); continue; }
+    } catch { /* read again next run */ }
     let rec = null;
     try { rec = JSON.parse((await kvGet("record:" + t)) || "null"); } catch { rec = null; }
     const cal = !av && !nq ? null : !av ? nq : !nq ? av : (nq.date <= av.date ? nq : av);
