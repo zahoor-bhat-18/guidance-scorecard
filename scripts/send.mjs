@@ -30,6 +30,7 @@ import { revisionsBetween } from "../src/revisions.js";
 import { forEmail, headline } from "../src/records.js";
 import { displayName } from "../src/format.js";
 import { renderEmail, renderNothingToScore } from "../src/email.js";
+import { renderPreview } from "../src/preview.js";
 
 const env = {
   SEC_USER_AGENT: process.env.SEC_USER_AGENT,
@@ -133,10 +134,15 @@ async function testSend(ticker, to, sample = false) {
   const unsub = SITE + "/unsubscribe?e=" + encodeURIComponent(to)
     + "&s=" + (await hmac(process.env.UNSUB_SECRET, to)) + "&p=guidance";
 
-  const mail = renderEmail(
-    { ...view, headline: headline(view.landed) },
-    { unsubscribeUrl: unsub, postalAddress: process.env.POSTAL_ADDRESS }
-  );
+  /* The sample is the email Guidance Scorecard sends now: the preview, the
+     day before the company reports (the product structure, 17 Oct 2026).
+     Where the record has no guide in force to preview, the scored email of
+     its latest release is the sample instead. */
+  const mail = (sample && renderPreview(record, { unsubscribeUrl: unsub, postalAddress: process.env.POSTAL_ADDRESS, sample: true }))
+    || renderEmail(
+      { ...view, headline: headline(view.landed) },
+      { unsubscribeUrl: unsub, postalAddress: process.env.POSTAL_ADDRESS }
+    );
 
   if (sample) mail.subject = "Sample: " + mail.subject;
   await sendMail(to, mail, unsub);
@@ -551,6 +557,16 @@ async function alertOwner(ticker, current, problems) {
 
 /* Everything from here sends: to each follower, one email each. */
 async function deliver({ ticker, cik, name, current, updated, movedRevisions, newPairs, note, prefix, pass, only }) {
+  /* NO GUIDANCE EMAIL ON RELEASE DAY (the product structure, 17 Oct 2026).
+     Guidance Scorecard writes the day before - the preview. On the day,
+     Release Watch says beat or miss against the guide, from this record. The
+     record is still written by the caller and the release marked done; no
+     subscriber email goes from here unless GUIDANCE_DAYOF_EMAIL=on. */
+  if (process.env.GUIDANCE_DAYOF_EMAIL !== "on" && !only) {
+    await markSent(ticker, current.accession);
+    return { ticker, release: current.accession, filed: current.filed, newPairs, pass, sent: 0,
+      dayOf: "off - the record is updated; the preview and Release Watch carry it" };
+  }
 
   const withNote = (mail) => {
     if (!note) return mail;

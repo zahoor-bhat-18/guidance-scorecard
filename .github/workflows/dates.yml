@@ -1,0 +1,34 @@
+name: dates
+
+# Earnings dates for every followed company, daily before the preview runs.
+# Needs the Actions secret ALPHAVANTAGE_KEY (free key from alphavantage.co).
+
+on:
+  schedule:
+    - cron: "40 20 * * *"
+  workflow_dispatch:
+    inputs:
+      dry:
+        description: "Dry run: list the dates, store nothing."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  dates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Fetch and store earnings dates
+        env:
+          ALPHAVANTAGE_KEY: ${{ secrets.ALPHAVANTAGE_KEY }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          KV_NAMESPACE_ID: ${{ vars.KV_NAMESPACE_ID }}
+        run: node scripts/dates.mjs ${{ inputs.dry && '--dry' || '' }}

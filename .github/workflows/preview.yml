@@ -10,7 +10,8 @@ name: preview
 
 on:
   schedule:
-    - cron: "30 2 * * *"
+    # 21:30 UTC: the evening before, New York time, after the dates job (20:40).
+    - cron: "30 21 * * *"
   workflow_dispatch:
     inputs:
       tickers:

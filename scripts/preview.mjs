@@ -13,15 +13,19 @@
  * from EDGAR and no model is asked.
  */
 
-import { renderPreview } from "../src/preview.js";
+import { renderPreview, renderNoGuidePreview } from "../src/preview.js";
 
 const ACCOUNT = process.env.CLOUDFLARE_ACCOUNT_ID;
 const CF_TOKEN = process.env.CLOUDFLARE_API_TOKEN;
 const KV_ID = process.env.KV_NAMESPACE_ID;
 const SITE = process.env.SITE_URL || "https://zahoorbhat.com";
 
-// Send when the estimated date is this many days ahead (inclusive).
-const SEND_FROM = 1, SEND_TO = 3;
+/* THE DAY BEFORE (the product structure, 17 Oct 2026). A preview goes the
+   evening before the company reports, on the date stored by scripts/dates.mjs
+   from the earnings calendar - never on an estimate. A company with no stored
+   date gets no preview. "Tomorrow" is New York's tomorrow. */
+const nyToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+const plusDays = (d, n) => new Date(Date.parse(d + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
 
 const kvUrl = (key) => "https://api.cloudflare.com/client/v4/accounts/" + ACCOUNT
   + "/storage/kv/namespaces/" + KV_ID + "/values/" + encodeURIComponent(key);
@@ -66,34 +70,33 @@ async function main() {
   const test = args.includes("--test");
   const dry = args.includes("--dry");
   const listed = args.filter((a) => !a.startsWith("--")).join(",").split(",").map((x) => x.trim().toUpperCase()).filter(Boolean);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = nyToday(), tomorrow = plusDays(today, 1);
 
   const subscribers = JSON.parse((await kvGet("subscribers")) || "{}");
   const followersOf = (t) => Object.entries(subscribers).filter(([, v]) => (v.tickers || []).includes(t)).map(([e]) => e);
   const tickers = listed.length ? listed
     : Array.from(new Set(Object.values(subscribers).flatMap((v) => v.tickers || []))).sort();
-  console.log((test ? "TEST " : dry ? "DRY RUN " : "") + "Preview for " + tickers.length + " companies, " + today + ".");
+  console.log((test ? "TEST " : dry ? "DRY RUN " : "") + "Preview for " + tickers.length + " companies; today " + today + " (New York), sending for " + tomorrow + ".");
 
   let sent = 0;
   for (const ticker of tickers) {
     const stored = await kvGet("record:" + ticker);
     if (!stored) { console.log("  " + ticker + ": no record"); continue; }
     const record = JSON.parse(stored);
-    const probe = renderPreview(record);
-    if (!probe) { console.log("  " + ticker + ": nothing to preview (no guide in force for the next report)"); continue; }
-    const ahead = daysBetween(today, probe.next.expected);
-    const reported = daysBetween(probe.next.latestFiled, today) < 30;
-    const mark = "preview:" + ticker + ":" + probe.next.expected;
-    const due = ahead >= SEND_FROM && ahead <= SEND_TO && !reported;
-    console.log("  " + ticker + ": next " + probe.next.period + " expected " + probe.next.expected + " (" + ahead + " days)"
-      + (due ? " - DUE" : "") + (reported ? " - reported recently, skipped" : ""));
+    const date = JSON.parse((await kvGet("date:" + ticker)) || "null");
+    if (!date || !date.date) { console.log("  " + ticker + ": no stored earnings date - no preview"); continue; }
+    const due = date.date === tomorrow;
+    console.log("  " + ticker + ": reports " + date.date + (date.time ? " " + date.time : "") + (due ? " - DUE" : ""));
     if (dry || (!test && !due)) continue;
+    const mark = "preview:" + ticker + ":" + date.date;
     if (!test && (await kvGet(mark))) { console.log("    already sent"); continue; }
 
     const to = test ? [process.env.TEST_EMAIL].filter(Boolean) : followersOf(ticker);
     for (const email of to) {
       const unsub = SITE + "/unsubscribe?e=" + encodeURIComponent(email) + "&s=" + (await hmac(process.env.UNSUB_SECRET, email)) + "&p=guidance";
-      const mail = renderPreview(record, { unsubscribeUrl: unsub, postalAddress: process.env.POSTAL_ADDRESS });
+      const opts = { unsubscribeUrl: unsub, postalAddress: process.env.POSTAL_ADDRESS, reportDate: date.date, reportTime: date.time, tomorrow: due };
+      // No guide in force: the short note that there is nothing to set the results against.
+      const mail = renderPreview(record, opts) || renderNoGuidePreview(record, opts);
       if (test) mail.subject = "[TEST] " + mail.subject;
       await sendMail(email, mail, unsub);
       sent++;

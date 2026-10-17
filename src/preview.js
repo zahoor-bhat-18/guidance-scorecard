@@ -269,10 +269,22 @@ export function renderPreview(record, opts = {}) {
   if (!pv || !pv.rows.length) return null;
   const company = displayName(record.company || record.ticker);
   const short = company.replace(/,?\s+(Inc|Corp|Corporation|Co|Company|Ltd|plc|Holdings?|Group)\.?$/i, "").replace(/,\s*$/, "");
-  const when = longDate(pv.next.expected);
+  /* The report date: the stored earnings-calendar date when there is one
+     (opts.reportDate, from scripts/dates.mjs), said as such; otherwise last
+     year's date, said to be an estimate. */
+  const dated = Boolean(opts.reportDate);
+  const when = longDate(dated ? opts.reportDate : pv.next.expected);
+  const slot = opts.reportTime === "pre-market" ? ", before the market opens" : opts.reportTime === "post-market" ? ", after the market closes" : "";
   const period = pv.next.interim ? "its next quarter" : periodLabel(pv.next.period);
-  const subject = short + " reports " + period + " around " + when.replace(/,? \d{4}$/, "") + ": the guide and its record";
-  const lead = short + " is expected to report " + period + " on or around " + when + ". Estimated: it reported the same quarter last year on " + longDate(pv.next.lastYear) + ".";
+  const subject = dated
+    ? short + " reports " + period + (opts.tomorrow ? " tomorrow" : " on " + when.replace(/,? \d{4}$/, "")) + ": the guide and its record"
+    : short + " reports " + period + " around " + when.replace(/,? \d{4}$/, "") + ": the guide and its record";
+  const dateLine = dated
+    ? "Date from the earnings calendar; the company can still move it."
+    : "Estimated: it reported the same quarter last year on " + longDate(pv.next.lastYear) + ".";
+  const lead = dated
+    ? short + " reports " + period + " on " + when + slot + ". " + dateLine
+    : short + " is expected to report " + period + " on or around " + when + ". " + dateLine;
   const anyWords = pv.rows.some((r) => r.words);
   const anyArith = pv.rows.some((r) => r.arithmetic);
 
@@ -293,7 +305,8 @@ export function renderPreview(record, opts = {}) {
   t.push("");
   if (anyArith) t.push("\"Applied to this guide\" is arithmetic on the company's own record: today's guide moved by the gaps it has had before. It is not a forecast.");
   if (anyWords) t.push("* Given in words, read by a fixed rule (low single digits 1-3%, mid 4-6%, high 7-9%; figures written out as words taken as written).");
-  t.push("Results marked as possibly misread are left out of the record above. Dates are estimates until the company announces them.");
+  t.push("Results marked as possibly misread are left out of the record above." + (dated ? "" : " Dates are estimates until the company announces them."));
+  t.push("Minutes after the release, Release Watch says whether the results came in above, within or below this guide.");
   t.push("");
   t.push("Thanks,");
   t.push("Zahoor · Guidance Scorecard · hello@zahoorbhat.com");
@@ -305,8 +318,8 @@ export function renderPreview(record, opts = {}) {
   h.push('<div style="max-width:600px;margin:0 auto;background:#ffffff;font-family:' + SANS + ";color:" + INK + ';font-size:15px;line-height:1.45;">');
   h.push('<div style="background:' + GREEN + ';color:#ffffff;padding:22px 22px 20px;">');
   h.push('<div style="font-size:13px;color:#cfe0d6;">' + esc(company + " (" + record.ticker + ") · preview") + "</div>");
-  h.push('<div style="font-size:24px;font-weight:700;line-height:1.2;margin-top:10px;">' + esc("Reports " + period + " around " + when) + "</div>");
-  h.push('<div style="font-size:14px;margin-top:8px;color:#e6efe9;">' + esc("Estimated from last year: it reported the same quarter on " + longDate(pv.next.lastYear) + ".") + "</div>");
+  h.push('<div style="font-size:24px;font-weight:700;line-height:1.2;margin-top:10px;">' + esc("Reports " + period + (dated ? (opts.tomorrow ? " tomorrow, " : " on ") + when + slot : " around " + when)) + "</div>");
+  h.push('<div style="font-size:14px;margin-top:8px;color:#e6efe9;">' + esc(dated ? dateLine : "Estimated from last year: it reported the same quarter on " + longDate(pv.next.lastYear) + ".") + "</div>");
   h.push("</div>");
 
   h.push('<div style="padding:18px 22px 6px;">' + label("The guide in force"));
@@ -340,7 +353,8 @@ export function renderPreview(record, opts = {}) {
   const notes = [];
   if (anyArith) notes.push("“Applied to this guide” is arithmetic on the company’s own record: today’s guide moved by the gaps it has had before. It is not a forecast.");
   if (anyWords) notes.push("* Given in words, read by a fixed rule (low single digits 1-3%, mid 4-6%, high 7-9%; figures written out as words taken as written).");
-  notes.push("Results marked as possibly misread are left out. Dates are estimates until the company announces them.");
+  notes.push("Results marked as possibly misread are left out." + (dated ? "" : " Dates are estimates until the company announces them."));
+  notes.push("Minutes after the release, Release Watch says whether the results came in above, within or below this guide.");
   h.push('<div style="padding:12px 22px 0;font-size:12px;color:' + SOFT + ';">' + notes.map(esc).join("<br>") + "</div>");
   h.push('<div style="padding:16px 22px 20px;font-size:12px;line-height:1.5;color:' + SOFT + ";border-top:1px solid " + LINE + ';margin-top:14px;">'
     + "Thanks,<br>Zahoor · Guidance Scorecard · hello@zahoorbhat.com<br><br>"
@@ -350,4 +364,33 @@ export function renderPreview(record, opts = {}) {
     + "</div></div></div>");
 
   return { subject, text: t.join("\n"), html: h.join("\n"), next: pv.next };
+}
+
+
+/**
+ * The day before a company with no numeric guidance reports: said once, in
+ * a short email, so the reader knows why there is no preview (the product
+ * structure, 17 Oct 2026). Release Watch and Filing Watch follow as usual.
+ */
+export function renderNoGuidePreview(record, opts = {}) {
+  const company = displayName(record.company || record.ticker);
+  const short = company.replace(/,?\s+(Inc|Corp|Corporation|Co|Company|Ltd|plc|Holdings?|Group)\.?$/i, "").replace(/,\s*$/, "");
+  const when = opts.reportDate ? longDate(opts.reportDate) : "";
+  const slot = opts.reportTime === "pre-market" ? ", before the market opens" : opts.reportTime === "post-market" ? ", after the market closes" : "";
+  const n = (record.releasesRead || []).length;
+  const subject = short + " reports " + (opts.tomorrow ? "tomorrow" : "on " + when.replace(/,? \d{4}$/, "")) + ": no guidance in figures to set it against";
+  const body = [
+    short + " reports " + (when ? "on " + when + slot : "next") + ".",
+    "It gives no numeric guidance in its filings - we read its last " + n + " earnings releases - so there is no guide to set the results against.",
+    "Minutes after the release, Release Watch sends what changed. Filing Watch follows when the 10-Q reaches the SEC.",
+  ];
+  const t = [company + " (" + record.ticker + ") · preview", "", ...body, "", "Thanks,", "Zahoor · Guidance Scorecard · hello@zahoorbhat.com"];
+  if (opts.unsubscribeUrl) { t.push(""); t.push("Unsubscribe: " + opts.unsubscribeUrl); }
+  const h = '<div style="margin:0;padding:20px 0;background:' + PAGE + ';"><div style="max-width:600px;margin:0 auto;background:#ffffff;font-family:' + SANS + ";color:" + INK + ';font-size:15px;line-height:1.5;padding:22px;">'
+    + '<div style="font-size:13px;color:' + SOFT + ';">' + esc(company + " (" + record.ticker + ") · preview") + "</div>"
+    + body.map((x) => "<p>" + esc(x) + "</p>").join("")
+    + '<div style="font-size:12px;color:' + SOFT + ';border-top:1px solid ' + LINE + ';padding-top:12px;margin-top:14px;">Thanks,<br>Zahoor · Guidance Scorecard · hello@zahoorbhat.com'
+    + (opts.unsubscribeUrl ? '<br><br><a href="' + esc(opts.unsubscribeUrl) + '" style="color:' + SOFT + ';">Unsubscribe</a>' : "")
+    + (opts.postalAddress ? " · " + esc(opts.postalAddress) : "") + "</div></div></div>";
+  return { subject, text: t.join("\n"), html: h };
 }
