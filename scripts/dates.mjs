@@ -102,7 +102,7 @@ async function irPages(t) {
     }
   }
   // Common investor hosts and paths on the company's own domain.
-  let host = ""; try { host = new URL(site).hostname.replace(/^www\./, ""); } catch { host = ""; }
+  let host = ""; try { host = new URL(site).hostname.replace(/^(?:www|ir|investors?)\./, ""); } catch { host = ""; }
   if (host) for (const g of ["https://ir." + host + "/", "https://investor." + host + "/", "https://investors." + host + "/", "https://www." + host + "/investors", "https://www." + host + "/investor-relations"]) urls.add(g);
   return { site, urls: [...urls].slice(0, 9) };
 }
@@ -135,11 +135,14 @@ async function getPage(url) {
   try {
     const r = await fetch(url, { headers: BROWSER, redirect: "follow", signal: AbortSignal.timeout(15000) });
     if (!r.ok) { if (DEBUG) console.log("         " + r.status + " " + url); return null; }
+    const type = r.headers.get("content-type") || "";
+    if (!/html|json|xml|text\/plain/i.test(type)) { if (DEBUG) console.log("         skip " + type + " " + url); return null; }
     const html = await r.text();
     if (DEBUG) {
       const t = plain(html);
       const ds = [...t.matchAll(/\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+2026/gi)].map((m) => m[0]).slice(-4);
       console.log("         200 " + url + " -> " + (r.url !== url ? r.url + " " : "") + t.length + " chars; dates: " + (ds.join(" | ") || "none"));
+      if (t.length < 3000) console.log("           scripts: " + [...html.matchAll(/<script[^>]*src=["']([^"']+)/gi)].map((m) => m[1]).slice(0, 6).join(" ") + " | " + (html.match(/apiKey[^,;]{0,60}/i) || [""])[0]);
     }
     return { url: r.url || url, html };
   } catch (e) { if (DEBUG) console.log("         ERR " + url + " " + e.message); return null; }
@@ -165,6 +168,22 @@ function datesOnPage(text, today, horizon) {
   return out;
 }
 
+/* Many investor sites run on the Q4 platform, which loads events with
+   JavaScript from a public feed on the same host. Read the feed directly. */
+async function q4Events(host) {
+  const out = [];
+  for (const path of ["/feed/Event.svc/GetEventList?LanguageId=1&eventSelection=1&eventDateFilter=1&includeFeedContent=true&pageSize=10&pageNumber=0&sortOperator=1",
+                      "/feed/PressRelease.svc/GetPressReleaseList?LanguageId=1&bodyType=3&pressReleaseDateFilter=3&categoryId=1cb807d2-208f-4bc3-9133-6a9ad45ac3b0&pageSize=10&pageNumber=0&tagList=&includeTags=true&year=-1&excludeSelection=1"]) {
+    for (const key of ["BF185719B0464B3CB809D23926182246", ""]) {
+      const p = await getPage("https://" + host + path + (key ? "&apiKey=" + key : ""));
+      if (!p || !/^\s*[\[{]/.test(p.html)) continue;
+      out.push({ url: "https://" + host + path.split("?")[0], text: plain(p.html.replace(/\\u003c/g, "<").replace(/\\u003e/g, ">")).replace(/"(\d{1,2})\/(\d{1,2})\/(20\d\d)/g, (m, mo, d, y) => " " + MONTHS[Number(mo) - 1] + " " + d + ", " + y) });
+      break;
+    }
+  }
+  return out;
+}
+
 async function companyDate(t, rec, today, horizon) {
   let ir = null;
   try { ir = JSON.parse((await kvGet("ir:" + t)) || "null"); } catch { ir = null; }
@@ -183,12 +202,21 @@ async function companyDate(t, rec, today, horizon) {
     const p = await getPage(u);
     if (!p) continue;
     read.push(u);
-    for (const h of datesOnPage(plain(p.html), today, horizon)) hits.push({ ...h, url: p.url });
+    const text = plain(p.html);
+    for (const h of datesOnPage(text, today, horizon)) hits.push({ ...h, url: p.url });
+    if (text.length < 3000) {
+      let hh = ""; try { hh = new URL(p.url).host; } catch { hh = ""; }
+      if (hh && !seen.has("q4:" + hh)) {
+        seen.add("q4:" + hh);
+        for (const f of await q4Events(hh)) for (const h of datesOnPage(f.text, today, horizon)) hits.push({ ...h, url: f.url });
+      }
+    }
     // One level down: the site's own event, earnings and webcast pages.
     let host; try { host = new URL(p.url).host; } catch { continue; }
     for (const m of p.html.matchAll(/<a\b[^>]*href=["']([^"'#]+)["'][^>]*>([\s\S]{0,200}?)<\/a>/gi)) {
       let next; try { next = new URL(m[1], p.url); } catch { continue; }
       if (next.host !== host) continue;
+      if (/\.(?:pdf|mp3|mp4|xlsx?|docx?|pptx?|zip|jpe?g|png|gif|svg)$/i.test(next.pathname)) continue;
       const label = plain(m[2]);
       if (!/event|calendar|earnings|quarter|webcast|results|conference call|press|news/i.test(next.pathname + " " + label)) continue;
       const key = next.origin + next.pathname;
