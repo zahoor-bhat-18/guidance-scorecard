@@ -463,10 +463,8 @@ async function requestBackfill(env, tickers) {
  *
  * Someone who follows a company may wait months for its next filing, so each
  * confirmed signup is sent the email each product would have sent for the
- * company's latest filing, marked as a sample. Release Watch for up to three
- * of the tickers just added; Guidance Scorecard for those with a published
- * record (one being built gets its own email when done); Filing Watch for up
- * to two, the briefing for the latest 10-Q.
+ * company's latest filing, marked as a sample - for ONE company, chosen at
+ * confirm for the most products it can show, so three emails at most.
  *
  * Only after the address is confirmed, so a form cannot be used to send them
  * to strangers. At most SAMPLE_DAILY a day across the site and three tickers
@@ -475,7 +473,8 @@ async function requestBackfill(env, tickers) {
 const SAMPLE_DAILY = 50;
 async function requestSamples(env, email, earnings, guidance, filings = []) {
   // Filing Watch briefings are the heaviest to build, so two at most.
-  const want = { earnings: earnings.slice(0, 3), guidance: guidance.slice(0, 3), filings: filings.slice(0, 2) };
+  // One company per product (the confirm step picks it): three emails at most.
+  const want = { earnings: earnings.slice(0, 1), guidance: guidance.slice(0, 1), filings: filings.slice(0, 1) };
   const n = want.earnings.length + want.guidance.length + want.filings.length;
   if (!n || !env.GITHUB_TOKEN) return { sent: 0 };
   const day = "samples:" + new Date().toISOString().slice(0, 10);
@@ -1060,9 +1059,19 @@ export default {
         const thin = gAdded.filter((t) => recorded.has(t) && !recorded.get(t).publishable);
         const fresh = gAdded.filter((t) => !recorded.has(t));
         const req = await requestBackfill(env, fresh);
-        const sample = await requestSamples(env, done.email,
-          done.products.includes("earnings") ? ((done.addedFor && done.addedFor.earnings) || done.added) : [], covered,
-          done.products.includes("filings") ? done.added : []);
+        /* ONE SAMPLE COMPANY, one email per product - three at most. Eight
+           tickers on three products sent seven samples (17 Oct 2026). The
+           company is chosen for the most products it can show: on Guidance
+           Scorecard with a record ready to score, on Release Watch (not a
+           bank or insurer), on Filing Watch (a US filer, so it files a 10-Q).
+           Ties go to the ticker typed first. */
+        const rwList = done.products.includes("earnings") ? ((done.addedFor && done.addedFor.earnings) || done.added) : [];
+        const fwList = done.products.includes("filings") ? ((done.addedFor && done.addedFor.filings) || done.added) : [];
+        const fits = (t) => (covered.includes(t) ? 1 : 0) + (rwList.includes(t) ? 1 : 0) + (fwList.includes(t) ? 1 : 0);
+        const pick = done.added.slice().sort((a, b) => fits(b) - fits(a) || done.added.indexOf(a) - done.added.indexOf(b))[0];
+        const sample = pick
+          ? await requestSamples(env, done.email, rwList.includes(pick) ? [pick] : [], covered.includes(pick) ? [pick] : [], fwList.includes(pick) ? [pick] : [])
+          : { sent: 0 };
 
         const para = (text) => "<p>" + text + "</p>";
         const names = (list) => "<b>" + list.join(", ") + "</b>";
@@ -1109,7 +1118,7 @@ export default {
                 + " minutes, or write to hello@zahoorbhat.com.")
               : "")
           + (sample.sent
-              ? para("A sample of each email, built from each company's latest filing, is on its way: "
+              ? para("A sample of each email, built from " + pick + "'s latest filings, is on its way: "
                 + [sample.earnings.length ? "Release Watch for " + sample.earnings.join(", ") : "",
                    sample.guidance.length ? "Guidance Scorecard for " + sample.guidance.join(", ") : "",
                    sample.filings.length ? "Filing Watch for " + sample.filings.join(", ") : ""].filter(Boolean).join("; ")
