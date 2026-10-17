@@ -311,3 +311,18 @@ Fixed, each rebuilt (46 companies) and diffed:
 - Filing Watch: an empty subscriber list made the Heartbeat report "watcher stopped" - fixed in filing-agent.
 - Release Watch: the guide comparison borrowed from this record now uses only pairs the briefed release answered
   (GE's July email had shown Q1 2024 "revenue growth 11% vs 7-9%"). In release-watch src/scorecard.mjs.
+
+## Oct 17 2026 (afternoon)
+- **Samples**: one company per signup, one email per product (3 at most), picked for the most products it can show
+  (Guidance record ready + Release Watch covered + Filing Watch). index.js confirm.
+- **Constant currency** is now part of the measure key (metrics.js baseKey: "cc" at the end). Rebuild diff: only
+  additions - CCL +14 pairs (current-dollar and cc guides no longer merged; e.g. Q3 2025 cost 8.9% current $ vs
+  7.7% result), PEP +2 core EPS.
+- **Second look**: a figure far from the company's own is kept when scopeByPlace places it in a part, dropped
+  otherwise. UNH UnitedHealthcare 2025 earnings from operations $9.0-9.3bn now captured; result $9.4bn (verified).
+- Release Watch (its repo): segment quotes labelled ("Company, on CES:"); a tied growth figure claims no record (RTX
+  would have been held); borrowed guide comparison only from this release's pairs. TSLA's release is pictures of pages:
+  Release Watch cannot read it.
+
+**Pending:** investor-site transcripts/slides for call-guiders (TRV, MSFT, C, CSX; also FITB, STLD, TSLA) - a new
+data source, needs a decision; Lam June-quarter answers (year-end month) still refused.
