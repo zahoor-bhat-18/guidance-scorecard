@@ -68,15 +68,39 @@ async function main() {
     const prev = next.get(sym);
     if (!prev || date < prev.date) next.set(sym, { date, time: col("timeOfTheDay") >= 0 ? (c[col("timeOfTheDay")] || "") : "", fiscalDateEnding: c[col("fiscalDateEnding")] || "" });
   }
-  console.log("Calendar: " + next.size + " companies with a report date in the next three months.");
+  console.log("Alpha Vantage: " + next.size + " companies with a report date in the next three months.");
+
+  /* A SECOND CALENDAR. Alpha Vantage put Philip Morris on 20 Oct 2026; the
+     company had announced 21 Oct, and Nasdaq's calendar had 21 Oct. One
+     calendar alone can be wrong in either direction. Nasdaq's is read for the
+     next 21 days; where the two disagree, the EARLIER date is kept, so a
+     preview can come a day early but never after the release. */
+  const nasdaq = new Map();
+  for (let i = 0; i <= 21; i++) {
+    const d = new Date(Date.now() + i * 86400000).toISOString().slice(0, 10);
+    try {
+      const rr = await fetch("https://api.nasdaq.com/api/calendar/earnings?date=" + d, { headers: { "User-Agent": "Mozilla/5.0 (compatible; zahoorbhat.com earnings calendar)", Accept: "application/json" } });
+      if (!rr.ok) continue;
+      const rows = (((await rr.json()) || {}).data || {}).rows || [];
+      for (const row of rows) {
+        const sym = String(row.symbol || "").toUpperCase();
+        if (!sym || nasdaq.has(sym)) continue;
+        const tm = /pre/i.test(row.time || "") ? "pre-market" : /after|post/i.test(row.time || "") ? "post-market" : "";
+        nasdaq.set(sym, { date: d, time: tm });
+      }
+    } catch { /* one day missing is not a stop */ }
+  }
+  console.log("Nasdaq: " + nasdaq.size + " companies in the next 21 days.");
 
   const subs = JSON.parse((await kvGet("subscribers")) || "{}");
   const followed = Array.from(new Set(Object.values(subs).flatMap((v) => [...(v.tickers || []), ...(v.earnings || []), ...(v.filings || [])]))).sort();
   console.log("Followed: " + followed.length + " companies.");
   let stored = 0;
   for (const t of followed) {
-    const d = next.get(t);
-    if (!d) { console.log("  " + t.padEnd(6) + " no date in the next three months"); continue; }
+    const av = next.get(t), nq = nasdaq.get(t);
+    if (!av && !nq) { console.log("  " + t.padEnd(6) + " no date in either calendar"); continue; }
+    const pick = !av ? nq : !nq ? av : (nq.date <= av.date ? nq : av);
+    const d = { ...(av || {}), ...pick, alphavantage: av ? av.date : null, nasdaq: nq ? nq.date : null, agree: Boolean(av && nq && av.date === nq.date) };
     // Last year's same-quarter date, from the record, as a check.
     let warn = "";
     try {
@@ -85,8 +109,9 @@ async function main() {
       const lastYear = rel.find((f) => Math.abs(days(f, d.date) - 364) <= 45);
       if (lastYear && Math.abs(days(lastYear, d.date) - 364) > 14) warn = " - WARNING: " + days(lastYear, d.date) + " days after last year's " + lastYear;
     } catch { /* the check is a check, never a stop */ }
-    console.log("  " + t.padEnd(6) + " " + d.date + (d.time ? " " + d.time : "") + warn);
-    if (!dry) { await kvPut("date:" + t, JSON.stringify({ ...d, source: "Alpha Vantage earnings calendar", at: new Date().toISOString() })); stored++; }
+    const both = d.agree ? " (both calendars)" : " (Nasdaq " + (d.nasdaq || "-") + ", Alpha Vantage " + (d.alphavantage || "-") + "; the earlier kept)";
+    console.log("  " + t.padEnd(6) + " " + d.date + (d.time ? " " + d.time : "") + both + warn);
+    if (!dry) { await kvPut("date:" + t, JSON.stringify({ ...d, source: d.agree ? "Nasdaq and Alpha Vantage calendars" : "earlier of Nasdaq and Alpha Vantage calendars", at: new Date().toISOString() })); stored++; }
   }
   console.log("Stored: " + stored + ".");
 }

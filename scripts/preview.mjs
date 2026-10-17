@@ -85,6 +85,9 @@ async function main() {
     const record = JSON.parse(stored);
     const date = JSON.parse((await kvGet("date:" + ticker)) || "null");
     if (!date || !date.date) { console.log("  " + ticker + ": no stored earnings date - no preview"); continue; }
+    // Already reported (the release came earlier than the calendar said): no preview after the fact.
+    const lastFiled = ((record.releasesRead || [])[0] || {}).filed || "";
+    if (lastFiled && lastFiled >= plusDays(date.date, -10)) { console.log("  " + ticker + ": already reported " + lastFiled + " - no preview"); continue; }
     const due = date.date === tomorrow;
     console.log("  " + ticker + ": reports " + date.date + (date.time ? " " + date.time : "") + (due ? " - DUE" : ""));
     if (dry || (!test && !due)) continue;

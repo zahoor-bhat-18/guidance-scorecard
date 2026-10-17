@@ -280,7 +280,7 @@ export function renderPreview(record, opts = {}) {
     ? short + " reports " + period + (opts.tomorrow ? " tomorrow" : " on " + when.replace(/,? \d{4}$/, "")) + ": the guide and its record"
     : short + " reports " + period + " around " + when.replace(/,? \d{4}$/, "") + ": the guide and its record";
   const dateLine = dated
-    ? "Date from the earnings calendar; the company can still move it."
+    ? "Date from the earnings calendars; the company can still move it."
     : "Estimated: it reported the same quarter last year on " + longDate(pv.next.lastYear) + ".";
   const lead = dated
     ? short + " reports " + period + " on " + when + slot + ". " + dateLine
