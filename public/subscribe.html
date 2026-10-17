@@ -408,8 +408,9 @@
         });
         const d = await r.json();
         if (!r.ok || d.error) throw new Error(d.error || "Something went wrong.");
+        const left = (d.notCovered || []).length ? " Not added: " + d.message.replace(/^Check your inbox\.\s*/, "") : "";
         say("Check your email to confirm. If it is not in your inbox, look in spam and mark it"
-          + " as not spam \u2014 this is a new sending address.", "ok");
+          + " as not spam \u2014 this is a new sending address." + left, "ok");
         picked.length = 0;
         renderPicked();
         emailEl.value = "";

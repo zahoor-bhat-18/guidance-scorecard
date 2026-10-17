@@ -23,7 +23,7 @@
  * Nothing is scored or stored yet.
  */
 
-import { proxy, json } from "./sec.js";
+import { proxy, json, secJson } from "./sec.js";
 import { factsFor, resolveCik, companyCalendar } from "./xbrl.js";
 import { earningsReleases, guidanceFrom, readFiling, refineCalendar } from "./guidance.js";
 import { requestsFrom, actualsFrom } from "./actuals.js";
@@ -976,9 +976,29 @@ export default {
         const known = asked.filter((t) => secTickers[t]);
         const unknown = asked.filter((t) => !secTickers[t]);
 
-        if (!known.length) {
-          return json({ error: "EDGAR has no company under " + unknown.join(", ") + "." }, 400);
+        /* A company that files abroad is not covered. TSMC files 6-K and 20-F,
+           not 8-K and 10-Q, and the watcher reads only the US forms - so the
+           page accepted TSM and nothing was ever going to arrive (October
+           2026). Read from the company's own filing list; when EDGAR cannot
+           be reached the ticker is let through rather than refused. */
+        const foreign = [];
+        for (const t of known.slice(0, 25)) {
+          try {
+            const sub = await secJson(env, "https://data.sec.gov/submissions/CIK" + String(secTickers[t]).padStart(10, "0") + ".json");
+            const forms = ((sub.filings && sub.filings.recent && sub.filings.recent.form) || []).slice(0, 200);
+            const us = forms.some((f) => /^(8-K|10-Q|10-K)(\/A)?$/.test(f));
+            const abroad = forms.some((f) => /^(6-K|20-F|40-F)(\/A)?$/.test(f));
+            if (abroad && !us) foreign.push(t);
+          } catch (e) { /* not refused on a failed lookup */ }
         }
+        const covered = known.filter((t) => !foreign.includes(t));
+        const foreignNote = foreign.length
+          ? foreign.join(", ") + (foreign.length > 1 ? " file" : " files") + " abroad (6-K/20-F), which these products do not cover yet."
+          : "";
+        if (!covered.length) {
+          return json({ error: [unknown.length ? "EDGAR has no company under " + unknown.join(", ") + "." : "", foreignNote].filter(Boolean).join(" ") }, 400);
+        }
+        known.length = 0; known.push(...covered);
 
         const products = cleanProducts(body.products);
         const token = await hold(env, email, known, products);
@@ -990,9 +1010,9 @@ export default {
         return json({
           ok: true,
           following: known,
-          notCovered: unknown,
-          message: unknown.length
-            ? "Check your inbox. EDGAR has no company under " + unknown.join(", ") + "."
+          notCovered: [...unknown, ...foreign],
+          message: unknown.length || foreign.length
+            ? "Check your inbox." + (unknown.length ? " EDGAR has no company under " + unknown.join(", ") + "." : "") + (foreignNote ? " " + foreignNote : "")
             : "Check your inbox and click the link to confirm.",
         });
       } catch (e) {
