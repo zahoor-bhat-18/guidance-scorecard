@@ -907,6 +907,19 @@ function fourColumnCell(flat, g) {
   }
 }
 
+/* The constant-currency name for a label, in the company's own wording:
+   McCormick writes "Net sales growth in constant currency", Carnival "Net
+   yields (in constant currency)". Brackets are dropped when names are
+   compared (metricKey), so the bracketed form is used only where the
+   company writes it that way. */
+function ccLabel(label, flat) {
+  const l = String(label || "").trim();
+  const plain = l + " in constant currency";
+  if (new RegExp(escapeRe(plain), "i").test(String(flat || ""))) return plain;
+  if (new RegExp(escapeRe(l + " (in constant currency)"), "i").test(String(flat || ""))) return l + " (in constant currency)";
+  return plain;
+}
+
 export function fourColumnTables(guides, text) {
   const flat = String(text || "").replace(/\s+/g, " ");
   if (!/constant currency/i.test(flat) || !/\b(?:prior|previous)\b/i.test(flat)) return guides;
@@ -916,7 +929,7 @@ export function fourColumnTables(guides, text) {
     if (!cell) { out.push(g); continue; }
     if (!cell.current) continue;                                  // the prior guide's cell
     if (cell.cc && !/constant currency|\bcc\b/i.test(String(g.metric_as_written || ""))) {
-      out.push({ ...g, metric_as_written: String(g.metric_as_written).trim() + " (in constant currency)",
+      out.push({ ...g, metric_as_written: ccLabel(g.metric_as_written, flat),
         guard_note: ((g.guard_note ? g.guard_note + " " : "") + "Constant-currency column of a four-column table (" + cell.row + ").").trim() });
       continue;
     }
@@ -955,7 +968,7 @@ export function dropEarlierColumn(guides, text) {
       if (!order && (first.unit || "") === (second.unit || "") && once(first) && once(second)
         && (first.basis || "") === (second.basis || "") && !SAYS_CURRENCY.test(String(first.metric_as_written || ""))
         && !SAYS_CURRENCY.test(String(second.metric_as_written || "")) && currencyColumns(text, row)) {
-        relabel.set(second, { ...second, metric_as_written: String(second.metric_as_written || "").trim() + " (in constant currency)",
+        relabel.set(second, { ...second, metric_as_written: ccLabel(second.metric_as_written, String(text || "").replace(/\s+/g, " ")),
           guard_note: ((second.guard_note ? second.guard_note + " " : "") + "Later column of a current-dollar / constant-currency table: labelled constant currency.").trim() });
         drop.add(second);
         continue;
@@ -1809,6 +1822,13 @@ function prefixPart(text) {
  * ("Beer: net sales growth of 0% - 3%") and from lines that call one a
  * segment or division ("for the Aerospace segment").
  */
+/* "revenues for UnitedHealthcare are expected", "Optum Insight revenues are
+   expected": a proper name before or after the measure, in a passive guide. */
+const PASSIVE_PART = [
+  /\b(?:revenues?|sales|earnings(?: from operations)?|operating (?:income|earnings|profit|margin)|margin)\s+for\s+((?:[A-Z][A-Za-z&]*\s+){0,2}[A-Z][A-Za-z&]*)\s+(?:are|is)\s+(?:now\s+|still\s+)?(?:expected|projected|anticipated)\b/g,
+  /\b((?:[A-Z][A-Za-z&]*\s+){0,2}[A-Z][A-Za-z&]*)\s+(?:revenues?|sales|earnings from operations|operating (?:income|earnings|profit))\s+(?:are|is)\s+(?:now\s+|still\s+)?(?:expected|projected|anticipated)\b/g,
+];
+
 export function partsNamed(guides, intro) {
   const names = new Set();
   // Found only as the subject of "expects" - the company's own name can turn
@@ -1845,6 +1865,19 @@ export function partsNamed(guides, intro) {
       if (/^(the|we|our|it|this|management|company|in|for|and)\b/i.test(n)) continue;
       if (COMMON_ABBR.test(n)) continue;
       if ((/^[A-Z]{2,5}$/.test(n) || isPartName(n)) && !names.has(n)) bySubject.add(n);
+    }
+    /* The passive form names a part too. UnitedHealth's July 2025 release:
+       "Full year 2025 revenues for UnitedHealthcare are expected to range
+       from $344.0 billion to $345.5 billion" and "Full year 2025 Optum
+       Insight revenues are expected to range from ...". Only the active
+       "UnitedHealthcare expects" was known. */
+    for (const re of PASSIVE_PART) {
+      re.lastIndex = 0;
+      while ((m = re.exec(String(g.quote || "")))) {
+        const n = m[1].trim().replace(/^(?:full year|fiscal|the|total|its|our)\s+/i, "").replace(/^\d{4}\s+/, "").trim();
+        if (!n || /^(the|we|our|it|this|management|company|full|total|fiscal)\b/i.test(n) || COMMON_ABBR.test(n)) continue;
+        if ((/^[A-Z]{2,5}$/.test(n) || isPartName(n)) && !names.has(n)) bySubject.add(n);
+      }
     }
     // "Defense & Propulsion Technologies (DPT)": the name and its initials.
     const pair = /([A-Z][A-Za-z&' ]{2,48}?)\s*\(([A-Z]{2,5})\)/g;
@@ -2070,6 +2103,18 @@ export function scopeByPlace(guides, text) {
         }
       }
     }
+    for (const re of PASSIVE_PART) {
+      re.lastIndex = 0;
+      const pm = re.exec(q);
+      if (!pm) continue;
+      const who = pm[1].trim().replace(/^(?:full year|fiscal|the|total|its|our)\s+/i, "").replace(/^\d{4}\s+/, "").trim();
+      if (isTheCompany(who, intro)) return g;
+      const own3 = parts.find((n) => n.toLowerCase() === who.toLowerCase());
+      if (own3) {
+        if (parts.some((n) => new RegExp("\\b" + escapeRe(n) + "\\b", "i").test(String(g.metric_as_written || "")))) return g;
+        return { ...g, segment: own3, metric_as_written: own3 + ": " + g.metric_as_written, scope_from: "named in the line" };
+      }
+    }
     const line = norm(lines[i]);
     // 1. Same paragraph, before the guide's own sentence - and only where the
     //    part is the subject of a guiding verb ("CES continues to expect"),
@@ -2078,7 +2123,7 @@ export function scopeByPlace(guides, text) {
     let part = null;
     if (before) {
       const cand = lastPartIn(before);
-      const verb = "[^.]{0,40}\\b(expects?|continues|affirm\\w*|reaffirm\\w*|guid\\w*|anticipates?|projects?|sees)\\b";
+      const verb = "[^.]{0,40}\\b(expects?|continues|affirm\\w*|reaffirm\\w*|guid\\w*|anticipates?|projects?|sees|(?:are|is) (?:now |still )?(?:expected|projected|anticipated))\\b";
       if (cand && new RegExp("\\b" + escapeRe(cand) + "\\b" + verb, "i").test(before)) {
         /* ...unless the company itself speaks AFTER that part and before the
            guide. GE's January 2024 paragraph gives GE Vernova's outlook,
