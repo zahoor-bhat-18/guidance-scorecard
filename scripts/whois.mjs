@@ -26,5 +26,7 @@ for (const [email, v] of rows) {
   const n = (k) => (Array.isArray(v[k]) ? v[k].length : 0);
   console.log("  " + mask(email) + (email.toLowerCase() === OWNER ? "  (owner)" : "")
     + " | guidance " + n("tickers") + ", earnings " + n("earnings") + ", filings " + n("filings")
-    + (v.confirmed === false ? " | unconfirmed" : ""));
+    + (v.confirmed === false ? " | unconfirmed" : "")
+    + " | " + ["tickers", "earnings", "filings"].map((k) => k + ": " + (v[k] || []).join(",")).join("; ")
+    + " | owner match: " + (OWNER ? String(email).toLowerCase() === OWNER : "no TEST_EMAIL set"));
 }
