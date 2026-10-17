@@ -75,9 +75,22 @@ function figureOf(g) {
  * figure in the actuals extraction, one step further down, and it was found
  * the same way: fixing the first exposed the second.
  */
-function forPeriod(candidates, period, askedFor) {
+function forPeriod(candidates, period, askedFor, basis) {
   if (!candidates || !candidates.length) return null;
-  const exact = candidates.find((a) => a.period && period && samePeriod(period, a.period));
+  const exacts = candidates.filter((a) => a.period && period && samePeriod(period, a.period));
+  /* Two results for the period - the GAAP and the non-GAAP table print the
+     same label (Lam Research's "Net income per diluted share" is $1.45 in
+     one and $1.47 in the other). The guide's own basis decides; with no
+     result on that basis and figures that differ, none is chosen. */
+  if (exacts.length > 1) {
+    const vals = new Set(exacts.map((a) => a.value));
+    if (vals.size === 1) return exacts[0];
+    const same = basis ? exacts.filter((a) => a.basis === basis) : [];
+    if (same.length === 1) return same[0];
+    if (same.length > 1 && new Set(same.map((a) => a.value)).size === 1) return same[0];
+    return null;
+  }
+  const exact = exacts[0];
   if (exact) return exact;
   /* THE ANSWER TO THIS GUIDE'S OWN QUESTION.
    *
@@ -175,14 +188,14 @@ export function pairUp(guides, actuals) {
     const label = written.toLowerCase().trim();
     const key = metricKey(written);
 
-    let a = forPeriod(byLabel.get(label), g.period, true);
+    let a = forPeriod(byLabel.get(label), g.period, true, g.basis);
     let matchedOn = a ? "label" : null;
     let ambiguous = false;
     let nothingFound = false;
 
     if (!a && key) {
       const candidates = byMeasure.get(key) || [];
-      a = forPeriod(candidates, g.period);
+      a = forPeriod(candidates, g.period, false, g.basis);
       if (a) matchedOn = "measure";
       // Ambiguous only when two or more answers actually carry a figure.
       // Several empty answers are not a choice between figures.

@@ -224,6 +224,14 @@ export function resolvePeriod(text, cal, opts) {
        so every quarterly revenue result was refused as a different period
        (October 2026). */
     .replace(/\b(january|february|march|april|may|june|july|august|september|october|november|december) ((?:19|20)\d{2}) quarter\b/g, "$1 quarter $2")
+    /* A bare "March 2026" is a column heading for the quarter ending that
+       month (Lam Research's results tables), not the year 2026. Only when the
+       month is not the company's year-end month: "June 2026" for a June
+       year-end could be the year, and is left as it was. */
+    .replace(/^(?:the )?(january|february|march|april|may|june|july|august|september|october|november|december) ((?:19|20)\d{2})$/, (m, mon, yr) => {
+      const n = ["january","february","march","april","may","june","july","august","september","october","november","december"].indexOf(mon) + 1;
+      return cal && cal.fye && cal.fye.month === n ? m : mon + " quarter " + yr;
+    })
     .replace(/\s+/g, " ")
     .trim();
 
