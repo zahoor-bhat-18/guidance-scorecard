@@ -162,7 +162,10 @@ function datesOnPage(text, today, horizon) {
     const after = text.slice(m.index, m.index + 160);
     const tm = after.match(/\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)/i);
     let time = "";
-    if (tm) { let h = Number(tm[1]) % 12; if (/p/i.test(tm[3])) h += 12; time = h < 12 ? "pre-market" : h >= 16 ? "post-market" : ""; }
+    const said = text.slice(Math.max(0, m.index - 200), m.index + 200);
+    if (/after (?:the )?(?:market|stock market|markets?) clos|after (?:the )?close\b|after market hours/i.test(said)) time = "post-market";
+    else if (/before (?:the )?(?:market|stock market|markets?) open|before (?:the )?open\b|prior to (?:the )?(?:market )?open/i.test(said)) time = "pre-market";
+    else if (tm) { let h = Number(tm[1]) % 12; if (/p/i.test(tm[3])) h += 12; time = h < 12 ? "pre-market" : h >= 16 ? "post-market" : ""; }
     out.push({ date: d, time, quote: ctx.replace(/\s+/g, " ").trim().slice(150, 400) });
   }
   return out;
@@ -182,6 +185,37 @@ async function q4Events(host) {
     }
   }
   return out;
+}
+
+/* THE COMPANY'S OWN 8-Ks. Many companies file the date with SEC as well:
+   Tesla's deliveries 8-K says "Tesla will post its financial results ... after
+   market close on Wednesday, October 21, 2026". SEC can always be read, even
+   where the investor site blocks automated readers. Items 2.02, 7.01 and 8.01
+   filed in the last 75 days are read. */
+async function filingDates(t, today, horizon) {
+  const cik = await cikOf(t);
+  if (!cik) return [];
+  const r = await fetch("https://data.sec.gov/submissions/CIK" + cik.padStart(10, "0") + ".json", { headers: { "User-Agent": UA } });
+  if (!r.ok) return [];
+  const rec = ((await r.json()).filings || {}).recent || {};
+  const since = new Date(Date.now() - 75 * 86400000).toISOString().slice(0, 10);
+  const hits = [];
+  let read = 0;
+  for (let i = 0; i < (rec.form || []).length && read < 6; i++) {
+    if (rec.form[i] !== "8-K" || rec.filingDate[i] < since || !/\b(?:2\.02|7\.01|8\.01)\b/.test(rec.items[i] || "")) continue;
+    read++;
+    const base = "https://www.sec.gov/Archives/edgar/data/" + cik + "/" + rec.accessionNumber[i].replace(/-/g, "") + "/";
+    const idx = await fetch(base + "index.json", { headers: { "User-Agent": UA } });
+    if (!idx.ok) continue;
+    const names = ((((await idx.json()) || {}).directory || {}).item || []).map((x) => x.name).filter((n) => /\.htm$/i.test(n) && /99/.test(n));
+    for (const n of names.slice(0, 2)) {
+      const d = await fetch(base + n, { headers: { "User-Agent": UA } });
+      if (!d.ok) continue;
+      const text = plain((await d.text()).replace(/&#58;/g, ":").replace(/&#47;/g, "/"));
+      for (const h of datesOnPage(text, today, horizon)) hits.push({ ...h, url: base + n, filed: rec.filingDate[i] });
+    }
+  }
+  return hits;
 }
 
 async function companyDate(t, rec, today, horizon) {
@@ -304,6 +338,7 @@ async function main() {
     try {
       const horizon = new Date(Date.now() + 45 * 86400000).toISOString().slice(0, 10);
       const found = await companyDate(t, rec, today, horizon);
+      try { found.hits.push(...(await filingDates(t, today, horizon))); } catch (e) { console.log("  " + t.padEnd(6) + " 8-K check failed: " + e.message); }
       const near = found.hits.filter((h) => !cal || Math.abs(days(cal.date, h.date)) <= 14);
       const dates = Array.from(new Set(near.map((h) => h.date))).sort();
       if (dates.length) {
@@ -327,7 +362,7 @@ async function main() {
       if (lastYear && Math.abs(days(lastYear, d.date) - 364) > 14) warn = " - WARNING: " + days(lastYear, d.date) + " days after last year's " + lastYear;
     } catch { /* the check is a check, never a stop */ }
     const cals = "Nasdaq " + (d.nasdaq || "-") + ", Alpha Vantage " + (d.alphavantage || "-");
-    const source = co ? "company's own site (" + co.url + ")" : d.agree ? "Nasdaq and Alpha Vantage calendars" : "earlier of Nasdaq and Alpha Vantage calendars";
+    const source = co ? (/sec\.gov/.test(co.url) ? "company's own 8-K (" + co.url + ")" : "company's own site (" + co.url + ")") : d.agree ? "Nasdaq and Alpha Vantage calendars" : "earlier of Nasdaq and Alpha Vantage calendars";
     console.log("  " + t.padEnd(6) + " " + d.date + (d.time ? " " + d.time : "") + " from " + source + " [" + cals + "]" + warn
       + (co ? "\n         \"" + co.quote.slice(0, 160) + "\"" : ""));
     if (!dry) { await kvPut("date:" + t, JSON.stringify({ ...d, source, at: new Date().toISOString() })); stored++; }
