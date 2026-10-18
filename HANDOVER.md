@@ -351,3 +351,5 @@ Owner: "rely on company website first and then third party websites."
 - Hand confirmation: dates workflow input `confirm` = "TICKER YYYY-MM-DD pre-market|post-market URL". PM set to 2026-10-21 pre-market (company's Business Wire release).
 - Preview wording: "Date as announced by the company." / calendars disagree -> both dates named, no "tomorrow" / otherwise "Date from the earnings calendars; the company has not confirmed it...".
 - Dry run of the dates workflow logs every page read (status, size, dates seen).
+- 18 Oct: dates also read from the company's own 8-Ks on EDGAR (items 2.02/7.01/8.01, last 75 days): Tesla's deliveries 8-K and STLD's mid-quarter guidance 8-K state the date. Works where the investor site blocks readers. "after market close" / "before market open" set the time. Now company-confirmed: GE, LRCX, STLD, TSLA (+ PM by hand). Calendars only: FITB, NFLX, RTX.
+- 18 Oct: whois workflow also checks unsubscribe links (made-up address, nobody removed). filing-agent has unsub-check.yml for its own secret. All valid on 18 Oct; forged link refused.
