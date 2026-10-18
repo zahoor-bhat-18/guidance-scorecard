@@ -30,4 +30,5 @@ jobs:
           KV_NAMESPACE_ID: ${{ vars.KV_NAMESPACE_ID }}
           TEST_EMAIL: ${{ vars.TEST_EMAIL }}
           CLEAR: ${{ inputs.clear }}
+          UNSUB_SECRET: ${{ secrets.UNSUB_SECRET }}
         run: node scripts/whois.mjs
