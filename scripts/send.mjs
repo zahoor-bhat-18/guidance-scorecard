@@ -531,18 +531,21 @@ async function handle(ticker) {
     pass: secondPass ? "second (the filing beside the release)" : undefined,
   });
   const firstProblems = secondPass ? (secondPass.waiting.problems || []) : [];
-  await alertOwner(ticker, current, [...new Set([...firstProblems, ...problems])]);
+  await alertOwner(ticker, current, [...new Set([...firstProblems, ...problems])], sentRes);
   return problems.length ? { ...sentRes, checked: problems } : sentRes;
 }
 
 /* Every finding of the check, to the owner, after the subscribers' email has
    gone. Plain text: what was withheld and why, so it can be looked at. */
-async function alertOwner(ticker, current, problems) {
+async function alertOwner(ticker, current, problems, sentRes = {}) {
   if (!problems.length) return;
   const owner = process.env.TEST_EMAIL;
   if (!owner) { console.log(ticker + ": " + problems.length + " check findings, and no TEST_EMAIL to send them to."); return; }
   const text = ticker + " - release " + current.accession + " filed " + current.filed + "\n\n"
-    + "The subscribers' email went out. The check before sending found:\n\n- " + problems.join("\n- ")
+    // Say what actually happened: the release-day email is off, so usually nothing went to subscribers.
+    + (sentRes.dayOf ? "No release-day email was sent (switched off); the record was updated and the next preview carries it."
+      : sentRes.sent ? "The subscribers' email went out (" + sentRes.sent + ")." : "No subscriber email was sent.")
+    + " The check found:\n\n- " + problems.join("\n- ")
     + "\n\nItems marked withheld or left out were taken out of the email and the record. The others are for a look.";
   try {
     await sendMail(owner, {
