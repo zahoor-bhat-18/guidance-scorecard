@@ -982,16 +982,15 @@ export default {
            be reached the ticker is let through rather than refused. */
         const foreign = [];
         const products = cleanProducts(body.products);
-        /* Release Watch does not cover banks, insurers and other financials
-           (SIC 6000-6499; see release-watch src/review.mjs): FITB was taken
-           for it and its sample came back "held" (17 Oct 2026). Such a
+        /* Release Watch covers banks (SIC 6000-6299) since 20 Oct 2026, with
+           its own bank email. Insurers (6300-6499) are not covered yet: such a
            company stays on the other products and is kept off this one. */
         const notOnEarnings = [];
         for (const t of known.slice(0, 25)) {
           try {
             const sub = await secJson(env, "https://data.sec.gov/submissions/CIK" + String(secTickers[t]).padStart(10, "0") + ".json");
             const sic = Number(sub.sic || 0);
-            if (products.includes("earnings") && sic >= 6000 && sic <= 6499) notOnEarnings.push(t);
+            if (products.includes("earnings") && sic >= 6300 && sic <= 6499) notOnEarnings.push(t);
             const forms = ((sub.filings && sub.filings.recent && sub.filings.recent.form) || []).slice(0, 200);
             const us = forms.some((f) => /^(8-K|10-Q|10-K)(\/A)?$/.test(f));
             const abroad = forms.some((f) => /^(6-K|20-F|40-F)(\/A)?$/.test(f));
@@ -1010,7 +1009,7 @@ export default {
         const rwSkip = notOnEarnings.filter((t) => known.includes(t));
         const token = await hold(env, email, known, products, rwSkip.length ? { earnings: rwSkip } : {});
         const rwNote = rwSkip.length
-          ? "Release Watch does not cover banks and insurers yet, so " + rwSkip.join(", ") + (rwSkip.length > 1 ? " are" : " is")
+          ? "Release Watch does not cover insurers yet, so " + rwSkip.join(", ") + (rwSkip.length > 1 ? " are" : " is")
             + " on your other products only."
           : "";
         const site = env.SITE_URL || url.origin;
