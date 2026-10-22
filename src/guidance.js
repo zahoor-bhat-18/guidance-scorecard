@@ -1740,6 +1740,10 @@ export function columnRole(text, g) {
   if (!heads.length) return "";
   const num = (n) => String(Math.abs(n)).replace(".", "\\.") + "(?:\\.0+)?";
   for (const h of heads) {
+    // A last-year column: the header's first year is earlier than a later one ("2025 | 2026 Guide Prior | 2026 Guide Current").
+    // Lamb Weston's "Fiscal 2027 Prior Outlook | Fiscal 2027 Updated" has none, and is left to inPreviousColumn.
+    const years = (h[0].match(/\b(?:19|20)\d\d\b/g) || []).map(Number);
+    if (years.length < 2 || !(years[0] < Math.max(...years.slice(1)))) continue;
     const start = h.index + h[0].length;
     const end = t.indexOf("\n\n", start + 1);
     const block = t.slice(start, end < 0 ? start + 3000 : Math.min(end, start + 3000));
