@@ -88,6 +88,10 @@ jobs:
       - name: Build the records
         env:
           SEC_USER_AGENT: ${{ vars.SEC_USER_AGENT }}
+          # The stored record is read from KV directly (history kept beyond the window); see storedRecord.
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          KV_NAMESPACE_ID: ae1f3bc993714a41973b9fd4492ff641
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           # From the Worker on a request, from the box on a hand run. Passed
           # through the environment, not pasted into the command.

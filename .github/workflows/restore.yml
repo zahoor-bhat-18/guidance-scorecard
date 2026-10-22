@@ -1,0 +1,45 @@
+name: restore
+
+# Put back companies' records from an earlier build (its "records" artifact,
+# kept 30 days), for a record a later build made worse. Run by hand.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "The backfill run whose records to restore (the number in its URL)."
+        required: true
+      tickers:
+        description: "Comma-separated tickers to restore from it."
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the earlier records
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: gh run download "$RUN_ID" -R "${{ github.repository }}" -n records -D old
+      - name: Write them back
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TICKERS: ${{ inputs.tickers }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          set -euo pipefail
+          for t in $(echo "$TICKERS" | tr ',' ' '); do
+            t=$(echo "$t" | tr '[:lower:]' '[:upper:]')
+            if [ ! -f "old/$t.json" ]; then echo "$t: not in that run"; exit 1; fi
+            npx --yes wrangler@4 kv key put "record:$t" --path "old/$t.json" --binding CACHE --remote
+            echo "$t restored from run $RUN_ID"
+          done
+        shell: bash

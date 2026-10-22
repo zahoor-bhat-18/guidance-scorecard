@@ -256,16 +256,39 @@ const ANSWERS_OUT = "out/answers/answers.json";
  * live record is read the same way a reader reads it. A miss is not an error:
  * a company being built for the first time has nothing to merge with.
  */
+/*
+ * THE STORED RECORD, READ FROM KV ITSELF. It holds the history older than
+ * the fourteen releases a rebuild reads, carried over on every rebuild. It
+ * was read through the public site; one failed request on 22 Oct 2026 made
+ * a rebuild of UnitedHealth carry nothing, and two 2023 revisions were lost
+ * without a word. Now: KV first, then the site, each tried three times. A
+ * company with no stored record is new (null). If neither can be read, the
+ * build of that company stops rather than write a shorter record.
+ */
 async function storedRecord(ticker) {
+  const tries = async (fn) => { let last; for (let i = 0; i < 3; i++) { try { return await fn(); } catch (e) { last = e; await new Promise((r) => setTimeout(r, 1500 * (i + 1))); } } throw last; };
+  const acct = env.CLOUDFLARE_ACCOUNT_ID, token = env.CLOUDFLARE_API_TOKEN, ns = env.KV_NAMESPACE_ID;
+  if (acct && token && ns) {
+    try {
+      return await tries(async () => {
+        const r = await fetch("https://api.cloudflare.com/client/v4/accounts/" + acct + "/storage/kv/namespaces/" + ns + "/values/" + encodeURIComponent("record:" + ticker), { headers: { Authorization: "Bearer " + token } });
+        if (r.status === 404) return null;
+        if (!r.ok) throw new Error("KV " + r.status);
+        const json = await r.json();
+        return json && Array.isArray(json.pairs) ? json : null;
+      });
+    } catch (e) { console.log("  " + ticker + ": stored record could not be read from KV (" + e.message + "); trying the site"); }
+  }
   try {
-    const r = await fetch(SITE + "/api/record?ticker=" + encodeURIComponent(ticker) + "&full=1", {
-      headers: { "User-Agent": env.SEC_USER_AGENT || "guidance-scorecard" },
+    return await tries(async () => {
+      const r = await fetch(SITE + "/api/record?ticker=" + encodeURIComponent(ticker) + "&full=1", { headers: { "User-Agent": env.SEC_USER_AGENT || "guidance-scorecard" } });
+      if (r.status === 404) return null;
+      if (!r.ok) throw new Error("site " + r.status);
+      const json = await r.json();
+      return json && Array.isArray(json.pairs) ? json : null;
     });
-    if (!r.ok) return null;
-    const json = await r.json();
-    return json && Array.isArray(json.pairs) ? json : null;
-  } catch {
-    return null;
+  } catch (e) {
+    throw new Error("the stored record could not be read (" + e.message + "); not rebuilt, so its older history is not lost");
   }
 }
 
