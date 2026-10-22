@@ -1604,7 +1604,11 @@ export function missedGuideLines(text, guides) {
 }
 
 /* The lines themselves, for the check before sending (src/check.js). */
-export function missedGuideHits(text, guides) {
+/* `strict`: for the owner's check email only (src/check.js). The second
+   look's passages stay as they were: which passages the model is shown
+   changes what it finds, and removing a false alarm near Macy's, FactSet's
+   and Levi's tables lost real guides it had found beside them (22 Oct 2026). */
+export function missedGuideHits(text, guides, { strict = false } = {}) {
   const lines = String(text || "").split("\n");
   const pool = new Set();
   for (const g of guides || []) {
@@ -1636,9 +1640,11 @@ export function missedGuideHits(text, guides) {
        "we expect AI semiconductor revenue to double year-over-year to $8.2
        billion" - no range, no band, and a guide all the same. */
     const sentenceGuide = OUTLOOK_WORD.test(line) && GUIDE_UNIT.test(line);
-    if (!rangeShaped(line) && !sentenceGuide) return;
-    // A slide title in spaced capitals ("S U M M A R Y H I G H L I G H T S") with no outlook word is a slide's text layer.
-    if (/^\s*(?:[A-Z&] ){4,}/.test(line) && !OUTLOOK_WORD.test(line)) return;
+    if (strict) {
+      if (!rangeShaped(line) && !sentenceGuide) return;
+      // A slide title in spaced capitals ("S U M M A R Y H I G H L I G H T S") with no outlook word is a slide's text layer.
+      if (/^\s*(?:[A-Z&] ){4,}/.test(line) && !OUTLOOK_WORD.test(line)) return;
+    } else if (!GUIDE_SHAPED.test(line) && !sentenceGuide) return;
     /* ONE CLAUSE AT A TIME. UnitedHealth's headline lists its outlook as one
        line: "Full Year 2026 Revenue Outlook Greater Than $439.0 Billion;
        Earnings Outlook Greater Than $17.10 Per Share; Adjusted Earnings

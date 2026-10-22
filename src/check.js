@@ -106,7 +106,7 @@ export function checkBeforeSend({ text, guides, seen, pairs, revisions }) {
     // Everything the reading saw counts as accounted for: the guides, and
     // what was set aside on purpose (an earlier column, a currency effect).
     const counted = [...(guides || []), ...(seen || [])].map((g) => g.reported_numbers ? { ...g, ...g.reported_numbers } : g);
-    for (const h of missedGuideHits(body, counted).filter((h) => !notAGuideLine(h.line)).slice(0, 6)) {
+    for (const h of missedGuideHits(body, counted, { strict: true }).filter((h) => !notAGuideLine(h.line)).slice(0, 6)) {
       problems.push("A line in the release looks like guidance and was not read: \"" + short(h.line, 220) + "\"");
     }
   }
