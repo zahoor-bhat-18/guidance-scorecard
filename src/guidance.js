@@ -1702,6 +1702,53 @@ function inPreviousColumn(flat, g) {
   return next.test(after);
 }
 
+/*
+ * A TABLE OF LAST YEAR, THE PRIOR GUIDE AND THE CURRENT GUIDE (GE, October
+ * 2026): "2025 | 2026 Guide Prior | 2026 Guide Current", its figures in
+ * column order - "$6.37 $7.65 - $7.85 $8.00 - $8.10". The second look read the
+ * prior column (EPS $7.65-7.85) and last year's actual (revenue $42.3bn) as
+ * guides. In such a table:
+ *   - a range followed, in the same table, by another range of the same kind
+ *     (money, per share, %) before any single figure of that kind is the
+ *     prior column;
+ *   - a single, unqualified figure (no "~", ">", "about") is last year's.
+ * Returns "prior", "actual" or "".
+ */
+export function columnRole(text, g) {
+  const t = String(text || "");
+  const heads = [...t.matchAll(/(?:^|\n)[^\n]{0,40}\b((?:19|20)\d\d)\b[^\n]{0,60}\b(?:prior|previous)\b[^\n]{0,60}\b(?:current|updated|revised|new)\b[^\n]*/gi)];
+  if (!heads.length) return "";
+  const num = (n) => String(Math.abs(n)).replace(".", "\\.") + "(?:\\.0+)?";
+  for (const h of heads) {
+    const start = h.index + h[0].length;
+    const end = t.indexOf("\n\n", start + 1);
+    const block = t.slice(start, end < 0 ? start + 3000 : Math.min(end, start + 3000));
+    // Every figure in the table, in order: range or single, its kind, and whether it is qualified.
+    const re = /([~>≈<]|about |approximately )?\s*(\(?\$)?\s*(-?\d[\d,]*(?:\.\d+)?)\s*([BMK%])?(?:\s*(?:-|–|to)\s*\$?\s*(-?\d[\d,]*(?:\.\d+)?)\s*([BMK%])?)?/g;
+    const figs = [];
+    for (const m of block.matchAll(re)) {
+      if (!m[2] && !m[4] && !m[6]) continue;                  // a bare number (a year, a footnote) is not a cell
+      const unit = /%/.test((m[4] || "") + (m[6] || "")) ? "pct" : /[BMK]/.test((m[4] || "") + (m[6] || "")) ? "money" : "share";
+      figs.push({ at: m.index, lo: Number(m[3].replace(/,/g, "")), hi: m[5] ? Number(m[5].replace(/,/g, "")) : null, unit, qualified: Boolean(m[1]) });
+    }
+    const lo = typeof g.low === "number" ? g.low : g.value, hi = typeof g.high === "number" ? g.high : null;
+    if (typeof lo !== "number") continue;
+    const i = figs.findIndex((f) => Math.abs(f.lo - lo) < 1e-9 && (hi == null || hi === lo ? (f.hi == null || Math.abs(f.hi - lo) < 1e-9) : f.hi != null && Math.abs(f.hi - hi) < 1e-9));
+    if (i < 0) continue;
+    const f = figs[i];
+    if (f.hi != null && f.hi !== f.lo) {
+      for (const x of figs.slice(i + 1)) {
+        if (x.unit !== f.unit) continue;
+        if (x.hi != null) return "prior";                    // the next figure of its kind is a range: the current column
+        break;                                               // a single figure: the next row's last-year column
+      }
+      return "";
+    }
+    if (!f.qualified && f.hi == null) return "actual";
+  }
+  return "";
+}
+
 async function secondLookGuides(env, filing, guides) {
   const snippets = missedGuideLines(filing.text, guides);
   if (!snippets.length) return { asked: 0, found: [] };
@@ -1739,6 +1786,11 @@ async function secondLookGuides(env, filing, guides) {
   const flatText = String(filing.text || "").replace(/\s+/g, " ");
   const found = extra.filter((g) => {
     const v = [g.low, g.high, g.value].filter((x) => typeof x === "number");
+    const role = v.length ? columnRole(filing.text, g) : "";
+    if (role) {
+      console.log("Guidance second look " + filing.accession + ": " + g.metric_as_written + " " + (g.period_text || "") + " " + JSON.stringify([g.low, g.high, g.value]) + " - " + (role === "prior" ? "the prior column" : "last year's figure") + " of a last-year / prior / current table, set aside");
+      return false;
+    }
     if (v.length && inPreviousColumn(flatText, g)) {
       console.log("Guidance second look " + filing.accession + ": " + g.metric_as_written + " " + (g.period_text || "") + " " + JSON.stringify([g.low, g.high, g.value]) + " - the previous column of a previous/revised table, set aside");
       return false;
