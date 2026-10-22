@@ -1523,6 +1523,24 @@ async function callModel(env, text) {
    dollars or percentages ("$1.25 - $1.75", "0% - 4%", "$60 to $63 billion"). */
 const GUIDE_SHAPED = /±|\+\s?\/\s?-\s?\$?\s?\d|(?:\$\s?\d[\d.,]*|\d[\d.,]*\s?%)\s*(?:-|–|—|to)\s*\$?\s?\d[\d.,]*\s?(?:%|billion|million)?/i;
 const OUTLOOK_WORD = /\b(outlook|guidance|expects?|expected|anticipates?|forecast|targets?)\b/i;
+/* A RANGE, not a change. "EPS declined by 4.9% to $2.12" and "the selling
+   price increased $216 to $1,299 per ton" read as "X to Y" but are a result
+   moving from one figure to another (PM and STLD, October 2026, false
+   alarms): the two ends of a range have the same unit, and a range does not
+   follow "increased", "declined", "grew" and the like. */
+function rangeShaped(line) {
+  const RANGE = /(\$\s?\d[\d.,]*|\d[\d.,]*\s?%)\s*(?:-|–|—|to)\s*(\$?)\s?\d[\d.,]*\s?(%|billion|million)?/gi;
+  if (/±|\+\s?\/\s?-\s?\$?\s?\d/.test(line)) return true;
+  for (const m of String(line).matchAll(RANGE)) {
+    const firstPct = /%/.test(m[1]), firstUsd = /\$/.test(m[1]);
+    if (firstPct && m[2]) continue;                                 // "4.9% to $2.12"
+    if (firstUsd && m[3] === "%") continue;
+    const before = String(line).slice(Math.max(0, m.index - 30), m.index);
+    if (/\b(?:increased|decreased|rose|fell|grew|declined|improved|dropped|climbed|jumped|was up|was down|up|down)(?:\s+by)?\s*$/i.test(before)) continue;
+    return true;
+  }
+  return false;
+}
 const BOILERPLATE = /forward[-\s]looking statements?|safe harbor|private securities litigation/i;
 /* A figure with a unit a guide is given in. Basis points count: McCormick's
    "Adjusted gross margin is now expected to expand by 100 to 120 basis
@@ -1618,7 +1636,9 @@ export function missedGuideHits(text, guides) {
        "we expect AI semiconductor revenue to double year-over-year to $8.2
        billion" - no range, no band, and a guide all the same. */
     const sentenceGuide = OUTLOOK_WORD.test(line) && GUIDE_UNIT.test(line);
-    if (!GUIDE_SHAPED.test(line) && !sentenceGuide) return;
+    if (!rangeShaped(line) && !sentenceGuide) return;
+    // A slide title in spaced capitals ("S U M M A R Y H I G H L I G H T S") with no outlook word is a slide's text layer.
+    if (/^\s*(?:[A-Z&] ){4,}/.test(line) && !OUTLOOK_WORD.test(line)) return;
     /* ONE CLAUSE AT A TIME. UnitedHealth's headline lists its outlook as one
        line: "Full Year 2026 Revenue Outlook Greater Than $439.0 Billion;
        Earnings Outlook Greater Than $17.10 Per Share; Adjusted Earnings
