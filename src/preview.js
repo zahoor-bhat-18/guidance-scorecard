@@ -124,8 +124,13 @@ export function nextReport(record) {
   const rel = (record.releasesRead || []).slice().sort((a, b) => String(b.filed).localeCompare(String(a.filed)));
   if (rel.length < 4) return null;
   const sameLastYear = rel[3];
+  /* Only a period that was over by then can have been reported by that
+     release. GE's October 2025 release carries its 2028 targets; read as
+     "reported", they made the next report "2029" and the preview said GE
+     gives no guidance (20 Oct 2026). */
+  const relYear = Number(String(sameLastYear.filed).slice(0, 4));
   const answered = (record.pairs || []).filter((p) => p.answeredBy === sameLastYear.accession && p.guide_period)
-    .map((p) => p.guide_period);
+    .map((p) => p.guide_period).filter((p) => Number(String(p).slice(0, 4)) <= relYear + 1);   // +1: a fiscal year labelled ahead of the calendar (ConAgra's FY2026 ends May 2026)
   let period = null;
   const quarters = answered.filter(isQuarter).sort();
   const years = answered.filter((p) => /FY$/.test(p)).sort();
@@ -275,12 +280,14 @@ export function renderPreview(record, opts = {}) {
   const dated = Boolean(opts.reportDate);
   const when = longDate(dated ? opts.reportDate : pv.next.expected);
   const slot = opts.reportTime === "pre-market" ? ", before the market opens" : opts.reportTime === "post-market" ? ", after the market closes" : "";
-  const period = pv.next.interim ? "its next quarter" : periodLabel(pv.next.period);
+  // A company that guides only the year: its quarter is named as results, and the guide as the full-year guide.
+  const period = pv.next.interim ? "results" : periodLabel(pv.next.period);
+  const guideWord = pv.next.interim ? "the full-year guide" : "the guide";
   const subject = dated
     ? (opts.altDate
-      ? short + " reports " + period + " on " + when.replace(/,? \d{4}$/, "") + " or " + longDate(opts.altDate).replace(/,? \d{4}$/, "") + ": the guide and its record"
-      : short + " reports " + period + (opts.tomorrow ? " tomorrow" : " on " + when.replace(/,? \d{4}$/, "")) + ": the guide and its record")
-    : short + " reports " + period + " around " + when.replace(/,? \d{4}$/, "") + ": the guide and its record";
+      ? short + " reports " + period + " on " + when.replace(/,? \d{4}$/, "") + " or " + longDate(opts.altDate).replace(/,? \d{4}$/, "") + ": " + guideWord + " and its record"
+      : short + " reports " + period + (opts.tomorrow ? " tomorrow" : " on " + when.replace(/,? \d{4}$/, "")) + ": " + guideWord + " and its record")
+    : short + " reports " + period + " around " + when.replace(/,? \d{4}$/, "") + ": " + guideWord + " and its record";
   const dateLine = dated
     ? (opts.dateByCompany ? "Date as announced by the company."
       : opts.altDate ? "The earnings calendars disagree (" + longDate(opts.reportDate) + " or " + longDate(opts.altDate) + ") and the company's own page could not be read, so this comes before the earlier one."
@@ -289,13 +296,14 @@ export function renderPreview(record, opts = {}) {
   const lead = dated
     ? (opts.altDate ? short + " reports " + period + " on " + when + " or " + longDate(opts.altDate) + ". " + dateLine : short + " reports " + period + " on " + when + slot + ". " + dateLine)
     : short + " is expected to report " + period + " on or around " + when + ". " + dateLine;
+  const leadAll = lead + (pv.next.interim ? " It guides the full year only, so below is the full-year guide in force and how its results have landed against it." : "");
   const anyWords = pv.rows.some((r) => r.words);
   const anyArith = pv.rows.some((r) => r.arithmetic);
 
   const t = [];
   t.push(company + " (" + record.ticker + ") · preview");
   t.push("");
-  t.push(lead);
+  t.push(leadAll);
   t.push("");
   t.push("THE GUIDE IN FORCE");
   for (const r of pv.rows) t.push("- " + r.measure + ", " + r.period + ": " + r.guide);
@@ -323,7 +331,7 @@ export function renderPreview(record, opts = {}) {
   h.push('<div style="background:' + GREEN + ';color:#ffffff;padding:22px 22px 20px;">');
   h.push('<div style="font-size:13px;color:#cfe0d6;">' + esc(company + " (" + record.ticker + ") · preview") + "</div>");
   h.push('<div style="font-size:24px;font-weight:700;line-height:1.2;margin-top:10px;">' + esc("Reports " + period + (dated ? (opts.tomorrow ? " tomorrow, " : " on ") + when + slot : " around " + when)) + "</div>");
-  h.push('<div style="font-size:14px;margin-top:8px;color:#e6efe9;">' + esc(dated ? dateLine : "Estimated from last year: it reported the same quarter on " + longDate(pv.next.lastYear) + ".") + "</div>");
+  h.push('<div style="font-size:14px;margin-top:8px;color:#e6efe9;">' + esc((dated ? dateLine : "Estimated from last year: it reported the same quarter on " + longDate(pv.next.lastYear) + ".") + (pv.next.interim ? " It guides the full year only: below is the full-year guide in force and how its results have landed against it." : "")) + "</div>");
   h.push("</div>");
 
   h.push('<div style="padding:18px 22px 6px;">' + label("The guide in force"));

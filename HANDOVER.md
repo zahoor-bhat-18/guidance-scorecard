@@ -354,3 +354,7 @@ Owner: "rely on company website first and then third party websites."
 - 18 Oct: dates also read from the company's own 8-Ks on EDGAR (items 2.02/7.01/8.01, last 75 days): Tesla's deliveries 8-K and STLD's mid-quarter guidance 8-K state the date. Works where the investor site blocks readers. "after market close" / "before market open" set the time. Now company-confirmed: GE, LRCX, STLD, TSLA (+ PM by hand). Calendars only: FITB, NFLX, RTX.
 - 18 Oct: whois workflow also checks unsubscribe links (made-up address, nobody removed). filing-agent has unsub-check.yml for its own secret. All valid on 18 Oct; forged link refused.
 - 20 Oct: sign-up now keeps only insurers (SIC 6300-6499) off Release Watch; banks are covered (release-watch src/bank.mjs).
+
+## Oct 22 2026: review of the first live week
+- Preview said GE "gives no numeric guidance" (20 Oct): nextReport took the 2028 targets in GE's Oct 2025 release as "reported", so the next period was 2029FY. A release can only have reported a period up to its own year + 1 (fiscal labels run ahead: CAG). Checked on the 46 records from the 17 Oct rebuild: only GE and WM change (both now get the full-year preview).
+- Preview for a full-year-only guider: "reports results tomorrow: the full-year guide and its record", with a line saying it guides the full year only.
