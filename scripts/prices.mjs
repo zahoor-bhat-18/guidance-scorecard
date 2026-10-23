@@ -10,7 +10,7 @@
  * non-commercial use: fine while the product is free; to be revisited before
  * it is sold (owner's decision, 23 Oct 2026).
  *
- * Usage: node scripts/prices.mjs [--probe TICKER] [TICKERS...]
+ * Usage: node scripts/prices.mjs [--probe TICKER] [--dump TICKERS...] [TICKERS...]
  */
 const ACCOUNT = process.env.CLOUDFLARE_ACCOUNT_ID, CF_TOKEN = process.env.CLOUDFLARE_API_TOKEN, KV_ID = process.env.KV_NAMESPACE_ID, KEY = process.env.ALPHAVANTAGE_KEY;
 const kvUrl = (k) => "https://api.cloudflare.com/client/v4/accounts/" + ACCOUNT + "/storage/kv/namespaces/" + KV_ID + "/values/" + encodeURIComponent(k);
@@ -36,6 +36,11 @@ async function main() {
       const days = r.closes ? Object.keys(r.closes).sort() : [];
       console.log((full ? "full" : "compact") + ": " + (r.error || days.length + " days, " + days[0] + " to " + days[days.length - 1]));
     }
+    return;
+  }
+  // --dump T...: print what is stored, one line of JSON a company (prices are public data).
+  if (args[0] === "--dump") {
+    for (const t of args.slice(1)) console.log("PRICES " + t.toUpperCase() + " " + ((await kvGet("prices:" + t.toUpperCase())) || "null"));
     return;
   }
   // Every followed company (any product), soonest stored report date first; at most 24 a day.
