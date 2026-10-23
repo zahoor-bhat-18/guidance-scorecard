@@ -52,7 +52,7 @@ jobs:
 
       - name: Score the release and send
         env:
-          SEC_USER_AGENT: ${{ vars.SEC_USER_AGENT }}
+          SEC_USER_AGENT: "Zahoor Bhat hello@zahoorbhat.com"
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           UNSUB_SECRET: ${{ secrets.UNSUB_SECRET }}

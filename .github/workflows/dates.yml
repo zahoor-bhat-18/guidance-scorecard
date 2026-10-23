@@ -35,6 +35,6 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           KV_NAMESPACE_ID: ${{ vars.KV_NAMESPACE_ID }}
-          SEC_USER_AGENT: ${{ vars.SEC_USER_AGENT }}
+          SEC_USER_AGENT: "Zahoor Bhat hello@zahoorbhat.com"
           CONFIRM: ${{ inputs.confirm }}
         run: node scripts/dates.mjs ${{ inputs.dry && '--dry' || '' }}

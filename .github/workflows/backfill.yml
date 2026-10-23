@@ -87,7 +87,7 @@ jobs:
 
       - name: Build the records
         env:
-          SEC_USER_AGENT: ${{ vars.SEC_USER_AGENT }}
+          SEC_USER_AGENT: "Zahoor Bhat hello@zahoorbhat.com"
           # The stored record is read from KV directly (history kept beyond the window); see storedRecord.
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

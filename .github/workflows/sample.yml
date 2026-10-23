@@ -44,7 +44,7 @@ jobs:
       EARNINGS: ${{ github.event.client_payload.earnings || inputs.earnings }}
       GUIDANCE: ${{ github.event.client_payload.guidance || inputs.guidance }}
       FILINGS: ${{ github.event.client_payload.filings || inputs.filings }}
-      SEC_USER_AGENT: ${{ vars.SEC_USER_AGENT }}
+      SEC_USER_AGENT: "Zahoor Bhat hello@zahoorbhat.com"
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
       RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
       UNSUB_SECRET: ${{ secrets.UNSUB_SECRET }}
@@ -97,7 +97,7 @@ jobs:
         if: env.FILINGS != ''
         working-directory: fw
         env:
-          EDGAR_UA: ${{ vars.SEC_USER_AGENT }}
+          EDGAR_UA: "Zahoor Bhat hello@zahoorbhat.com"
           EMAIL_TO: ${{ github.event.client_payload.email || inputs.email }}
           EMAIL_FROM: "Filing Watch <filings@zahoorbhat.com>"
           EMAIL_REPLY_TO: ${{ vars.REPLY_TO }}
