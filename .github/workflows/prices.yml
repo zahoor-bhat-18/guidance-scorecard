@@ -1,0 +1,35 @@
+name: prices
+
+# Daily closing prices for followed companies (Alpha Vantage), kept in KV for
+# Release Watch's stock reaction table. Runs after the dates job.
+
+on:
+  schedule:
+    - cron: "10 21 * * *"
+  workflow_dispatch:
+    inputs:
+      args:
+        description: "Arguments, e.g. --probe IBM, or tickers"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  prices:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Fetch and store closing prices
+        env:
+          ALPHAVANTAGE_KEY: ${{ secrets.ALPHAVANTAGE_KEY }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          KV_NAMESPACE_ID: ${{ vars.KV_NAMESPACE_ID }}
+          ARGS: ${{ inputs.args }}
+        run: node scripts/prices.mjs $ARGS
