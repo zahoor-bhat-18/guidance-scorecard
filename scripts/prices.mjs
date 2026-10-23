@@ -38,5 +38,28 @@ async function main() {
     }
     return;
   }
+  // Every followed company (any product), soonest stored report date first; at most 24 a day.
+  const subs = JSON.parse((await kvGet("subscribers")) || "{}");
+  let tickers = args.length ? args.map((t) => t.toUpperCase())
+    : Array.from(new Set(Object.values(subs).flatMap((v) => [...(v.tickers || []), ...(v.earnings || []), ...(v.filings || [])]))).sort();
+  const dateOf = {};
+  for (const t of tickers) { try { dateOf[t] = (JSON.parse((await kvGet("date:" + t)) || "null") || {}).date || "9999"; } catch { dateOf[t] = "9999"; } }
+  tickers.sort((a, b) => dateOf[a].localeCompare(dateOf[b]));
+  const today = new Date().toISOString().slice(0, 10);
+  let asked = 0;
+  for (const t of tickers) {
+    const stored = JSON.parse((await kvGet("prices:" + t)) || "null") || { closes: {} };
+    if (stored.at && stored.at.slice(0, 10) === today) { console.log("  " + t + ": already fetched today"); continue; }
+    if (asked >= 24) { console.log("  " + t + ": over today's 24 requests - tomorrow"); continue; }
+    if (asked) await new Promise((r) => setTimeout(r, 1500));          // the free key: one request a second
+    asked++;
+    const r = await daily(t, false);
+    if (r.error) { console.log("  " + t + ": " + r.error.slice(0, 160)); continue; }
+    // Kept, not replaced: the free key gives 100 days, and the history grows a day at a time.
+    const closes = { ...stored.closes, ...r.closes };
+    const days = Object.keys(closes).sort();
+    await kvPut("prices:" + t, JSON.stringify({ at: new Date().toISOString(), source: "Alpha Vantage TIME_SERIES_DAILY", closes }));
+    console.log("  " + t + ": " + days.length + " days stored, " + days[0] + " to " + days[days.length - 1]);
+  }
 }
 main().catch((e) => { console.error(e); process.exit(1); });
