@@ -6,6 +6,7 @@
  * of companies per product. Nothing is written.
  *
  * Usage: node scripts/whois.mjs           (list)
+ *        FOLLOW="V,GOOGL" node scripts/whois.mjs (the owner follows these on every product)
  *        CLEAR=CLEAR node scripts/whois.mjs (empty the list - every product, every address)
  */
 
@@ -19,6 +20,20 @@ const url = "https://api.cloudflare.com/client/v4/accounts/" + ACCOUNT
 const r = await fetch(url, { headers: { Authorization: "Bearer " + CF_TOKEN } });
 if (!r.ok && r.status !== 404) throw new Error("KV read failed: " + r.status);
 const list = r.status === 404 ? {} : JSON.parse(await r.text());
+
+// FOLLOW="V,GOOGL": the owner's address (TEST_EMAIL) follows these on every product, as a confirmed signup would.
+if (process.env.FOLLOW) {
+  if (!OWNER) throw new Error("TEST_EMAIL is not set: FOLLOW only ever changes the owner's own address.");
+  const add = String(process.env.FOLLOW).toUpperCase().split(/[\s,]+/).filter((t) => /^[A-Z][A-Z0-9.\-]{0,9}$/.test(t));
+  const key = Object.keys(list).find((e) => e.toLowerCase() === OWNER) || OWNER;
+  const rec = { ...(list[key] || { confirmedAt: new Date().toISOString() }) };
+  for (const f of ["tickers", "earnings", "filings"]) rec[f] = Array.from(new Set([...(rec[f] || []), ...add]));
+  rec.updatedAt = new Date().toISOString();
+  list[key] = rec;
+  const w = await fetch(url, { method: "PUT", headers: { Authorization: "Bearer " + CF_TOKEN }, body: JSON.stringify(list) });
+  if (!w.ok) throw new Error("KV write failed: " + w.status);
+  console.log("Owner now follows " + rec.tickers.length + " companies on every product; added: " + add.join(","));
+}
 
 if (process.env.CLEAR === "CLEAR") {
   const w = await fetch(url, { method: "PUT", headers: { Authorization: "Bearer " + CF_TOKEN }, body: "{}" });

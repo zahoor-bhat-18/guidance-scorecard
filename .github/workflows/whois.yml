@@ -10,6 +10,10 @@ on:
         description: "Type CLEAR to empty the shared subscriber list (all products, all addresses). Leave blank to list."
         required: false
         default: ""
+      follow:
+        description: "Tickers the owner's address should follow on every product, comma-separated. Leave blank to list."
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -30,5 +34,6 @@ jobs:
           KV_NAMESPACE_ID: ${{ vars.KV_NAMESPACE_ID }}
           TEST_EMAIL: ${{ vars.TEST_EMAIL }}
           CLEAR: ${{ inputs.clear }}
+          FOLLOW: ${{ inputs.follow }}
           UNSUB_SECRET: ${{ secrets.UNSUB_SECRET }}
         run: node scripts/whois.mjs
