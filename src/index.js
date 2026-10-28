@@ -970,15 +970,13 @@ export default {
         if (!asked.length) return json({ error: "Name at least one ticker." }, 400);
         if (asked.length > MAX_COMPANIES) return json({ error: "For now you can follow up to " + MAX_COMPANIES + " companies. Remove " + (asked.length - MAX_COMPANIES) + " and try again." }, 400);
         {
-          // Counted with what this address already follows on each product.
+          // Counted with what this address already follows, across all three products: 5 companies per address.
           const mine = (await readList(env))[email] || {};
-          for (const p of cleanProducts(body.products)) {
-            const have = mine[PRODUCTS[p]] || [];
-            const extra = asked.filter((t) => !have.includes(t)).length;
-            if (extra && have.length + extra > MAX_COMPANIES) {
-              const left = Math.max(0, MAX_COMPANIES - have.length);
-              return json({ error: "You already follow " + have.length + " " + (have.length === 1 ? "company" : "companies") + " on " + PRODUCT_NAMES[p] + ". For now the limit is " + MAX_COMPANIES + ", so you can add " + (left ? left + " more." : "no more.") }, 400);
-            }
+          const have = Array.from(new Set(Object.values(PRODUCTS).flatMap((f) => mine[f] || [])));
+          const extra = asked.filter((t) => !have.includes(t)).length;
+          if (extra && have.length + extra > MAX_COMPANIES) {
+            const left = Math.max(0, MAX_COMPANIES - have.length);
+            return json({ error: "You already follow " + have.length + " " + (have.length === 1 ? "company" : "companies") + ". For now the limit is " + MAX_COMPANIES + ", so you can add " + (left ? left + " more." : "no more.") }, 400);
           }
         }
 

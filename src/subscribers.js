@@ -160,8 +160,12 @@ export async function confirm(env, token) {
     // Never more than MAX_COMPANIES through the form, even from two signups
     // confirmed one after the other. A list already longer is left as it is.
     const have = record[field] || [];
-    const room = Math.max(0, MAX_COMPANIES - have.length);
-    addedFor[p] = pending.tickers.filter((t) => !(skip[p] || []).includes(t) && !have.includes(t)).slice(0, room);
+    // Five companies per address across all products: a company already
+    // followed on another product takes no new place.
+    const all = new Set(Object.values(PRODUCTS).flatMap((f) => record[f] || []));
+    const fresh = pending.tickers.filter((t) => !(skip[p] || []).includes(t) && !have.includes(t));
+    const room = Math.max(0, MAX_COMPANIES - all.size);
+    addedFor[p] = fresh.filter((t) => all.has(t)).concat(fresh.filter((t) => !all.has(t)).slice(0, room));
     record[field] = Array.from(new Set([...have, ...addedFor[p]]));
   }
   if (!record.tickers) record.tickers = [];
