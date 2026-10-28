@@ -35,7 +35,7 @@ import { releaseText } from "./text.js";
 import { readRecord, listRecords, forEmail, headline } from "./records.js";
 import { renderEmail } from "./email.js";
 import {
-  cleanEmail, cleanTickers, hold, confirm, remove, readList, watchedTickers, watchedByProduct, cleanProducts, PRODUCTS, PRODUCT_NAMES,
+  cleanEmail, cleanTickers, hold, confirm, remove, readList, watchedTickers, watchedByProduct, cleanProducts, PRODUCTS, PRODUCT_NAMES, MAX_COMPANIES,
   confirmUrl, unsubscribeUrl, send, confirmationEmail, signatureValid, page,
 } from "./subscribers.js";
 
@@ -968,6 +968,19 @@ export default {
 
         const asked = cleanTickers(body.tickers);
         if (!asked.length) return json({ error: "Name at least one ticker." }, 400);
+        if (asked.length > MAX_COMPANIES) return json({ error: "For now you can follow up to " + MAX_COMPANIES + " companies. Remove " + (asked.length - MAX_COMPANIES) + " and try again." }, 400);
+        {
+          // Counted with what this address already follows on each product.
+          const mine = (await readList(env))[email] || {};
+          for (const p of cleanProducts(body.products)) {
+            const have = mine[PRODUCTS[p]] || [];
+            const extra = asked.filter((t) => !have.includes(t)).length;
+            if (extra && have.length + extra > MAX_COMPANIES) {
+              const left = Math.max(0, MAX_COMPANIES - have.length);
+              return json({ error: "You already follow " + have.length + " " + (have.length === 1 ? "company" : "companies") + " on " + PRODUCT_NAMES[p] + ". For now the limit is " + MAX_COMPANIES + ", so you can add " + (left ? left + " more." : "no more.") }, 400);
+            }
+          }
+        }
 
         // Any company registered with the SEC can be followed. One without a
         // record is built after the address is confirmed.

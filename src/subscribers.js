@@ -73,6 +73,11 @@ export function cleanEmail(raw) {
   return email;
 }
 
+/* Each address follows up to this many companies on each product, while the
+   products are free and in test (owner's decision, 28 Oct 2026). The owner's
+   own list is set by the whois workflow and is not limited. */
+export const MAX_COMPANIES = 5;
+
 export function cleanTickers(raw) {
   const list = String(raw || "")
     .toUpperCase()
@@ -152,8 +157,12 @@ export async function confirm(env, token) {
   const addedFor = {};
   for (const p of products) {
     const field = PRODUCTS[p];
-    addedFor[p] = pending.tickers.filter((t) => !(skip[p] || []).includes(t));
-    record[field] = Array.from(new Set([...(record[field] || []), ...addedFor[p]]));
+    // Never more than MAX_COMPANIES through the form, even from two signups
+    // confirmed one after the other. A list already longer is left as it is.
+    const have = record[field] || [];
+    const room = Math.max(0, MAX_COMPANIES - have.length);
+    addedFor[p] = pending.tickers.filter((t) => !(skip[p] || []).includes(t) && !have.includes(t)).slice(0, room);
+    record[field] = Array.from(new Set([...have, ...addedFor[p]]));
   }
   if (!record.tickers) record.tickers = [];
   record.confirmedAt = existing ? existing.confirmedAt : new Date().toISOString();
@@ -166,10 +175,10 @@ export async function confirm(env, token) {
   const had = (p) => (existing && existing[PRODUCTS[p]]) || [];
   return {
     email: pending.email, products, record,
-    tickers: record.tickers, added: pending.tickers, addedFor, skipped: skip,
+    tickers: record.tickers, added: Array.from(new Set(Object.values(addedFor).flat())), addedFor, skipped: skip,
     // Guidance Scorecard's view, which the backfill below uses.
     alreadyHad: had("guidance"),
-    guidanceAdded: products.includes("guidance") ? pending.tickers : [],
+    guidanceAdded: products.includes("guidance") ? addedFor.guidance : [],
   };
 }
 

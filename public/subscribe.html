@@ -192,7 +192,7 @@
         </div>
       </div>
       <div class="field">
-        <label class="meta" for="tk">Which companies do you cover</label>
+        <label class="meta" for="tk">Which companies do you cover (up to 5)</label>
         <div class="combo">
           <input id="tk" type="text" placeholder="Type a ticker or company name, e.g. MSFT"
                  autocomplete="off" autocapitalize="characters" spellcheck="false"
@@ -204,7 +204,7 @@
       <div id="human" class="human"></div>
       <button class="submit" id="go" type="button">Subscribe</button>
       <div class="signnote" id="says" role="status" aria-live="polite"></div>
-      <p class="fineprint">Free while in test. Once you confirm, a sample built from each company's latest filing arrives within minutes, so you see the email before the company next reports. Every email carries a link to leave.</p>
+      <p class="fineprint">Free while in test, for up to 5 companies. Once you confirm, a sample built from each company's latest filing arrives within minutes, so you see the email before the company next reports. Every email carries a link to leave.</p>
     </div>
   </section>
 
@@ -307,6 +307,7 @@
     function add(co) {
       if (!co) return;
       if (picked.some(([t]) => t === co[0])) return;
+      if (picked.length >= 5) { say("For now you can follow up to 5 companies.", "err"); return; }
       picked.push(co);
       renderPicked();
       tkEl.value = "";
