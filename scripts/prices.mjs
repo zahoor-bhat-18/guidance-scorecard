@@ -55,6 +55,16 @@ async function main() {
     }
     return;
   }
+  if (args[0] === "--probe-nasdaq") {
+    const t = (args[1] || "IBM").toUpperCase();
+    const from = new Date(Date.now() - 2.3 * 365.25 * 86400000).toISOString().slice(0, 10), to = new Date().toISOString().slice(0, 10);
+    const r = await fetch("https://api.nasdaq.com/api/quote/" + t + "/historical?assetclass=stocks&fromdate=" + from + "&todate=" + to + "&limit=9999", { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36", Accept: "application/json, text/plain, */*", "Accept-Language": "en-US,en;q=0.9", Origin: "https://www.nasdaq.com", Referer: "https://www.nasdaq.com/" } });
+    const text = await r.text();
+    let rows = [];
+    try { rows = JSON.parse(text).data.tradesTable.rows || []; } catch { console.log("nasdaq " + r.status + ": " + text.slice(0, 160)); return; }
+    console.log("nasdaq: " + rows.length + " days, " + (rows[rows.length - 1] || {}).date + " to " + (rows[0] || {}).date + "; " + JSON.stringify(rows[0]));
+    return;
+  }
   if (args[0] === "--probe-stooq") {
     const r = await stooq(args[1] || "IBM");
     const days = r.closes ? Object.keys(r.closes).sort() : [];
