@@ -28,18 +28,23 @@ async function daily(ticker, full) {
 }
 
 /* The longer record. Alpha Vantage's free key gives the last 100 trading
-   days, so the reaction table had two quarters. Stooq's free daily file goes
-   back years and needs no key; it fills the closes before Alpha Vantage's
-   window, once per company (owner's request, 28 Oct 2026: 7-8 quarters).
-   Alpha Vantage's closes win where both have a day. */
-async function stooq(ticker) {
-  const sym = ticker.toLowerCase().replace(/\./g, "-") + ".us";
-  const r = await fetch("https://stooq.com/q/d/l/?s=" + encodeURIComponent(sym) + "&i=d", { headers: { "User-Agent": "Mozilla/5.0 (release-watch prices)" } });
+   days, so the reaction table had two quarters. Nasdaq.com's historical
+   quotes go back years and need no key; they fill the closes before Alpha
+   Vantage's window, once per company (owner's request, 28 Oct 2026: 7-8
+   quarters). Alpha Vantage's closes win where both have a day. Stooq was
+   tried first and now refuses scripts. */
+const BROWSER = { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36", Accept: "application/json, text/plain, */*", "Accept-Language": "en-US,en;q=0.9", Origin: "https://www.nasdaq.com", Referer: "https://www.nasdaq.com/" };
+async function nasdaq(ticker, from) {
+  const to = new Date().toISOString().slice(0, 10);
+  const r = await fetch("https://api.nasdaq.com/api/quote/" + encodeURIComponent(ticker.replace(/\./g, "/")) + "/historical?assetclass=stocks&fromdate=" + from + "&todate=" + to + "&limit=9999", { headers: BROWSER });
   const text = await r.text();
-  const lines = text.trim().split(/\r?\n/);
-  if (!/^Date,Open,High,Low,Close/i.test(lines[0] || "")) return { error: "stooq: " + text.slice(0, 120).replace(/\s+/g, " ") };
+  let rows;
+  try { rows = JSON.parse(text).data.tradesTable.rows || []; } catch { return { error: "nasdaq " + r.status + ": " + text.slice(0, 120).replace(/\s+/g, " ") }; }
   const closes = {};
-  for (const l of lines.slice(1)) { const c = l.split(","); if (/^\d{4}-\d\d-\d\d$/.test(c[0]) && Number(c[4]) > 0) closes[c[0]] = Number(c[4]); }
+  for (const x of rows) {
+    const m = /^(\d\d)\/(\d\d)\/(\d{4})$/.exec(x.date || ""), c = Number(String(x.close || "").replace(/[$,]/g, ""));
+    if (m && c > 0) closes[`${m[3]}-${m[1]}-${m[2]}`] = c;
+  }
   return { closes };
 }
 const YEARS_BACK = 2.25;
@@ -63,12 +68,6 @@ async function main() {
     let rows = [];
     try { rows = JSON.parse(text).data.tradesTable.rows || []; } catch { console.log("nasdaq " + r.status + ": " + text.slice(0, 160)); return; }
     console.log("nasdaq: " + rows.length + " days, " + (rows[rows.length - 1] || {}).date + " to " + (rows[0] || {}).date + "; " + JSON.stringify(rows[0]));
-    return;
-  }
-  if (args[0] === "--probe-stooq") {
-    const r = await stooq(args[1] || "IBM");
-    const days = r.closes ? Object.keys(r.closes).sort() : [];
-    console.log("stooq: " + (r.error || days.length + " days, " + days[0] + " to " + days[days.length - 1] + "; last close " + r.closes[days[days.length - 1]]));
     return;
   }
   // --dump T...: print what is stored, one line of JSON a company (prices are public data).
@@ -95,20 +94,26 @@ async function main() {
     if (r.error) { console.log("  " + t + ": " + r.error.slice(0, 160)); continue; }
     // Kept, not replaced: the free key gives 100 days, and the history grows a day at a time.
     let closes = { ...stored.closes, ...r.closes };
-    // The longer record, once: when what is stored starts within YEARS_BACK.
-    const want = new Date(Date.now() - YEARS_BACK * 365.25 * 86400000).toISOString().slice(0, 10);
-    const first = Object.keys(closes).sort()[0] || "9999";
-    if (first > want) {
-      try {
-        const old = await stooq(t);
-        if (old.closes) { const n = Object.keys(old.closes).filter((d) => d >= want && !closes[d]).length; for (const [d, v] of Object.entries(old.closes)) if (d >= want && !closes[d]) closes[d] = v; console.log("  " + t + ": " + n + " earlier days from Stooq"); }
-        else console.log("  " + t + ": " + old.error);
-      } catch (e) { console.log("  " + t + ": Stooq " + e.message); }
-    }
     closes = Object.fromEntries(Object.entries(closes).sort());
     const days = Object.keys(closes).sort();
-    await kvPut("prices:" + t, JSON.stringify({ at: new Date().toISOString(), source: "Alpha Vantage TIME_SERIES_DAILY; earlier days Stooq", closes }));
+    await kvPut("prices:" + t, JSON.stringify({ at: new Date().toISOString(), source: stored.source && /Nasdaq/.test(stored.source) ? stored.source : "Alpha Vantage TIME_SERIES_DAILY", closes }));
     console.log("  " + t + ": " + days.length + " days stored, " + days[0] + " to " + days[days.length - 1]);
+  }
+  // The longer record, for every company whose stored closes start within the
+  // last YEARS_BACK years. No key and no daily limit, but one request a second.
+  const want = new Date(Date.now() - YEARS_BACK * 365.25 * 86400000).toISOString().slice(0, 10);
+  for (const t of tickers) {
+    const stored = JSON.parse((await kvGet("prices:" + t)) || "null") || { closes: {} };
+    const first = Object.keys(stored.closes || {}).sort()[0] || "9999";
+    if (first <= want || stored.nasdaqAt) continue;
+    await new Promise((r) => setTimeout(r, 1200));
+    const old = await nasdaq(t, want).catch((e) => ({ error: e.message }));
+    if (old.error) { console.log("  " + t + ": " + old.error); continue; }
+    let n = 0;
+    const closes = { ...stored.closes };
+    for (const [d, v] of Object.entries(old.closes)) if (!closes[d]) { closes[d] = v; n++; }
+    await kvPut("prices:" + t, JSON.stringify({ ...stored, nasdaqAt: new Date().toISOString(), source: "Alpha Vantage TIME_SERIES_DAILY; earlier days Nasdaq.com", closes: Object.fromEntries(Object.entries(closes).sort()) }));
+    console.log("  " + t + ": " + n + " earlier days from Nasdaq.com");
   }
 }
 main().catch((e) => { console.error(e); process.exit(1); });
