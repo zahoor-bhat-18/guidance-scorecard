@@ -263,8 +263,10 @@ function esc(s) {
   return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-const INK = "#1a2b23", GREEN = "#1f4435", SOFT = "#5f6b76", LINE = "#e3e7ea", PAGE = "#eef1f3";
-const SANS = "-apple-system,'Segoe UI',Helvetica,Arial,sans-serif";
+// Filing Watch's colours and fonts: one look across the three products (28 Oct 2026).
+const INK = "#16191D", GREEN = "#0F4C5C", SOFT = "#6B7280", LINE = "#E4E6E9", PAGE = "#EEEDE9";
+const SANS = "-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif";
+const SERIF = "Georgia,'Iowan Old Style','Times New Roman',serif";
 
 /**
  * The email itself: { subject, text, html }, or null.
@@ -325,16 +327,22 @@ export function renderPreview(record, opts = {}) {
   if (opts.unsubscribeUrl) { t.push(""); t.push("Unsubscribe: " + opts.unsubscribeUrl); }
 
   const h = [];
-  const label = (x) => '<div style="font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:' + SOFT + ';font-weight:700;">' + esc(x) + "</div>";
-  h.push('<div style="margin:0;padding:20px 0;background:' + PAGE + ';">');
-  h.push('<div style="max-width:600px;margin:0 auto;background:#ffffff;font-family:' + SANS + ";color:" + INK + ';font-size:15px;line-height:1.45;">');
-  h.push('<div style="background:' + GREEN + ';color:#ffffff;padding:22px 22px 20px;">');
-  h.push('<div style="font-size:13px;color:#cfe0d6;">' + esc(company + " (" + record.ticker + ") · preview") + "</div>");
-  h.push('<div style="font-size:24px;font-weight:700;line-height:1.2;margin-top:10px;">' + esc("Reports " + period + (dated ? (opts.tomorrow ? " tomorrow, " : " on ") + when + slot : " around " + when)) + "</div>");
-  h.push('<div style="font-size:14px;margin-top:8px;color:#e6efe9;">' + esc((dated ? dateLine : "Estimated from last year: it reported the same quarter on " + longDate(pv.next.lastYear) + ".") + (pv.next.interim ? " It guides the full year only: below is the full-year guide in force and how its results have landed against it." : "")) + "</div>");
-  h.push("</div>");
+  const label = (x) => '<div style="font-size:12px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:' + SOFT + ';">' + esc(x) + "</div>";
+  h.push('<div style="margin:0;padding:22px 0;background:' + PAGE + ';">');
+  h.push('<div style="max-width:616px;margin:0 auto;background:#ffffff;font-family:' + SANS + ";color:" + INK + ';font-size:15px;line-height:1.45;">');
+  // Header and "the read", as Filing Watch prints them.
+  h.push('<div style="background:#0A3742;padding:20px 30px 18px;">'
+    + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>'
+    + '<td style="font:700 27px/1.1 ' + SANS + ';color:#FFFFFF;letter-spacing:-.015em">' + esc(record.ticker) + '</td>'
+    + '<td align="right" style="font:400 11px/1.5 ' + SANS + ';color:#8FC0CC;letter-spacing:.04em;text-transform:uppercase">Preview</td></tr>'
+    + '<tr><td colspan="2" style="font:400 13px/1.5 ' + SANS + ';color:#B9D6DD;padding-top:4px">' + esc(company) + '</td></tr></table></div>');
+  h.push('<div style="background:' + GREEN + ';padding:24px 30px 26px;">'
+    + '<div style="font:600 10px/1.4 ' + SANS + ';letter-spacing:.16em;text-transform:uppercase;color:#8FC0CC;padding-bottom:11px">The next report</div>'
+    + '<div style="font:400 20px/1.4 ' + SERIF + ';color:#F2F7F8">' + esc("Reports " + period + (dated ? (opts.tomorrow ? " tomorrow, " : " on ") + when + slot : " around " + when)) + "</div>"
+    + '<div style="font:400 13px/1.55 ' + SANS + ';margin-top:10px;color:#B9D6DD">' + esc((dated ? dateLine : "Estimated from last year: it reported the same quarter on " + longDate(pv.next.lastYear) + ".") + (pv.next.interim ? " It guides the full year only: below is the full-year guide in force and how its results have landed against it." : "")) + "</div>"
+    + "</div>");
 
-  h.push('<div style="padding:18px 22px 6px;">' + label("The guide in force"));
+  h.push('<div style="padding:22px 30px 6px;">' + label("The guide in force"));
   h.push('<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;margin-top:8px;font-size:14px;">');
   for (const r of pv.rows) {
     h.push('<tr><td style="padding:8px 8px 8px 0;border-bottom:1px solid ' + LINE + ';">' + esc(r.measure)
@@ -343,7 +351,7 @@ export function renderPreview(record, opts = {}) {
   }
   h.push("</table></div>");
 
-  h.push('<div style="padding:16px 22px 6px;">' + label("How results have landed against the guide"));
+  h.push('<div style="padding:16px 30px 6px;">' + label("How results have landed against the guide"));
   for (const r of pv.rows) {
     h.push('<div style="margin-top:14px;font-size:14px;"><b>' + esc(r.measure) + '</b> <span style="color:' + SOFT + ';font-size:12px;">' + esc(r.quarter ? "quarters" : "full years") + "</span>");
     h.push('<div style="color:' + INK + ';font-size:13px;margin-top:3px;">' + esc(recordLine(r)) + "</div>");
@@ -367,8 +375,8 @@ export function renderPreview(record, opts = {}) {
   if (anyWords) notes.push("* Given in words, read by a fixed rule (low single digits 1-3%, mid 4-6%, high 7-9%; figures written out as words taken as written).");
   notes.push("Results marked as possibly misread are left out." + (dated ? "" : " Dates are estimates until the company announces them."));
   notes.push("Minutes after the release, Release Watch says whether the results came in above, within or below this guide.");
-  h.push('<div style="padding:12px 22px 0;font-size:12px;color:' + SOFT + ';">' + notes.map(esc).join("<br>") + "</div>");
-  h.push('<div style="padding:16px 22px 20px;font-size:12px;line-height:1.5;color:' + SOFT + ";border-top:1px solid " + LINE + ';margin-top:14px;">'
+  h.push('<div style="padding:12px 30px 0;font-size:12px;color:' + SOFT + ';">' + notes.map(esc).join("<br>") + "</div>");
+  h.push('<div style="padding:16px 30px 20px;font-size:12px;line-height:1.5;color:' + SOFT + ";border-top:1px solid " + LINE + ';margin-top:14px;">'
     + "Thanks,<br>Zahoor · Guidance Scorecard · hello@zahoorbhat.com<br><br>"
     + "Every figure is read from the company's own filings on EDGAR."
     + (opts.unsubscribeUrl ? '<br><br><a href="' + esc(opts.unsubscribeUrl) + '" style="color:' + SOFT + ';">Unsubscribe</a>' : "")
@@ -398,7 +406,7 @@ export function renderNoGuidePreview(record, opts = {}) {
   ];
   const t = [company + " (" + record.ticker + ") · preview", "", ...body, "", "Thanks,", "Zahoor · Guidance Scorecard · hello@zahoorbhat.com"];
   if (opts.unsubscribeUrl) { t.push(""); t.push("Unsubscribe: " + opts.unsubscribeUrl); }
-  const h = '<div style="margin:0;padding:20px 0;background:' + PAGE + ';"><div style="max-width:600px;margin:0 auto;background:#ffffff;font-family:' + SANS + ";color:" + INK + ';font-size:15px;line-height:1.5;padding:22px;">'
+  const h = '<div style="margin:0;padding:20px 0;background:' + PAGE + ';"><div style="max-width:616px;margin:0 auto;background:#ffffff;font-family:' + SANS + ";color:" + INK + ';font-size:15px;line-height:1.5;padding:22px;">'
     + '<div style="font-size:13px;color:' + SOFT + ';">' + esc(company + " (" + record.ticker + ") · preview") + "</div>"
     + body.map((x) => "<p>" + esc(x) + "</p>").join("")
     + '<div style="font-size:12px;color:' + SOFT + ';border-top:1px solid ' + LINE + ';padding-top:12px;margin-top:14px;">Thanks,<br>Zahoor · Guidance Scorecard · hello@zahoorbhat.com'

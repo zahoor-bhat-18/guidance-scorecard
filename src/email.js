@@ -58,18 +58,18 @@ function metricKey(x) {
 }
 import { formatFigure, formatValue, formatGap, periodLabel, periodSortKey, displayName } from "./format.js";
 
-const CREAM = "#faf7f0";
-const INK = "#1a2b23";
-const GREEN = "#1f4435";
-const MUTED = "#5b6b62";
-const RULE = "#dcd6c8";
+const CREAM = "#FFFFFF";
+const INK = "#16191D";
+const GREEN = "#0F4C5C"; // Filing Watch teal (28 Oct 2026: one look across the three products)
+const MUTED = "#6B7280";
+const RULE = "#E4E6E9";
 const MONO = "ui-monospace,SFMono-Regular,Menlo,monospace";
 
 /* The range strip, as on the site: a pale track, the guided range in green,
    the reported figure as a dark mark. The green is the GUIDE, never a verdict
    - the same green whether the figure landed inside, above or below. */
-const TRACK = "#e7e2d5";
-const BAND = "#a8d8bf";
+const TRACK = "#E9ECEF";
+const BAND = "#CFE3E8";
 const MARK = INK;
 
 /* Ten rows, not eight. Rows that say "not guided" and "not reported" compete
@@ -1347,7 +1347,7 @@ function headlineSince(headline, pairs) {
    opposite of a beat, and colour would decide that for the reader. The
    variation selector keeps phones from drawing them as coloured emoji. */
 const SYM = { above: "\u25B2\uFE0E", within: "\u25CF\uFE0E", at: "\u25CF\uFE0E", below: "\u25BC\uFE0E" };
-const SHADE = "#f0ebdf";
+const SHADE = "#F3F6FA";
 
 /* "▲ +$0.08", "● within", "▼ −$0.05": where it landed and by how much, from
    the end of the range it passed or from the single figure guided. */
@@ -1616,18 +1616,21 @@ function bare(x) {
    all of them, above the guide is the better side. Costs are never key
    measures, so the colour can never praise a cost overrun. */
 const HERO = {
-  beat: { bg: "#1f4435", fg: "#ffffff", sub: "#cfe0d6" },
-  mixed: { bg: "#3b4a57", fg: "#ffffff", sub: "#cdd5dc" },
-  miss: { bg: "#7a3b22", fg: "#ffffff", sub: "#efd2c4" },
-  none: { bg: "#e6eaee", fg: "#17202a", sub: "#5f6b76" },
+  // One header colour for every outcome, as in Filing Watch; the words say the outcome.
+  beat: { bg: "#0A3742", fg: "#ffffff", sub: "#8FC0CC" },
+  mixed: { bg: "#0A3742", fg: "#ffffff", sub: "#8FC0CC" },
+  miss: { bg: "#0A3742", fg: "#ffffff", sub: "#8FC0CC" },
+  none: { bg: "#0A3742", fg: "#ffffff", sub: "#8FC0CC" },
 };
-const SANS = "-apple-system,'Segoe UI',Helvetica,Arial,sans-serif";
-const SERIF_HEAD = "Georgia,'Times New Roman',serif";
-const RANGE_BAND = "#cfe0d6";
-const LIGHT = "#a9c6b6";
-const PAGE = "#eef1f3";
-const LINE = "#e3e7ea";
-const SOFT = "#5f6b76";
+const SANS = "-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif";
+const SERIF_HEAD = "Georgia,'Iowan Old Style','Times New Roman',serif";
+const RANGE_BAND = "#CFE3E8";
+const LIGHT = "#A8C6CE";
+const PAGE = "#EEEDE9";
+const LINE = "#E4E6E9";
+const SOFT = "#6B7280";
+// A section's name, as Filing Watch prints it: small grey capitals.
+const SECTION = "font-family:" + SANS + ";font-size:12px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:" + SOFT + ";";
 
 /* The figures of a guide, as numbers: its ends, or the single figure twice. */
 function guideEnds(p) {
@@ -2235,13 +2238,12 @@ function renderQuiet(view, opts, company, metrics, sec, quiet, subject, scored) 
 
   /* ---------------- html ---------------- */
   const H = HERO[scored ? scored.kind : quiet.kind];
-  const label = (text) => '<div style="font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:' + SOFT
-    + ';font-weight:700;">' + esc(text) + '</div>';
-  const TONE = { raised: GREEN, cut: "#7a3b22", narrowed: INK, widened: INK };
-  const WORD = { above: GREEN, below: "#7a3b22", within: "#3b4a57", at: "#3b4a57" };
+  const label = (text) => '<div style="' + SECTION + '">' + esc(text) + '</div>';
+  const TONE = { raised: GREEN, cut: "#8C1D18", narrowed: INK, widened: INK };
+  const WORD = { above: GREEN, below: "#8C1D18", within: "#374151", at: "#374151" };
   const h = [];
   h.push('<div style="margin:0;padding:20px 0;background:' + PAGE + ';">');
-  h.push('<div style="max-width:600px;margin:0 auto;background:#ffffff;font-family:' + SANS + ';color:' + INK + ';font-size:15px;line-height:1.45;">');
+  h.push('<div style="max-width:616px;margin:0 auto;background:#ffffff;font-family:' + SANS + ';color:' + INK + ';font-size:15px;line-height:1.45;">');
   h.push('<div style="background:' + H.bg + ';color:' + H.fg + ';padding:22px 22px 20px;">');
   h.push('<div style="font-size:13px;color:' + H.sub + ';">' + esc(company + " (" + view.ticker + ")" + when) + '</div>');
   const heroLines = scored ? scored.lines : quiet.lines;
@@ -2450,10 +2452,10 @@ export function renderEmail(view, options) {
 
   const h = [];
   const H = HERO[d.kind];
-  const heading = (text) => '<div style="font-family:' + SERIF_HEAD + ';font-size:19px;color:' + INK + ';margin:26px 0 6px;">' + esc(text) + '</div>';
+  const heading = (text) => '<div style="' + SECTION + 'margin:30px 0 8px;">' + esc(text) + '</div>';
   const quietLine = (text) => '<div style="font-size:12px;line-height:1.45;color:' + SOFT + ';padding-top:6px;">' + esc(text) + '</div>';
   h.push('<div style="margin:0;padding:20px 0;background:' + PAGE + ';">');
-  h.push('<div style="max-width:600px;margin:0 auto;background:#ffffff;font-family:' + SANS + ';color:' + INK + ';font-size:15px;line-height:1.45;">');
+  h.push('<div style="max-width:616px;margin:0 auto;background:#ffffff;font-family:' + SANS + ';color:' + INK + ';font-size:15px;line-height:1.45;">');
 
   // The hero: the outcome, in its colour.
   h.push('<div style="background:' + H.bg + ';color:' + H.fg + ';padding:24px 22px 22px;">');
@@ -2518,7 +2520,7 @@ export function renderEmail(view, options) {
     h.push(quietLine("Solid: above the guide. Light: within the range. Outlined: below. Dashed: set aside (\u2020), the gap is too large to be sure it is like for like."));
   }
 
-  h.push('<div style="margin-top:30px;font-family:' + SERIF_HEAD + ';font-size:19px;">Full history</div>');
+  h.push('<div style="margin-top:30px;' + SECTION + '">Full history</div>');
   h.push('<div style="font-size:13px;color:' + SOFT + ';margin-top:2px;">Every period, against the last guide in force.</div>');
 
   const th = (head) => '<th align="left" style="padding:0 8px 5px 0;border-bottom:1px solid '
@@ -2590,7 +2592,7 @@ export function renderEmail(view, options) {
 
   if (annual.rows.length) {
     h.push('<div style="margin-top:26px;padding-top:14px;border-top:1px solid ' + LINE + ';">');
-    h.push('<div style="font-family:' + SERIF_HEAD + ';font-size:17px;color:' + INK + ';">Guided once a year</div>');
+    h.push('<div style="' + SECTION + '">Guided once a year</div>');
     h.push('<div style="font-size:14px;color:' + SOFT + ';margin-top:2px;">'
       + 'Results from the company\'s own tagged filings, not from the release.</div>');
 
@@ -2609,7 +2611,7 @@ export function renderEmail(view, options) {
 
   if (alsoRows.length) {
     h.push('<div style="margin-top:26px;padding-top:14px;border-top:1px solid ' + LINE + ';">');
-    h.push('<div style="font-family:' + SERIF_HEAD + ';font-size:17px;color:' + INK + ';">Also guided</div>');
+    h.push('<div style="' + SECTION + '">Also guided</div>');
     h.push('<div style="font-size:14px;color:' + SOFT + ';margin-top:2px;">Too few closed periods to show a record yet.</div>');
     h.push('<table role="presentation" cellpadding="0" cellspacing="0" border="0"'
       + ' style="width:100%;margin-top:10px;border-collapse:collapse;font-family:' + SANS + ';font-variant-numeric:tabular-nums'
@@ -2708,7 +2710,7 @@ export function renderNothingToScore(input, options) {
   const H = HERO.none;
   const h = [];
   h.push('<div style="margin:0;padding:20px 0;background:' + PAGE + ';">');
-  h.push('<div style="max-width:600px;margin:0 auto;background:#ffffff;font-family:' + SANS + ';color:' + INK + ';font-size:15px;line-height:1.45;">');
+  h.push('<div style="max-width:616px;margin:0 auto;background:#ffffff;font-family:' + SANS + ';color:' + INK + ';font-size:15px;line-height:1.45;">');
   h.push('<div style="background:' + H.bg + ';color:' + H.fg + ';padding:24px 22px 22px;">');
   h.push('<div style="font-size:13px;color:' + H.sub + ';">' + esc(company + " (" + input.ticker + ")")
     + (input.filed ? " \u00b7 filed " + esc(longDate(input.filed)) : "") + '</div>');
@@ -2722,7 +2724,7 @@ export function renderNothingToScore(input, options) {
   h.push('<div style="padding:0 22px 26px;">');
   if (guided.length) {
     h.push('<div style="margin-top:24px;padding:2px 0 2px 16px;border-left:3px solid ' + GREEN + ';">');
-    h.push('<div style="font-family:' + SERIF_HEAD + ';font-size:19px;margin:0 0 6px;">What they guide now</div>');
+    h.push('<div style="' + SECTION + 'margin:0 0 8px;">What they guide now</div>');
     for (const g of guided) h.push('<div style="padding:6px 0;font-size:15px;">' + esc(g) + '</div>');
     if (moreGuided) h.push('<div style="font-size:13px;color:' + SOFT + ';">and ' + moreGuided + ' more</div>');
     h.push('</div>');
