@@ -143,10 +143,18 @@ export function formatFigure(guide, unit) {
   }
   // A floor or ceiling travels with the figure ("at least $20.50"), so every
   // place that prints a guide says what the company said.
-  const lead = g.bound === "floor" ? "at least " : g.bound === "ceiling" ? "under " : "";
-  if (hasValue) return lead + formatValue(g.value, unit);
-  if (hasLow) return lead + formatValue(g.low, unit);
-  if (hasHigh) return lead + formatValue(g.high, unit);
+  /* The guide's own shape says the same (Starbucks, 29 Oct 2026): "margin
+     greater than 11.0%" is at least 11%, "nearing 6.0%" up to 6%, and
+     "flat to slight growth" - a growth range with only its low end - is
+     flat or more, not "0%". */
+  const floor = g.bound === "floor" || g.shape === "at_least" || (!hasValue && hasLow && !hasHigh && /range/.test(String(g.shape || "")));
+  const ceiling = g.bound === "ceiling" || g.shape === "at_most" || (!hasValue && hasHigh && !hasLow && /range/.test(String(g.shape || "")));
+  const lead = floor ? "at least " : ceiling ? (g.bound === "ceiling" ? "under " : "up to ") : "";
+  const one = hasValue ? g.value : hasLow ? g.low : hasHigh ? g.high : null;
+  if (one === 0 && unit === "percent" && floor) return "flat or higher";
+  if (one === 0 && unit === "percent" && ceiling) return "flat or lower";
+  if (one === 0 && unit === "percent" && hasValue && !lead) return "flat";
+  if (one !== null) return lead + formatValue(one, unit);
   return "no figure";
 }
 
