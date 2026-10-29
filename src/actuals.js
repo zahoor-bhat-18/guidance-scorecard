@@ -1761,8 +1761,18 @@ export function onlyOneVersion(req, text) {
   const label = String(req.metric_as_written || "");
   if (/adjusted|non-?gaap|\bcore\b|underlying|excluding|\bex\b|comparable|organic/i.test(label)) return false;
   const name = label.toLowerCase().replace(/\([^)]*\)/g, " ").replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
-  if (name.split(" ").length < 2 || /\b(eps|earnings per share|ebitda|ebit|margin|operating income|operating profit|free cash flow|fcf)\b/.test(name)) return false;
-  const t = String(text || "").toLowerCase().replace(/\s+/g, " ");
+  /* Operating income was on this list until Amazon (29 Oct 2026): it guides
+     "Operating income is expected to be between $20.0 billion and $24.0
+     billion" and prints no adjusted operating income anywhere, so thirteen
+     quarters were asked for "the ADJUSTED version" and left unscored. The
+     test below - no adjusted line of the measure in the release - decides it
+     like any other measure. EPS, EBITDA, margins and free cash flow stay off:
+     their adjusted versions are often printed under other names. */
+  if (name.split(" ").length < 2 || /\b(eps|earnings per share|ebitda|ebit|margin|free cash flow|fcf)\b/.test(name)) return false;
+  /* "Excluding F/X" is constant currency, not an adjustment: Amazon's
+     "Operating income -- Y/Y growth (decline), excluding F/X". */
+  const t = String(text || "").toLowerCase().replace(/\s+/g, " ")
+    .replace(/excluding (?:the (?:impact|effect)s? of )?(?:changes in )?(?:f\/x|fx|foreign (?:exchange|currency)(?: rates?)?|currency)/g, "at reported currency");
   if (!t.includes(name)) return false;
   const near = new RegExp("(adjusted|non-?gaap|\\bcore\\b|underlying|excluding)[^.]{0,60}" + name.replace(/ /g, "\\s+")
     + "|" + name.replace(/ /g, "\\s+") + "[^.]{0,40}(adjusted|non-?gaap|excluding)");

@@ -316,12 +316,21 @@ export function renderPreview(record, opts = {}) {
   t.push("THE GUIDE IN FORCE");
   for (const r of pv.rows) t.push("- " + r.measure + ", " + r.period + ": " + r.guide);
   t.push("");
+  /* A measure with nothing scored yet is named once, in one line, not given
+     a heading each (Starbucks, 29 Oct 2026: seven headings, each "No scored
+     history"). Where nothing at all is scored, the line says why. */
+  const scored = pv.rows.filter((r) => r.past && r.past.length), unscored = pv.rows.filter((r) => !(r.past && r.past.length));
+  const unscoredLine = unscored.length
+    ? (scored.length ? "Not scored yet: " : "None of these guides has a result to set it against yet. Not scored yet: ")
+      + Array.from(new Set(unscored.map((r) => r.measure + (r.quarter ? " (quarter)" : " (year)")))).join("; ") + "."
+    : "";
   t.push("HOW RESULTS HAVE LANDED AGAINST THE GUIDE");
-  for (const r of pv.rows) {
+  for (const r of scored) {
     t.push(r.measure + " (" + (r.quarter ? "quarters" : "full years") + ")");
     t.push("   " + recordLine(r));
     if (r.arithmetic) t.push("   " + arithmeticLine(r));
   }
+  if (unscoredLine) t.push(unscoredLine);
   t.push("");
   if (anyArith) t.push("\"Applied to this guide\" is arithmetic on the company's own record: today's guide moved by the gaps it has had before. It is not a forecast.");
   if (anyWords) t.push("* Given in words, read by a fixed rule (low single digits 1-3%, mid 4-6%, high 7-9%; figures written out as words taken as written).");
@@ -358,7 +367,7 @@ export function renderPreview(record, opts = {}) {
   h.push("</table></div>");
 
   h.push('<div style="padding:16px 30px 6px;">' + label("How results have landed against the guide"));
-  for (const r of pv.rows) {
+  for (const r of scored) {
     h.push('<div style="margin-top:14px;font-size:14px;"><b>' + esc(r.measure) + '</b> <span style="color:' + SOFT + ';font-size:12px;">' + esc(r.quarter ? "quarters" : "full years") + "</span>");
     h.push('<div style="color:' + INK + ';font-size:13px;margin-top:3px;">' + esc(recordLine(r)) + "</div>");
     if (r.arithmetic) h.push('<div style="color:' + GREEN + ';font-size:13px;margin-top:3px;">' + esc(arithmeticLine(r)) + "</div>");
@@ -374,6 +383,7 @@ export function renderPreview(record, opts = {}) {
     }
     h.push("</div>");
   }
+  if (unscoredLine) h.push('<div style="margin-top:14px;font-size:13px;color:' + SOFT + ';">' + esc(unscoredLine) + "</div>");
   h.push("</div>");
 
   const notes = [];
