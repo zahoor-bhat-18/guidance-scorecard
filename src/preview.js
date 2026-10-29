@@ -274,6 +274,12 @@ const SERIF = "Georgia,'Iowan Old Style','Times New Roman',serif";
 export function renderPreview(record, opts = {}) {
   const pv = previewOf(record);
   if (!pv || !pv.rows.length) return null;
+  // One measure guided twice for the same period, once in dollars and once as
+  // a percentage (Amazon: net sales $197bn to $202bn, and 9% to 12%): the
+  // percentage is the growth, and says so.
+  const same = new Map();
+  for (const r of pv.rows) { const k = r.measure.toLowerCase() + "|" + r.period; same.set(k, (same.get(k) || 0) + 1); }
+  pv.rows = pv.rows.map((r) => (same.get(r.measure.toLowerCase() + "|" + r.period) > 1 && /%\s*$/.test(String(r.guide)) && !/growth|margin|rate|change|ratio|%/i.test(r.measure) ? { ...r, measure: r.measure + " growth" } : r));
   const company = displayName(record.company || record.ticker);
   const short = company.replace(/,?\s+(Inc|Corp|Corporation|Co|Company|Ltd|plc|Holdings?|Group)\.?$/i, "").replace(/,\s*$/, "");
   /* The report date: the stored earnings-calendar date when there is one

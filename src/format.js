@@ -209,7 +209,9 @@ export function displayName(name) {
   // SEC appends the state of incorporation to some names: "BERKSHIRE
   // HATHAWAY INC /DE/". A reader does not need it.
   // Also without the closing slash: "WELLS FARGO & COMPANY/MN".
-  const s = String(name || "").replace(/\s*\/[A-Za-z]{2,3}\/?\s*$/, "").trim();
+  const s = String(name || "").replace(/\s*\/[A-Za-z]{2,3}\/?\s*$/, "").trim()
+    // "AMAZON COM INC" is Amazon.com, not "Amazon Com".
+    .replace(/\s+COM(?=(?:,?\s+(?:INC|CORP|LTD|CO)\.?)?$)/, ".COM");
   if (!s || /[a-z]/.test(s)) return s;
   return s.split(/(\s+|-)/).map((w) => {
     const bare = w.replace(/[^A-Za-z]/g, "");
