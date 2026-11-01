@@ -234,6 +234,38 @@ export function previewOf(record) {
   return { next, rows: rows.slice(0, 8) };
 }
 
+/* ITS HABIT (1 Nov 2026): the preview's one-word answer, from the measure
+   with the longest scored record (key measures first). Fixed rules:
+     Guides low         above its own guide in three quarters of the periods or more
+     Over-promises      below it in half or more
+     Guides accurately  within or on the figure in 60% or more
+     Mixed record       anything else
+   Three scored periods at least; fewer say nothing. */
+function habitOf(rows) {
+  // Costs, capital spending and tax are not promises about results: a capex guide missed is not over-promising.
+  const cands = rows.filter((r) => r.past && r.past.length >= 3 && !/capex|capital|investment in property|expense|\bcosts?\b|\btax|share count|shares|dividend|repurchase/i.test(r.measure))
+    .sort((a, b) => (a.rank - b.rank) || (b.past.length - a.past.length));
+  const r = cands[0];
+  if (!r) return null;
+  const one = (x) => habitLine(x);
+  const second = cands.find((x) => x !== r && x.measure.toLowerCase() !== r.measure.toLowerCase());
+  const first = one(r), also = second ? one(second) : null;
+  return { word: first.word, line: first.line + (also ? " " + also.line : "") };
+}
+
+function habitLine(r) {
+  const n = r.past.length, c = r.count;
+  const word = c.above / n >= 0.75 ? "Guides low" : c.below / n >= 0.5 ? "Over-promises" : (c.within + c.at) / n >= 0.6 ? "Guides accurately" : "Mixed record";
+  const unit = r.quarter ? "quarters" : "years";
+  const side = word === "Guides low" ? "above" : word === "Over-promises" ? "below" : word === "Guides accurately" ? "within" : null;
+  const k = side === "within" ? c.within + c.at : side ? c[side] : null;
+  const med = r.gaps.length ? median(r.gaps) : null;
+  const line = side
+    ? r.measure + ": " + side + " its own guide in " + k + " of the last " + n + " " + unit + (med != null ? ", by a median of " + gapWords(med, r.unit) + " against the midpoint" : "") + "."
+    : r.measure + ": " + [c.above && "above in " + c.above, (c.within + c.at) && "within in " + (c.within + c.at), c.below && "below in " + c.below].filter(Boolean).join(", ") + " of the last " + n + " " + unit + ".";
+  return { word, line };
+}
+
 function recordLine(r) {
   const n = r.past.length;
   if (!n) return "No scored history for this measure yet.";
@@ -313,6 +345,8 @@ export function renderPreview(record, opts = {}) {
   t.push("");
   t.push(leadAll);
   t.push("");
+  const habit = habitOf(pv.rows);
+  if (habit) { t.push("ITS HABIT: " + habit.word.toUpperCase()); t.push(habit.line); t.push(""); }
   t.push("THE GUIDE IN FORCE");
   for (const r of pv.rows) t.push("- " + r.measure + ", " + r.period + ": " + r.guide);
   t.push("");
@@ -357,6 +391,12 @@ export function renderPreview(record, opts = {}) {
     + '<div style="font:400 13px/1.55 ' + SANS + ';margin-top:10px;color:#B9D6DD">' + esc((dated ? dateLine : "Estimated from last year: it reported the same quarter on " + longDate(pv.next.lastYear) + ".") + (pv.next.interim ? " It guides the full year only: below is the full-year guide in force and how its results have landed against it." : "")) + "</div>"
     + "</div>");
 
+  if (habit) {
+    const tone = habit.word === "Guides low" ? "#1F6E43" : habit.word === "Over-promises" ? "#8C1D18" : habit.word === "Guides accurately" ? "#1D4E89" : "#9A6A0B";
+    h.push('<div style="padding:22px 30px 18px;border-bottom:1px solid #EEF0F2;">' + label("Its habit")
+      + '<div style="font:700 22px/1.3 ' + SANS + ';color:' + tone + ';margin-top:8px;">' + esc(habit.word) + "</div>"
+      + '<div style="font-size:14px;line-height:1.55;color:' + INK + ';margin-top:6px;">' + esc(habit.line) + "</div></div>");
+  }
   h.push('<div style="padding:22px 30px 6px;">' + label("The guide in force"));
   h.push('<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;margin-top:8px;font-size:14px;">');
   for (const r of pv.rows) {
