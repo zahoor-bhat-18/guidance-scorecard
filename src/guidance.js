@@ -52,7 +52,7 @@ const SAME_EVENT_DAYS = 45;
  * For everyone else nothing changes and nothing extra is fetched.
  */
 const EIGHT_KS = new Map();
-async function eightKs(env, cik) {
+async function eightKs(env, cik, opts) {
   const held = EIGHT_KS.get(cik);
   if (held && Date.now() - held.at < 5 * 60 * 1000) return held.list;
 
@@ -99,8 +99,62 @@ async function eightKs(env, cik) {
     }
   }
 
+  // A SUCCESSOR REGISTRANT. A company that reorganises under a new holding
+  // company files under a new CIK from then on, and its earlier releases stay
+  // under the old one: ExxonMobil Holdings (CIK 2115436) from 1 July 2026,
+  // whose preview said it had no record (1 Nov 2026). The 8-K12B that makes
+  // it the successor names the predecessor; that company's 8-Ks up to the
+  // change are read as this company's own, from the predecessor's folder.
+  if (!(opts && opts.noPredecessor)) {
+    const i12 = forms.findIndex((f) => /^8-K12[BG]/.test(String(f)));
+    if (i12 >= 0) {
+      try {
+        const pred = await predecessorCik(env, cik, r.accessionNumber[i12], (r.primaryDocument || [])[i12]);
+        if (pred) {
+          const padded = String(pred).padStart(10, "0");
+          for (const f of await eightKs(env, padded, { noPredecessor: true })) {
+            if (seen.has(f.accession) || !(f.filed <= r.filingDate[i12])) continue;
+            seen.add(f.accession);
+            OWNER.set(f.accession, padded);
+            list.push({ ...f, cik: padded });
+          }
+        }
+      } catch (e) {
+        console.error("Predecessor of " + cik + " could not be read: " + e.message);
+      }
+    }
+  }
+
   EIGHT_KS.set(cik, { at: Date.now(), list });
   return list;
+}
+
+/** The registrant whose folder holds a filing: a predecessor's for its own 8-Ks. */
+const OWNER = new Map();
+export async function ownerOf(env, cik, accession) {
+  if (OWNER.has(accession)) return OWNER.get(accession);
+  // Not listed in this run yet: list the company's 8-Ks once, which names any predecessor's.
+  try { await eightKs(env, cik); } catch (e) { /* the filing is then read from cik's own folder */ }
+  return OWNER.get(accession) || cik;
+}
+
+/** The predecessor registrant's CIK, from the 8-K12B that made this company its successor. */
+async function predecessorCik(env, cik, accession, doc) {
+  if (!doc) return null;
+  const html = await fetchDoc(env, "https://www.sec.gov/Archives/edgar/data/" + Number(cik) + "/" + accession.replace(/-/g, "") + "/" + doc);
+  const text = String(html).replace(/<[^>]+>/g, " ").replace(/&nbsp;|&#160;/g, " ").replace(/&amp;/g, "&").replace(/&#8220;|&#8221;|&ldquo;|&rdquo;/g, '"').replace(/&#\d+;/g, " ").replace(/[\u201C\u201D]/g, '"').replace(/\s+/g, " ");
+  const m = /((?:[A-Z][\w.&'-]*\s+){0,6}[A-Z][\w.&'-]*),\s+an?\s+[A-Za-z ]{2,40}?(?:corporation|company|limited|plc|incorporated)\s*(?:,|\(|and)\s*(?:the\s+)?["(]?\s*predecessor/i.exec(text)
+    || /predecessor (?:registrant|issuer|company)\s*,?\s*([A-Z][A-Za-z0-9.,&' -]{2,80}?)(?:,|\s+\(|\s+a\s)/.exec(text);
+  if (!m) return null;
+  const norm = (x) => String(x).toUpperCase().replace(/\bCORPORATION\b/g, "CORP").replace(/\bINCORPORATED\b/g, "INC").replace(/\bCOMPANY\b/g, "CO").replace(/[^A-Z0-9]+/g, " ").trim();
+  // SEC's own spelling abbreviates ("EXXON MOBIL CORP"); its search finds nothing for "Corporation".
+  const want = norm(m[1].trim());
+  const feed = String(await fetchDoc(env, "https://www.sec.gov/cgi-bin/browse-edgar?company=" + encodeURIComponent(want) + "&type=10-Q&dateb=&owner=include&count=20&action=getcompany&output=atom"));
+  for (const e of feed.matchAll(/<cik>(\d+)<\/cik>[\s\S]*?<conformed-name>([^<]+)</g)) {
+    if (Number(e[1]) !== Number(cik) && norm(e[2]) === want) return Number(e[1]);
+  }
+  const c = /<cik>(\d+)<\/cik>/.exec(feed), n = /<conformed-name>([^<]+)</.exec(feed);
+  return c && n && Number(c[1]) !== Number(cik) && norm(n[1]) === want ? Number(c[1]) : null;
 }
 
 export async function earningsReleases(env, cik, limit) {
@@ -158,6 +212,7 @@ function exhibitRank(name) {
  * those are what gets cut, never the press release.
  */
 async function collectExhibits(env, cik, accession) {
+  cik = await ownerOf(env, cik, accession);
   const noDash = accession.replace(/-/g, "");
   const base = "https://www.sec.gov/Archives/edgar/data/" + Number(cik) + "/" + noDash;
   const dir = await secJson(env, base + "/index.json");

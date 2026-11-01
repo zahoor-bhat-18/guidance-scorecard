@@ -30,7 +30,7 @@
  */
 
 import { secJson } from "./sec.js";
-import { readFiling } from "./guidance.js";
+import { readFiling, ownerOf } from "./guidance.js";
 
 /**
  * The release as text, optionally filtered.
@@ -50,7 +50,7 @@ export async function releaseText(env, cik, accession, opts) {
   const noDash = accession.replace(/-/g, "");
   const dir = await secJson(
     env,
-    "https://www.sec.gov/Archives/edgar/data/" + Number(cik) + "/" + noDash + "/index.json"
+    "https://www.sec.gov/Archives/edgar/data/" + Number(await ownerOf(env, cik, accession)) + "/" + noDash + "/index.json"
   );
   const filesInFiling = ((dir.directory && dir.directory.item) || [])
     .map((f) => ({ name: f.name, bytes: Number(f.size || 0) }));
