@@ -110,6 +110,8 @@ function applied(mid, gap, unit) {
 function computedFigure(x, unit, like) {
   const d = String(like).includes(".") ? Math.min(2, String(like).split(".")[1].length) : 0;
   const places = unitKind(unit) === "per-share" ? 2 : Math.max(d, 1);
+  // Arithmetic on a guide is not precise to the million: three figures are enough ("$13.5bn", not "$13.538bn", AMD 3 Nov 2026).
+  if (unitKind(unit) !== "per-share" && Math.abs(x) >= 1000) { const step = 10 ** (Math.floor(Math.log10(Math.abs(x))) - 2); return formatValue(Math.round(x / step) * step, unit); }
   return formatValue(Number(x.toFixed(places)), unit);
 }
 
@@ -217,7 +219,8 @@ export function previewOf(record) {
         }
       : null;
     rows.push({
-      measure: label,
+      // A footnote marker is not part of the name: "Adjusted (3) diluted EPS" (Pfizer, 3 Nov 2026).
+      measure: String(label).replace(/\s*\(\d{1,2}\)(?=\s|$)/g, "").replace(/\s{2,}/g, " ").trim(),
       period: periodLabel(g.period),
       quarter: isQuarter(g.period),
       guide: formatFigure(g, g.unit) + (g.from_words ? "*" : ""),
@@ -238,6 +241,8 @@ export function previewOf(record) {
    with the longest scored record (key measures first). Fixed rules:
      Guides low         above its own guide in three quarters of the periods or more
      Over-promises      below it in half or more
+     Guides a little low / high  three in four results on one side of the
+                        midpoint, by a median of 1% (0.5pp for a percentage)
      Guides accurately  within or on the figure in 60% or more
      Mixed record       anything else
    Three scored periods at least; fewer say nothing. */
@@ -255,11 +260,21 @@ function habitOf(rows) {
 
 function habitLine(r) {
   const n = r.past.length, c = r.count;
-  const word = c.above / n >= 0.75 ? "Guides low" : c.below / n >= 0.5 ? "Over-promises" : (c.within + c.at) / n >= 0.6 ? "Guides accurately" : "Mixed record";
+  // Inside the range but on one side of its midpoint, time after time, is a habit too: AMD's revenue came in
+  // within its guide in 5 of 8 quarters, every one of them above the midpoint (+1.5% to +7.3%), and the
+  // preview called that "Guides accurately" (3 Nov 2026).
+  const g = r.gaps || [], cut = r.unit === "percent" ? 0.5 : 1, gm = g.length ? median(g) : 0;
+  const leans = g.length >= 3 ? (g.filter((x) => x > 0).length / g.length >= 0.75 && gm >= cut ? "up" : g.filter((x) => x < 0).length / g.length >= 0.75 && gm <= -cut ? "down" : "") : "";
+  let word = c.above / n >= 0.75 ? "Guides low" : c.below / n >= 0.5 ? "Over-promises" : leans === "up" ? "Guides a little low" : leans === "down" ? "Guides a little high" : (c.within + c.at) / n >= 0.6 ? "Guides accurately" : "Mixed record";
   const unit = r.quarter ? "quarters" : "years";
   const side = word === "Guides low" ? "above" : word === "Over-promises" ? "below" : word === "Guides accurately" ? "within" : null;
   const k = side === "within" ? c.within + c.at : side ? c[side] : null;
   const med = r.gaps.length ? median(r.gaps) : null;
+  const unitW = r.quarter ? "quarters" : "years";
+  if (leans && !side) {
+    const kk = g.filter((x) => (leans === "up" ? x > 0 : x < 0)).length;
+    return { word, line: r.measure + ": " + (leans === "up" ? "above" : "below") + " the midpoint of its own guide in " + kk + " of the last " + g.length + " " + unitW + ", by a median of " + gapWords(med, r.unit) + (c[leans === "up" ? "above" : "below"] ? "; " + (leans === "up" ? "above" : "below") + " the range in " + c[leans === "up" ? "above" : "below"] : "; within the range every time") + "." };
+  }
   const line = side
     ? r.measure + ": " + side + " its own guide in " + k + " of the last " + n + " " + unit + (med != null ? ", by a median of " + gapWords(med, r.unit) + " against the midpoint" : "") + "."
     : r.measure + ": " + [c.above && "above in " + c.above, (c.within + c.at) && "within in " + (c.within + c.at), c.below && "below in " + c.below].filter(Boolean).join(", ") + " of the last " + n + " " + unit + ".";
@@ -392,7 +407,7 @@ export function renderPreview(record, opts = {}) {
     + "</div>");
 
   if (habit) {
-    const tone = habit.word === "Guides low" ? "#1F6E43" : habit.word === "Over-promises" ? "#8C1D18" : habit.word === "Guides accurately" ? "#1D4E89" : "#9A6A0B";
+    const tone = habit.word === "Guides low" || habit.word === "Guides a little low" ? "#1F6E43" : habit.word === "Guides a little high" ? "#8C1D18" : habit.word === "Over-promises" ? "#8C1D18" : habit.word === "Guides accurately" ? "#1D4E89" : "#9A6A0B";
     h.push('<div style="padding:22px 30px 18px;border-bottom:1px solid #EEF0F2;">' + label("Its habit")
       + '<div style="font:700 22px/1.3 ' + SANS + ';color:' + tone + ';margin-top:8px;">' + esc(habit.word) + "</div>"
       + '<div style="font-size:14px;line-height:1.55;color:' + INK + ';margin-top:6px;">' + esc(habit.line) + "</div></div>");
