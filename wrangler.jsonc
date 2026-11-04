@@ -29,6 +29,7 @@
     // paths come to this Worker.
     { "pattern": "zahoorbhat.com/subscribe*", "zone_name": "zahoorbhat.com" },
     { "pattern": "zahoorbhat.com/guidance*", "zone_name": "zahoorbhat.com" },
+    { "pattern": "zahoorbhat.com/gcc*", "zone_name": "zahoorbhat.com" },
     { "pattern": "zahoorbhat.com/api/*", "zone_name": "zahoorbhat.com" },
     { "pattern": "zahoorbhat.com/confirm*", "zone_name": "zahoorbhat.com" },
     { "pattern": "zahoorbhat.com/unsubscribe*", "zone_name": "zahoorbhat.com" }
