@@ -76,6 +76,8 @@ function labelKey(guide) {
        had vanished - and no "held" beside its EPS, the line a reader looks
        for first. The word for "this is a guide" is not part of the measure. */
     .replace(/\b(outlook|target|targets|guidance|forecast|expectations?|projected|expected)\b/g, "")
+    // "Revenues" in November, "Revenue guidance" in July: one line (Pfizer, 3 Nov 2026).
+    .replace(/\brevenues\b/g, "revenue")
     .replace(/[^a-z ]/g, " ")
     .replace(/\s+/g, " ")
     .trim();

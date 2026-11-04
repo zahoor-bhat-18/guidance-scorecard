@@ -21,7 +21,7 @@
 import { checkBeforeSend } from "../src/check.js";
 import { readFiling as readFilingForCheck } from "../src/guidance.js";
 import { resolveCik, companyCalendar, shareCountChanges } from "../src/xbrl.js";
-import { earningsReleases, guidanceFrom, guidanceUpdatesBetween, applyUpdates, completedDeals, updateCandidates } from "../src/guidance.js";
+import { earningsReleases, forgetEightKs, guidanceFrom, guidanceUpdatesBetween, applyUpdates, completedDeals, updateCandidates } from "../src/guidance.js";
 import { requestsFrom, actualsFrom } from "../src/actuals.js";
 import { pairUp, refuseAcrossSplit, markOpenAtAnswer, guidesToCarry, oneGuidePerFigure } from "../src/pairing.js";
 import { metricKey, basisSide, markGaapTwins } from "../src/metrics.js";
@@ -220,7 +220,23 @@ async function handle(ticker) {
 
   const { cik, name } = await resolveCik(env, ticker);
   const calendar = await companyCalendar(env, cik);
-  const releases = await earningsReleases(env, cik, 3);
+  let releases = await earningsReleases(env, cik, 3);
+  /* EDGAR's list of a company's filings lags its live feed by some minutes.
+     Woken by the feed for Booking's and AMD's 3 November releases, this
+     script read the list before the new 8-K was on it, found August's
+     release, and stopped: "Already in the record". Neither record was
+     updated, so Release Watch had no guide to set them against. When the
+     feed has just woken it and the newest release in the list is days old
+     and already read, the list is read again, every 90 seconds, for up to
+     eight minutes. */
+  const fresh = process.env.GITHUB_EVENT_NAME === "repository_dispatch";
+  const stale = (r) => r.length && (record.releasesRead || []).some((x) => x.accession === r[0].accession) && (Date.now() - Date.parse(r[0].filed + "T00:00:00Z")) / 86400000 > 2;
+  for (let tries = 0; fresh && tries < 5 && stale(releases); tries++) {
+    console.log(ticker + ": the newest release listed is " + releases[0].filed + ", already read; reading EDGAR's list again in 90 seconds.");
+    await new Promise((res) => setTimeout(res, 90000));
+    forgetEightKs(cik);
+    releases = await earningsReleases(env, cik, 3);
+  }
   if (!releases.length) throw new Error("No earnings releases found.");
 
   const current = releases[0];

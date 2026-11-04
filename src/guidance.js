@@ -52,6 +52,8 @@ const SAME_EVENT_DAYS = 45;
  * For everyone else nothing changes and nothing extra is fetched.
  */
 const EIGHT_KS = new Map();
+/** Forget the listed 8-Ks, so the next call reads EDGAR again. */
+export function forgetEightKs(cik) { if (cik) EIGHT_KS.delete(cik); else EIGHT_KS.clear(); }
 async function eightKs(env, cik, opts) {
   const held = EIGHT_KS.get(cik);
   if (held && Date.now() - held.at < 5 * 60 * 1000) return held.list;
