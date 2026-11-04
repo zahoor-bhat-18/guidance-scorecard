@@ -1,0 +1,67 @@
+name: gcc-watch
+
+# GCC Watch's send, run here for the same reasons as Release Watch: this
+# repository holds the keys and the subscriber list, and its minutes are free.
+# The code is in the private Gcc-watch- repository, read with RW_READ_TOKEN
+# (a fine-grained, read-only token that must include that repository).
+#
+#   schedule          every two hours: each Saudi code someone follows, its
+#                     newest results announcement, sent once
+#   gcc-sample        fired by the Worker when someone confirms: the latest
+#                     results email for one code, to that one address
+#   workflow_dispatch by hand: a test to TEST_EMAIL, or a run for given codes
+#
+# The run log is public. The send script prints counts, never addresses.
+
+on:
+  schedule:
+    - cron: "17 */2 * * *"
+  repository_dispatch:
+    types: [gcc-sample]
+  workflow_dispatch:
+    inputs:
+      symbols:
+        description: "Saudi codes, comma-separated (blank = every code followed)"
+        required: false
+        default: ""
+      test:
+        description: "Test: send to TEST_EMAIL only. Records nothing."
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gcc-watch-${{ github.event.client_payload.email || 'run' }}
+  cancel-in-progress: false
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: zahoor-bhat-18/Gcc-watch-
+          ref: main
+          path: gcc
+          token: ${{ secrets.RW_READ_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build and send
+        working-directory: gcc
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          UNSUB_SECRET: ${{ secrets.UNSUB_SECRET }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          KV_NAMESPACE_ID: ${{ vars.KV_NAMESPACE_ID }}
+          SITE_URL: "https://zahoorbhat.com"
+          REPLY_TO: ${{ vars.REPLY_TO }}
+          POSTAL_ADDRESS: ${{ vars.POSTAL_ADDRESS }}
+          TEST_EMAIL: ${{ vars.TEST_EMAIL }}
+          SAMPLE_TO: ${{ github.event.client_payload.email }}
+        run: |
+          node scripts/send.mjs ${{ inputs.test && '--test' || '' }} "${{ github.event.client_payload.symbols || inputs.symbols }}"

@@ -226,6 +226,8 @@ async function poll(env) {
   if (!env.GITHUB_TOKEN || !env.GITHUB_REPO) return;
 
   const byProduct = await watchedByProduct(env);
+  // GCC Watch's Saudi codes are not EDGAR tickers: the 8-K poller leaves them out.
+  delete byProduct.gcc;
   const watching = Array.from(new Set(Object.values(byProduct).flat()));
   if (!watching.length) return;
 
@@ -968,6 +970,7 @@ export default {
 
         const asked = cleanTickers(body.tickers);
         if (!asked.length) return json({ error: "Name at least one ticker." }, 400);
+        const productsAsked = cleanProducts(body.products);
         if (asked.length > MAX_COMPANIES) return json({ error: "For now you can follow up to " + MAX_COMPANIES + " companies. Remove " + (asked.length - MAX_COMPANIES) + " and try again." }, 400);
         {
           // Counted with what this address already follows, across all three products: 5 companies per address.
@@ -978,6 +981,22 @@ export default {
             const left = Math.max(0, MAX_COMPANIES - have.length);
             return json({ error: "You already follow " + have.length + " " + (have.length === 1 ? "company" : "companies") + ". For now the limit is " + MAX_COMPANIES + ", so you can add " + (left ? left + " more." : "no more.") }, 400);
           }
+        }
+
+        /* GCC WATCH (4 Nov 2026): Saudi Exchange companies by their four-digit
+           code, asked for on their own page (/gcc). Not looked up on EDGAR;
+           the send reads Saudi Exchange, and a code with no results
+           announcements simply never sends. */
+        if (productsAsked.includes("gcc")) {
+          if (productsAsked.length > 1) return json({ error: "Sign up for GCC Watch on its own page." }, 400);
+          const codes = asked.filter((t) => /^\d{4}$/.test(t));
+          const bad = asked.filter((t) => !/^\d{4}$/.test(t));
+          if (!codes.length) return json({ error: "Use the four-digit Saudi Exchange code, e.g. 2222 for Saudi Aramco." }, 400);
+          const token = await hold(env, email, codes, ["gcc"]);
+          const site = env.SITE_URL || url.origin;
+          const mail = confirmationEmail(codes, confirmUrl(site, token), env.POSTAL_ADDRESS, ["gcc"]);
+          await send(env, { to: email, ...mail, from: PRODUCT_NAMES.gcc });
+          return json({ ok: true, following: codes, notCovered: bad, message: "Check your inbox and click the link to confirm." + (bad.length ? " Not Saudi Exchange codes: " + bad.join(", ") + "." : "") });
         }
 
         // Any company registered with the SEC can be followed. One without a
@@ -1079,7 +1098,20 @@ export default {
         const fwList = done.products.includes("filings") ? ((done.addedFor && done.addedFor.filings) || done.added) : [];
         const fits = (t) => (covered.includes(t) ? 1 : 0) + (rwList.includes(t) ? 1 : 0) + (fwList.includes(t) ? 1 : 0);
         const pick = done.added.slice().sort((a, b) => fits(b) - fits(a) || done.added.indexOf(a) - done.added.indexOf(b))[0];
-        const sample = pick
+        // GCC Watch: one sample, the latest results email for the first Saudi code, from its own workflow.
+        if (done.products.includes("gcc") && env.GITHUB_TOKEN) {
+          const first = ((done.addedFor && done.addedFor.gcc) || done.added)[0];
+          if (first) {
+            try {
+              await fetch("https://api.github.com/repos/" + env.GITHUB_REPO + "/dispatches", {
+                method: "POST",
+                headers: { Authorization: "Bearer " + env.GITHUB_TOKEN, Accept: "application/vnd.github+json", "User-Agent": "guidance-scorecard", "Content-Type": "application/json" },
+                body: JSON.stringify({ event_type: "gcc-sample", client_payload: { email: done.email, symbols: first } }),
+              });
+            } catch (e) { /* the subscription stands without the sample */ }
+          }
+        }
+        const sample = pick && !(done.products.length === 1 && done.products[0] === "gcc")
           ? await requestSamples(env, done.email, rwList.includes(pick) ? [pick] : [], covered.includes(pick) ? [pick] : [], fwList.includes(pick) ? [pick] : [])
           : { sent: 0 };
 
@@ -1097,6 +1129,9 @@ export default {
               : "")
           + (done.products.includes("filings")
               ? para("<b>Filing Watch</b>: a briefing arrives when each company files its next 10-Q or 10-K.")
+              : "")
+          + (done.products.includes("gcc")
+              ? para("<b>GCC Watch</b>: an email arrives when each company posts its next results announcement on Saudi Exchange. A sample of its latest one is on its way.")
               : "")
           + (onGuidance && newly.length !== done.added.length
               ? para("You were already following " + done.added.filter((t) => done.alreadyHad.includes(t)).join(", ") + ".")

@@ -81,7 +81,7 @@ export const MAX_COMPANIES = 5;
 export function cleanTickers(raw) {
   const list = String(raw || "")
     .toUpperCase()
-    .split(/[^A-Z.\-]+/)
+    .split(/[^A-Z0-9.\-]+/)
     .map((t) => t.trim())
     .filter((t) => t.length >= 1 && t.length <= 6);
   return Array.from(new Set(list)).slice(0, 25);
@@ -117,8 +117,11 @@ async function writeList(env, list) {
 /* The products a record can follow. "tickers" is Guidance Scorecard's list,
    kept under its old name so the records written before Release Watch
    joined still read; "earnings" is Release Watch's. */
-export const PRODUCTS = { guidance: "tickers", earnings: "earnings", filings: "filings" };
-export const PRODUCT_NAMES = { guidance: "Guidance Scorecard", earnings: "Release Watch", filings: "Filing Watch" };
+// "gcc" (4 Nov 2026): GCC Watch, Saudi-listed companies by their four-digit Saudi Exchange code. Sent from the
+// Gcc-watch- repository's code on a schedule, not by the 8-K poller; it shares the five-company limit.
+export const PRODUCTS = { guidance: "tickers", earnings: "earnings", filings: "filings", gcc: "gcc" };
+export const US_PRODUCTS = ["guidance", "earnings", "filings"];
+export const PRODUCT_NAMES = { guidance: "Guidance Scorecard", earnings: "Release Watch", filings: "Filing Watch", gcc: "GCC Watch" };
 export function cleanProducts(raw) {
   const list = (Array.isArray(raw) ? raw : String(raw || "").split(",")).map((p) => String(p).trim().toLowerCase()).filter((p) => PRODUCTS[p]);
   return list.length ? Array.from(new Set(list)) : ["guidance"];
@@ -211,7 +214,7 @@ export async function followersOf(env, ticker) {
 /** Every ticker anyone follows, on any product, which is what the poller watches for. */
 export async function watchedTickers(env) {
   const by = await watchedByProduct(env);
-  return Array.from(new Set(Object.values(by).flat()));
+  return Array.from(new Set(US_PRODUCTS.flatMap((p) => by[p] || [])));
 }
 
 /** The tickers each product's subscribers follow: { guidance: [...], earnings: [...] }. */
@@ -297,6 +300,7 @@ export function confirmationEmail(tickers, link, postal, products = ["guidance"]
     products.includes("earnings") ? "Release Watch: the earnings release worked through - what the headline numbers do not show, what drove revenue, margin and EPS." : "",
     products.includes("guidance") ? "Guidance Scorecard: how its guidance has compared to what it delivered, and what it has just guided for next." : "",
     products.includes("filings") ? "Filing Watch: what is new, changed or deleted in each 10-Q and 10-K against the filings before it." : "",
+    products.includes("gcc") ? "GCC Watch: each results announcement on Saudi Exchange, set against the company's own past quarters, with its own reasons for the changes." : "",
   ].filter(Boolean);
 
   const text = [
