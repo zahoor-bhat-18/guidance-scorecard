@@ -28,6 +28,10 @@ on:
         description: "Test: send to TEST_EMAIL only. Records nothing."
         type: boolean
         default: true
+      ref:
+        description: "Branch of the GCC Watch code to run (main for the live emails)"
+        required: false
+        default: "main"
       dry:
         description: "Dry run: build the emails into an artifact, send nothing."
         type: boolean
@@ -48,7 +52,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: zahoor-bhat-18/Gcc-watch-
-          ref: main
+          ref: ${{ inputs.ref || 'main' }}
           path: gcc
           token: ${{ secrets.RW_READ_TOKEN }}
       - uses: actions/setup-node@v4
