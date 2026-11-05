@@ -33,6 +33,7 @@ import { pairUp } from "./pairing.js";
 import { revisionsBetween } from "./revisions.js";
 import { releaseText } from "./text.js";
 import { readRecord, listRecords, forEmail, headline } from "./records.js";
+import { GCC_CODES } from "./gcc_codes.js";
 import { renderEmail } from "./email.js";
 import {
   cleanEmail, cleanTickers, hold, confirm, remove, readList, watchedTickers, watchedByProduct, cleanProducts, PRODUCTS, PRODUCT_NAMES, MAX_COMPANIES,
@@ -989,14 +990,16 @@ export default {
            announcements simply never sends. */
         if (productsAsked.includes("gcc")) {
           if (productsAsked.length > 1) return json({ error: "Sign up for GCC Watch on its own page." }, 400);
-          const codes = asked.filter((t) => /^\d{4}$/.test(t));
-          const bad = asked.filter((t) => !/^\d{4}$/.test(t));
-          if (!codes.length) return json({ error: "Use the four-digit Saudi Exchange code, e.g. 2222 for Saudi Aramco." }, 400);
+          // Saudi: any four-digit code. Dubai and Oman: only the companies whose filings we have checked we can read.
+          const ok = (t) => /^\d{4}$/.test(t) || GCC_CODES.has(t);
+          const codes = asked.filter(ok);
+          const bad = asked.filter((t) => !ok(t));
+          if (!codes.length) return json({ error: "Pick companies from the list, or use a four-digit Saudi Exchange code, e.g. 2222 for Saudi Aramco." }, 400);
           const token = await hold(env, email, codes, ["gcc"]);
           const site = env.SITE_URL || url.origin;
           const mail = confirmationEmail(codes, confirmUrl(site, token), env.POSTAL_ADDRESS, ["gcc"]);
           await send(env, { to: email, ...mail, from: PRODUCT_NAMES.gcc });
-          return json({ ok: true, following: codes, notCovered: bad, message: "Check your inbox and click the link to confirm." + (bad.length ? " Not Saudi Exchange codes: " + bad.join(", ") + "." : "") });
+          return json({ ok: true, following: codes, notCovered: bad, message: "Check your inbox and click the link to confirm." + (bad.length ? " Not covered: " + bad.join(", ") + "." : "") });
         }
 
         // Any company registered with the SEC can be followed. One without a
@@ -1131,7 +1134,7 @@ export default {
               ? para("<b>Filing Watch</b>: a briefing arrives when each company files its next 10-Q or 10-K.")
               : "")
           + (done.products.includes("gcc")
-              ? para("<b>GCC Watch</b>: an email arrives when each company posts its next results announcement on Saudi Exchange. A sample of its latest one is on its way.")
+              ? para("<b>GCC Watch</b>: an email arrives when each company posts its next results on its exchange. A sample of its latest one is on its way.")
               : "")
           + (onGuidance && newly.length !== done.added.length
               ? para("You were already following " + done.added.filter((t) => done.alreadyHad.includes(t)).join(", ") + ".")

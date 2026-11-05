@@ -21,7 +21,7 @@ on:
   workflow_dispatch:
     inputs:
       symbols:
-        description: "Saudi codes, comma-separated (blank = every code followed)"
+        description: "Codes, comma-separated: 2222, DFM:EMAAR, MSX:BKMB (blank = every code followed)"
         required: false
         default: ""
       test:
@@ -50,6 +50,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      # Dubai and Oman statements are PDFs, some of them scanned: pdftotext and OCR.
+      - run: sudo apt-get install -y -q poppler-utils tesseract-ocr >/dev/null
       - name: Build and send
         working-directory: gcc
         env:

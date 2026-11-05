@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light">
-<title>GCC Watch — Saudi results emails</title>
-<meta name="description" content="GCC Watch: an email for each results announcement a Saudi-listed company posts on Saudi Exchange, set against its own past quarters.">
+<title>GCC Watch — Gulf results emails</title>
+<meta name="description" content="GCC Watch: an email for each results filing a company listed in Saudi Arabia, Dubai or Oman posts on its exchange, set against its own past quarters.">
 <link rel="canonical" href="https://zahoorbhat.com/gcc">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -163,8 +163,8 @@
 
   <header>
     <div class="mono">GCC Watch · pilot</div>
-    <h1>Saudi results, read the day they are announced.</h1>
-    <p class="sub">When a company you follow posts its quarterly or annual results on Saudi Exchange, you get one email: the quarter against a year ago and last quarter, margins, the last eight quarters, and the company's own reasons for the changes, quoted. No prices, no consensus, no view on the stock.</p>
+    <h1>Gulf results, read the day they are filed.</h1>
+    <p class="sub">When a company you follow posts its quarterly or annual results on Saudi Exchange, Dubai Financial Market or Muscat Stock Exchange, you get one email: the quarter against a year ago and last quarter, margins, the last eight quarters, and the company's own reasons for the changes, quoted. No prices, no consensus, no view on the stock.</p>
   </header>
 
   <section id="follow" style="padding-top:40px">
@@ -175,9 +175,9 @@
       </div>
       <input type="checkbox" name="product" value="gcc" checked hidden>
       <div class="field">
-        <label class="meta" for="tk">Which Saudi companies (up to 5)</label>
+        <label class="meta" for="tk">Which companies (up to 5)</label>
         <div class="combo">
-          <input id="tk" type="text" placeholder="Type a name or code, e.g. Aramco or 2222"
+          <input id="tk" type="text" placeholder="Type a name or code, e.g. Aramco, Emaar or Bank Muscat"
                  autocomplete="off" autocapitalize="characters" spellcheck="false"
                  role="combobox" aria-expanded="false" aria-controls="results" aria-autocomplete="list">
           <ul class="results" id="results" role="listbox"></ul>
@@ -187,12 +187,12 @@
       <div id="human" class="human"></div>
       <button class="submit" id="go" type="button">Subscribe</button>
       <div class="signnote" id="says" role="status" aria-live="polite"></div>
-      <p class="fineprint">Free while in test, for up to 5 companies across all our emails. Main Market companies on Saudi Exchange; type any four-digit code if a company is not in the list. Once you confirm, a sample built from the first company's latest results arrives within minutes. Every email carries a link to leave.</p>
+      <p class="fineprint">Free while in test, for up to 5 companies across all our emails. Companies on Saudi Exchange (type any four-digit code if one is not in the list), Dubai Financial Market and Muscat Stock Exchange. Abu Dhabi and Qatar are not covered yet. Once you confirm, a sample built from the first company's latest results arrives within minutes. Every email carries a link to leave.</p>
     </div>
   </section>
 
   <footer>
-    <span>Built from Saudi Exchange announcements</span>
+    <span>Built from Saudi Exchange, Dubai Financial Market and Muscat Stock Exchange filings</span>
     <span><a href="mailto:hello@zahoorbhat.com">hello@zahoorbhat.com</a></span>
     <span><a href="https://zahoorbhat.com">zahoorbhat.com</a></span>
   </footer>
@@ -203,6 +203,10 @@
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
+  // "DFM:EMAAR" -> "EMAAR"; Saudi codes have no prefix.
+  const bare = (t) => String(t).replace(/^(DFM|MSX):/, "");
+  const market = (t) => /^DFM:/.test(t) ? "Dubai" : /^MSX:/.test(t) ? "Oman" : "Saudi";
+
   function searchCompanies(list, taken, text) {
     const q = String(text || "").trim().toUpperCase();
     if (!q) return [];
@@ -210,8 +214,8 @@
     for (const [t, n] of list) {
       if (taken.has(t)) continue;
       const name = String(n).toUpperCase();
-      if (t === q) exact.push([t, n]);
-      else if (t.startsWith(q) || name.startsWith(q)) starts.push([t, n]);
+      if (t === q || bare(t) === q) exact.push([t, n]);
+      else if (bare(t).startsWith(q) || name.startsWith(q)) starts.push([t, n]);
       else if (q.length >= 2 && name.includes(q)) within.push([t, n]);
       if (exact.length + starts.length + within.length > 400) break;
     }
@@ -236,20 +240,22 @@
     const say = (msg, kind) => { noteEl.textContent = msg; noteEl.className = "signnote " + kind; };
 
     const SAUDI = [["1010", "Riyad Bank"], ["1020", "Bank AlJazira"], ["1030", "Saudi Investment Bank"], ["1050", "Banque Saudi Fransi"], ["1060", "Saudi Awwal Bank (SAB)"], ["1080", "Arab National Bank"], ["1111", "Saudi Tadawul Group"], ["1120", "Al Rajhi Bank"], ["1140", "Bank Albilad"], ["1150", "Alinma Bank"], ["1180", "Saudi National Bank (SNB)"], ["1182", "Amlak"], ["1202", "Mepco"], ["1211", "Ma'aden"], ["1302", "Bawan"], ["1810", "Seera"], ["1830", "Leejam Sports"], ["2001", "Chemanol"], ["2010", "SABIC"], ["2020", "SABIC Agri-Nutrients"], ["2050", "Savola Group"], ["2060", "Tasnee"], ["2081", "Awpt"], ["2082", "ACWA Power"], ["2083", "Marafiq"], ["2190", "Sisco Holding"], ["2210", "Nama Chemicals"], ["2222", "Saudi Aramco"], ["2223", "Luberef"], ["2230", "Chemical"], ["2250", "Siig"], ["2270", "Sadafco"], ["2280", "Almarai"], ["2290", "Yansab"], ["2310", "Sipchem"], ["2330", "Advanced"], ["2350", "Saudi Kayan"], ["2380", "Petro Rabigh"], ["2381", "Arabian Drilling"], ["2382", "Ades"], ["3010", "Acc"], ["3020", "Yc"], ["3030", "Saudi Cement"], ["3050", "Spcc"], ["3060", "Ycc"], ["4001", "Abdullah Al Othaim Markets"], ["4002", "Mouwasat"], ["4003", "Extra"], ["4004", "Dallah Health"], ["4007", "Alhammadi"], ["4009", "Saudi German Health"], ["4013", "Dr. Sulaiman Al Habib"], ["4030", "Bahri"], ["4031", "Sgs"], ["4040", "Saptco"], ["4071", "Alarabia"], ["4082", "Mrna"], ["4100", "Mcdc"], ["4110", "Batic"], ["4142", "Riyadh Cables"], ["4160", "Thimar"], ["4161", "Bindawood"], ["4164", "Nahdi Medical"], ["4190", "Jarir"], ["4200", "Aldrees"], ["4220", "Emaar Ec"], ["4240", "Afg Retail"], ["4250", "Jabal Omar"], ["4262", "Lumi"], ["4263", "Sal"], ["4280", "Kingdom Holding"], ["4300", "Dar Al Arkan"], ["4320", "Alandalus"], ["4321", "Cenomi Centers"], ["4322", "Retal"], ["4323", "Sumou"], ["4325", "Masar"], ["4326", "Almajdiah"], ["5110", "Saudi Electricity"], ["6002", "Herfy Foods"], ["6004", "Catrion"], ["6010", "Nadec"], ["7010", "stc"], ["7020", "Mobily (Etihad Etisalat)"], ["7030", "Zain KSA"], ["7202", "Solutions"], ["7203", "Elm"], ["8010", "Tawuniya"], ["8030", "Medgulf"], ["8210", "Bupa Arabia"], ["8230", "Alrajhi Takaful"]];
-    const load = () => loading || (loading = Promise.resolve().then(() => { companies = SAUDI; }));
+    const DUBAI = [["DFM:AIRARABIA","Air Arabia"], ["DFM:AJMANBANK","Ajman Bank"], ["DFM:ALANSARI","Al Ansari Financial Services"], ["DFM:ALEC","ALEC Holdings"], ["DFM:ALFIRDOUS","Al Firdous Holdings"], ["DFM:ALLIANCE","Alliance Insurance"], ["DFM:ALRAMZ","Al Ramz Corporation Investment and Development"], ["DFM:AMAN","Dubai Islamic Insurance (Aman)"], ["DFM:AMANAT","Amanat Holdings"], ["DFM:AMCREIT","Al Mal Capital REIT"], ["DFM:AMLAK","Amlak Finance"], ["DFM:ARMX","Aramex"], ["DFM:ASNIC","Al Sagr National Insurance"], ["DFM:BHMCAPITAL","BHM Capital Financial Services"], ["DFM:CBD","Commercial Bank of Dubai"], ["DFM:DEWA","Dubai Electricity & Water Authority"], ["DFM:DEYAAR","Deyaar Development"], ["DFM:DFM","Dubai Financial Market"], ["DFM:DIB","Dubai Islamic Bank"], ["DFM:DIC","Dubai Investments"], ["DFM:DIN","Dubai Insurance"], ["DFM:DNIR","Dubai National Insurance & Reinsurance"], ["DFM:DRC","Dubai Refreshment Company"], ["DFM:DSI","Drake & Scull International"], ["DFM:DTC","Dubai Taxi Company"], ["DFM:DU","du (Emirates Integrated Telecom)"], ["DFM:DUBAIRESI","Dubai Residential REIT"], ["DFM:EIBANK","Emirates Investment Bank"], ["DFM:EKTTITAB","Ekttitab Holding (Kuwait)"], ["DFM:EMAAR","Emaar Properties"], ["DFM:EMAARDEV","Emaar Development"], ["DFM:EMIRATESNBD","Emirates NBD"], ["DFM:EMPOWER","Empower (Emirates Central Cooling)"], ["DFM:ERC","Emirates Reem Investments"], ["DFM:ETIHADENERGY","Etihad Energy Holding"], ["DFM:GFH","GFH Financial Group"], ["DFM:IFA","International Financial Advisors (Kuwait)"], ["DFM:ITHMR","Ithmaar Holding"], ["DFM:MASQ","Mashreq Bank"], ["DFM:MAZAYA","Al Mazaya Holding"], ["DFM:MKHZN","Agility Public Warehousing (Kuwait)"], ["DFM:NCC","National Cement Company"], ["DFM:NGI","National General Insurance"], ["DFM:NIH","National International Holding"], ["DFM:NIND","National Industries Group (Kuwait)"], ["DFM:ORIENT","Orient Insurance"], ["DFM:ORIENTTKAFUL","Orient Takaful"], ["DFM:PARKIN","Parkin"], ["DFM:SALAMA","Salama (Islamic Arab Insurance)"], ["DFM:SALAM_BAH","Al Salam Bank Bahrain"], ["DFM:SALIK","Salik"], ["DFM:SHUAA","SHUAA Capital"], ["DFM:SPINNEYS","Spinneys 1961 Holding"], ["DFM:SUKOON","Sukoon Insurance"], ["DFM:SUKOONTAKAFL","Sukoon Takaful"], ["DFM:TAALEEM","Taaleem Holdings"], ["DFM:TABREED","Tabreed (National Central Cooling)"], ["DFM:TALABAT","Talabat Holding"], ["DFM:TECOM","TECOM Group"], ["DFM:UFC","United Foods Company"], ["DFM:UNIONCOOP","Union Coop"], ["DFM:UPP","Union Properties"], ["DFM:WATANIA","Watania International Holding"]];
+    const OMAN = [["MSX:AACT","Al Anwar Ceramic Tiles"], ["MSX:AAIC","Alanwar Investment"], ["MSX:ABOB","Ahli Bank"], ["MSX:ABRJ","Abraj Energy Services"], ["MSX:AFAI","Alfajar Alamia"], ["MSX:AFIC","Arabia Falcon Insurance"], ["MSX:AJSS","Aljazeera Services"], ["MSX:AMAN","Aman Real Estate"], ["MSX:AMAT","Madina Takaful"], ["MSX:AMCI","Almaha Ceramics"], ["MSX:AMII","Al Madina Investment Holding"], ["MSX:AOFS","Al Omaniya Financial Services"], ["MSX:ASCO","Asyad Shipping"], ["MSX:ATMI","Jazeera Steel Products"], ["MSX:BACS","Majan College"], ["MSX:BATP","Albatinah Power"], ["MSX:BKDB","Bank Dhofar"], ["MSX:BKMB","Bank Muscat"], ["MSX:BKNZ","Bank Nizwa"], ["MSX:BKSB","Sohar International Bank"], ["MSX:BRDE","Barka Desalination"], ["MSX:BWPC","Barka Water And Power"], ["MSX:CMII","Construction Material Industries"], ["MSX:DBCI","Dhofar Beverages"], ["MSX:DBIH","Al Batinah Development & Investment Holding"], ["MSX:DFIN","Dhofar Foods And Investment"], ["MSX:DGEN","Dhofar Generating"], ["MSX:DICS","Dhofar Insurance"], ["MSX:DIDI","Dhofar International Development & Investment"], ["MSX:DTCS","Dhofar Tourism"], ["MSX:EVGF","Epicure Vision GCC"], ["MSX:FINC","Financial Corporation"], ["MSX:FSCI","Financial Services"], ["MSX:GECS","Galfar Engineering & Contracting"], ["MSX:GFIC","Global Financial Investment Holding"], ["MSX:GHOS","Gulf Hotels Oman"], ["MSX:GICI","Gulf International Chemicals"], ["MSX:GMPI","Gulf Mushroom Products"], ["MSX:HMCI","Hotels Management Company International"], ["MSX:JREF","Jabal Reif"], ["MSX:LIVA","Liva Group"], ["MSX:MCDE","Muscat City Desalination"], ["MSX:MCTI","Muscat Insurance"], ["MSX:MFCI","Muscat Finance"], ["MSX:MGMC","Muscat Gases"], ["MSX:MHAS","Al Maha Petroleum Products Marketing"], ["MSX:MSPW","Musandam Power"], ["MSX:MTMI","Muscat Thread Mills"], ["MSX:NAPI","National Aluminium Products"], ["MSX:NBII","National Biscuit Industries Limited"], ["MSX:NBOB","National Bank Oman"], ["MSX:NDTI","National Detergent"], ["MSX:NFCI","National Finance"], ["MSX:NGCI","National Gas"], ["MSX:NMWI","National Mineral Water"], ["MSX:NRED","National Real Estate Development & Investments"], ["MSX:OAB","Oman Arab Bank"], ["MSX:OCAI","Oman Cables Industry"], ["MSX:OCCI","Oman Chromite"], ["MSX:OCHL","Oman Chlorine"], ["MSX:OCOI","Oman Cement"], ["MSX:OEFI","Omani Euro Food Industries"], ["MSX:OEIO","Oman & Emirates Investment Holding"], ["MSX:OETI","Oman Education & Training Investments"], ["MSX:OFCI","Oman Fisheries"], ["MSX:OFMI","Oman Flour Mills"], ["MSX:OMIF","OMIFCO"], ["MSX:OMVS","Ominvest"], ["MSX:ONES","Oman National Engineering & Investment"], ["MSX:OOMS","Oman Oil Marketing"], ["MSX:OPCI","Oman Packaging"], ["MSX:OQBI","OQ Base Industries"], ["MSX:OQEP","OQ Exploration And Production"], ["MSX:OQGN","OQ Gas Networks"], ["MSX:OQIC","Oman Qatar Insurance"], ["MSX:ORCI","Oman Refreshment"], ["MSX:ORDS","Ooredoo Oman"], ["MSX:OTEL","Oman Telecom"], ["MSX:OUIC","Oman United Insurance"], ["MSX:PHPC","Phoenix Power"], ["MSX:PRFD","The Pearl Reif"], ["MSX:RCCI","Raysut Cement"], ["MSX:RNSS","Renaissance Services"], ["MSX:SAHS","Sahara Hospitality"], ["MSX:SFMI","Salalah Mills"], ["MSX:SHPS","Sohar Power"], ["MSX:SHRQ","Sharqiyah Desalination"], ["MSX:SIHC","Al Sharqiya Investment Holding"], ["MSX:SMNP","SMN Power Holding"], ["MSX:SOMS","Shell Oman Marketing"], ["MSX:SPFI","Asaffa Foods"], ["MSX:SPSI","Salalah Port Services"], ["MSX:SSPW","Sembcorp Salalah"], ["MSX:SUWP","Al Suwadi Power"], ["MSX:TAOI","Takaful Oman"], ["MSX:TFCI","Taageer Finance"], ["MSX:UBAR","Ubar Hotels And Resorts"], ["MSX:UFCI","United Finance"], ["MSX:VOES","Voltamp Energy"]];
+    const load = () => loading || (loading = Promise.resolve().then(() => { companies = SAUDI.concat(DUBAI, OMAN); }));
     tkEl.addEventListener("focus", load, { once: true });
 
     function renderResults() {
       const typed = tkEl.value.trim();
       if (!matches.length) {
-        listEl.innerHTML = typed ? '<li class="noresult">No company matches that. Type its four-digit code.</li>' : "";
+        listEl.innerHTML = typed ? '<li class="noresult">No company matches that. For Saudi, type its four-digit code.</li>' : "";
         listEl.className = typed ? "results open" : "results";
         tkEl.setAttribute("aria-expanded", typed ? "true" : "false");
         return;
       }
       listEl.innerHTML = matches.map(([t, n], i) =>
         '<li role="option" data-i="' + i + '" aria-selected="' + (i === cursor) + '">'
-        + '<span class="tk">' + esc(t) + '</span><span class="nm">' + esc(n) + "</span></li>").join("");
+        + '<span class="tk">' + esc(bare(t)) + '</span><span class="nm">' + esc(n) + " · " + market(t) + "</span></li>").join("");
       listEl.className = "results open";
       tkEl.setAttribute("aria-expanded", "true");
     }
@@ -265,7 +271,7 @@
 
     function renderPicked() {
       pickEl.innerHTML = picked.map(([t, n], i) =>
-        '<li><span class="tk">' + esc(t) + '</span><span class="nm">' + esc(n) + gsNote(t) + "</span>"
+        '<li><span class="tk">' + esc(bare(t)) + '</span><span class="nm">' + esc(n) + " · " + market(t) + gsNote(t) + "</span>"
         + '<button type="button" data-rm="' + i + '" aria-label="Remove ' + esc(t) + '">&times;</button></li>').join("");
     }
 
