@@ -28,6 +28,10 @@ on:
         description: "Test: send to TEST_EMAIL only. Records nothing."
         type: boolean
         default: true
+      dry:
+        description: "Dry run: build the emails into an artifact, send nothing."
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -64,6 +68,13 @@ jobs:
           REPLY_TO: ${{ vars.REPLY_TO }}
           POSTAL_ADDRESS: ${{ vars.POSTAL_ADDRESS }}
           TEST_EMAIL: ${{ vars.TEST_EMAIL }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           SAMPLE_TO: ${{ github.event.client_payload.email }}
         run: |
-          node scripts/send.mjs ${{ inputs.test && '--test' || '' }} "${{ github.event.client_payload.symbols || inputs.symbols }}"
+          node scripts/send.mjs ${{ inputs.dry && '--dry' || (inputs.test && '--test' || '') }} "${{ github.event.client_payload.symbols || inputs.symbols }}"
+      - uses: actions/upload-artifact@v4
+        if: ${{ inputs.dry }}
+        with:
+          name: gcc-dry
+          path: gcc/out/
+          retention-days: 3
