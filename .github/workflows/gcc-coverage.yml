@@ -1,0 +1,53 @@
+name: gcc-coverage
+
+# Coverage test for GCC Watch: builds every company's email for one market
+# and records which ones work. Sends nothing; no addresses involved. Run here
+# because this repository's minutes are free. Code: private Gcc-watch- repo.
+#
+#   market TADAWUL with no codes: every Saudi company that filed results this year
+
+on:
+  workflow_dispatch:
+    inputs:
+      market:
+        description: "TADAWUL, DFM, ADX or MSX"
+        required: true
+        default: "TADAWUL"
+      codes:
+        description: "Codes, space-separated (blank = all, Saudi only)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: zahoor-bhat-18/Gcc-watch-
+          ref: main
+          path: gcc
+          token: ${{ secrets.RW_READ_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: sudo apt-get install -y -q poppler-utils tesseract-ocr >/dev/null
+      - name: Company list
+        working-directory: gcc
+        run: |
+          if [ -n "${{ inputs.codes }}" ]; then echo "${{ inputs.codes }}" > codes.txt;
+          elif [ "${{ inputs.market }}" = "TADAWUL" ]; then node scripts/saudi_codes.mjs 2026-01-01 > codes.txt; fi
+          wc -w codes.txt
+      - name: Coverage
+        working-directory: gcc
+        run: node scripts/coverage.mjs ${{ inputs.market }} coverage.jsonl $(cat codes.txt)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-${{ inputs.market }}
+          path: gcc/coverage.jsonl
+          retention-days: 7
