@@ -1,3 +1,4 @@
+import { gccLabel } from "./gcc_codes.js";
 /**
  * Subscribers.
  *
@@ -294,6 +295,7 @@ export async function send(env, { to, subject, html, text, unsubscribeUrl: unsub
  * gives someone whose address was typed in by a stranger nothing to judge.
  */
 export function confirmationEmail(tickers, link, postal, products = ["guidance"]) {
+  if (products.length === 1 && products[0] === "gcc") return gccConfirmationEmail(tickers, link, postal);
   const list = tickers.join(", ");
   const names = products.map((p) => PRODUCT_NAMES[p]).filter(Boolean);
   const what = names.join(" and ");
@@ -335,6 +337,41 @@ export function confirmationEmail(tickers, link, postal, products = ["guidance"]
   ].join("\n");
 
   return { subject: "Confirm: " + list + " on " + what, html, text };
+}
+
+/* GCC Watch's confirmation (5 Nov 2026): companies by name and exchange, and what happens after the click. */
+function gccConfirmationEmail(codes, link, postal) {
+  const items = codes.map(gccLabel);
+  const first = items[0].replace(/ \(.*$/, "");
+  const text = [
+    "Please confirm your GCC Watch subscription for:",
+    ...items.map((x) => "- " + x),
+    "",
+    "Confirm here:",
+    link,
+    "",
+    "Once you confirm, a sample built from " + first + "'s latest results arrives within a few minutes. After that you get one email each time a company you follow posts its quarterly or annual results: the quarter against a year ago and last quarter, margins, recent quarters, and the company's own reasons for the changes.",
+    "",
+    "Didn't sign up? Ignore this email. Nothing is saved unless you confirm, and the link expires in 48 hours.",
+    "",
+    "Questions: just reply, or write to hello@zahoorbhat.com.",
+    postal ? "\n" + postal : "",
+  ].join("\n");
+  const p = (x, style) => '<p style="margin:' + (style || "18px 0 0;") + '">' + x + "</p>";
+  const html = [
+    '<div style="background:#F1F0EA;padding:26px 0;">',
+    '<div style="max-width:520px;margin:0 auto;padding:0 20px;font-family:Georgia,serif;color:#16281F;font-size:16px;line-height:1.6;">',
+    '<div style="font-family:ui-monospace,Menlo,monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#5B7166;">GCC Watch</div>',
+    p("Please confirm your GCC Watch subscription for:"),
+    items.map((x) => '<div style="margin:6px 0 0;"><b>' + x.replace(/ \(/, "</b> (")  + "</div>").join(""),
+    '<p style="margin:20px 0 0;"><a href="' + link + '" style="background:#16281F;color:#F1F0EA;text-decoration:none;padding:12px 20px;border-radius:8px;display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;">Confirm subscription</a></p>',
+    '<p style="margin:20px 0 0;color:#3E5248;font-size:15px;">Once you confirm, a sample built from ' + first + "'s latest results arrives within a few minutes. After that you get one email each time a company you follow posts its quarterly or annual results: the quarter against a year ago and last quarter, margins, recent quarters, and the company's own reasons for the changes.</p>",
+    '<p style="margin:18px 0 0;color:#5B7166;font-size:13px;">Didn\'t sign up? Ignore this email. Nothing is saved unless you confirm, and the link expires in 48 hours.</p>',
+    '<p style="margin:18px 0 0;color:#5B7166;font-size:13px;">Questions: just reply, or write to <a href="mailto:hello@zahoorbhat.com" style="color:#5B7166;">hello@zahoorbhat.com</a>.</p>',
+    postal ? '<p style="margin:16px 0 0;color:#5B7166;font-size:12px;">' + postal + "</p>" : "",
+    "</div></div>",
+  ].join("\n");
+  return { subject: "Confirm your GCC Watch subscription", html, text };
 }
 
 /* A page, not JSON. These links are clicked in a mail client. */

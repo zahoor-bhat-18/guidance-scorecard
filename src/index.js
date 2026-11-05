@@ -33,7 +33,7 @@ import { pairUp } from "./pairing.js";
 import { revisionsBetween } from "./revisions.js";
 import { releaseText } from "./text.js";
 import { readRecord, listRecords, forEmail, headline } from "./records.js";
-import { GCC_CODES } from "./gcc_codes.js";
+import { GCC_CODES, gccLabel } from "./gcc_codes.js";
 import { renderEmail } from "./email.js";
 import {
   cleanEmail, cleanTickers, hold, confirm, remove, readList, watchedTickers, watchedByProduct, cleanProducts, PRODUCTS, PRODUCT_NAMES, MAX_COMPANIES,
@@ -1078,7 +1078,7 @@ export default {
 
         const newly = done.added.filter((t) => !done.alreadyHad.includes(t));
         const onGuidance = done.products.includes("guidance");
-        const following = done.products.map((p) => PRODUCT_NAMES[p] + ": " + (done.record[PRODUCTS[p]] || []).join(", "));
+        const following = done.products.map((p) => PRODUCT_NAMES[p] + ": " + (done.record[PRODUCTS[p]] || []).map((t) => (p === "gcc" ? gccLabel(t) : t)).join(", "));
 
         // Where each ticker in THIS signup stands - not only the new ones.
         // Someone told "today's limit is reached, sign up again tomorrow" is
