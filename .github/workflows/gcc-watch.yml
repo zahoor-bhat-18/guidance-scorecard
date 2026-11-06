@@ -77,7 +77,7 @@ jobs:
         run: |
           node scripts/send.mjs ${{ inputs.dry && '--dry' || (inputs.test && '--test' || '') }} "${{ github.event.client_payload.symbols || inputs.symbols }}"
       - uses: actions/upload-artifact@v4
-        if: ${{ inputs.dry }}
+        if: ${{ inputs.dry || inputs.test }}
         with:
           name: gcc-dry
           path: gcc/out/
