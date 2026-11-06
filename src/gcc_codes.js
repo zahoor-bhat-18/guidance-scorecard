@@ -12,3 +12,7 @@ export function gccLabel(code) {
   const name = GCC_NAMES[code];
   return name ? name + " (" + sym + ", " + where + ")" : where + " code " + sym;
 }
+
+// Saudi codes whose results we could not read in the coverage test of 5 Nov 2026: funds and REITs (43xx, 47xx,
+// 93xx-94xx) and a few companies with unusual filings. Any other four-digit code is accepted, so new listings work.
+export const GCC_SAUDI_BLOCKED = new Set(["2180", "2210", "2250", "3001", "3020", "4050", "4083", "4140", "4160", "4330", "4331", "4332", "4333", "4334", "4335", "4336", "4337", "4338", "4339", "4340", "4342", "4344", "4345", "4346", "4347", "4348", "4349", "4350", "4700", "4701", "4702", "4703", "6050", "8270", "9300", "9400", "9401", "9402", "9403", "9404", "9405", "9406", "9407", "9408", "9409", "9410", "9411", "9412", "9587", "9614", "9616"]);

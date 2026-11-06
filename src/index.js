@@ -33,7 +33,7 @@ import { pairUp } from "./pairing.js";
 import { revisionsBetween } from "./revisions.js";
 import { releaseText } from "./text.js";
 import { readRecord, listRecords, forEmail, headline } from "./records.js";
-import { GCC_CODES, gccLabel } from "./gcc_codes.js";
+import { GCC_CODES, GCC_SAUDI_BLOCKED, gccLabel } from "./gcc_codes.js";
 import { renderEmail } from "./email.js";
 import {
   cleanEmail, cleanTickers, hold, confirm, remove, readList, watchedTickers, watchedByProduct, cleanProducts, PRODUCTS, PRODUCT_NAMES, MAX_COMPANIES,
@@ -991,7 +991,7 @@ export default {
         if (productsAsked.includes("gcc")) {
           if (productsAsked.length > 1) return json({ error: "Sign up for GCC Watch on its own page." }, 400);
           // Saudi: any four-digit code. Dubai and Oman: only the companies whose filings we have checked we can read.
-          const ok = (t) => /^\d{4}$/.test(t) || GCC_CODES.has(t);
+          const ok = (t) => (/^\d{4}$/.test(t) && !GCC_SAUDI_BLOCKED.has(t)) || GCC_CODES.has(t);
           const codes = asked.filter(ok);
           const bad = asked.filter((t) => !ok(t));
           if (!codes.length) return json({ error: "Pick companies from the list, or use a four-digit Saudi Exchange code, e.g. 2222 for Saudi Aramco." }, 400);
