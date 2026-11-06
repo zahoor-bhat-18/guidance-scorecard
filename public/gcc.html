@@ -117,6 +117,13 @@
   button.submit:hover:not(:disabled){background-color:#1F8A5C}
   button.submit:disabled{background-color:#9BA79F;cursor:not-allowed}
   .fineprint{font:400 13px/1.55 "Inter",sans-serif;color:#5B7166;margin:11px 0 0}
+  .coverage{margin:16px 0 0;padding:14px 16px;border:1px solid #D8DDD6;border-radius:10px;background:#FAFAF6}
+  .coverage .cov-title{font:600 11px/1.4 ui-monospace,Menlo,monospace;letter-spacing:.14em;text-transform:uppercase;color:#5B7166;margin-bottom:8px}
+  .coverage table{width:100%;border-collapse:collapse;font:400 14px/1.5 "Inter",sans-serif;color:#16281F}
+  .coverage td{padding:4px 0;border-bottom:1px solid #E6E9E3}
+  .coverage td:nth-child(2),.coverage td:nth-child(3){text-align:right;padding-left:10px;white-space:nowrap}
+  .coverage td:nth-child(3){font-weight:600;width:44px}
+  .coverage p{font:400 12.5px/1.55 "Inter",sans-serif;color:#5B7166;margin:10px 0 0}
   .signnote{font:400 14px/1.5 "Inter",sans-serif;margin:12px 0 0;padding:11px 14px;display:none;border-radius:6px}
   .signnote.err{display:block;background-color:#FBF3F2;color:#A33B2E;border-left:2px solid #A33B2E}
   .signnote.ok{display:block;background-color:#F1F7F3;color:#1F8A5C;border-left:2px solid #1F8A5C}
@@ -187,7 +194,17 @@
       <div id="human" class="human"></div>
       <button class="submit" id="go" type="button">Subscribe</button>
       <div class="signnote" id="says" role="status" aria-live="polite"></div>
-      <p class="fineprint">Free while in test, for up to 5 companies across all our emails. Companies on Saudi Exchange (type any four-digit code if one is not in the list), Dubai Financial Market and Muscat Stock Exchange. Abu Dhabi and Qatar are not covered yet. Once you confirm, a sample built from the first company's latest results arrives within minutes. Every email carries a link to leave.</p>
+      <div class="coverage">
+        <div class="cov-title">What we cover</div>
+        <table>
+          <tr><td>Saudi Exchange</td><td>366 of 380 companies</td><td>96%</td></tr>
+          <tr><td>Dubai Financial Market</td><td>63 of 67</td><td>94%</td></tr>
+          <tr><td>Muscat Stock Exchange</td><td>99 of 103</td><td>96%</td></tr>
+          <tr><td>Abu Dhabi, Qatar, Kuwait, Bahrain</td><td>not yet</td><td>–</td></tr>
+        </table>
+        <p>Counted from a test of every listed company's latest results (November 2026); funds and REITs are not included. Dubai and Oman emails are built from the full financial statements, so they carry the balance sheet, cash flow and notes. Saudi emails are built from the results announcement and the company's own release, so they have less balance sheet and cash flow detail.</p>
+      </div>
+      <p class="fineprint">Free while in test, for up to 5 companies across all our emails. For Saudi, type any four-digit code if a company is not in the list. Once you confirm, a sample built from the first company's latest results arrives within minutes. Every email carries a link to leave.</p>
     </div>
   </section>
 
