@@ -36,7 +36,7 @@ import { readRecord, listRecords, forEmail, headline } from "./records.js";
 import { GCC_CODES, GCC_SAUDI_BLOCKED, gccLabel } from "./gcc_codes.js";
 import { renderEmail } from "./email.js";
 import {
-  cleanEmail, cleanTickers, hold, confirm, usedConfirmation, remove, readList, watchedTickers, watchedByProduct, cleanProducts, PRODUCTS, PRODUCT_NAMES, MAX_COMPANIES,
+  cleanEmail, cleanTickers, hold, confirm, usedConfirmation, pendingConfirmation, remove, readList, watchedTickers, watchedByProduct, cleanProducts, PRODUCTS, PRODUCT_NAMES, MAX_COMPANIES,
   confirmUrl, unsubscribeUrl, send, confirmationEmail, signatureValid, page,
 } from "./subscribers.js";
 
@@ -1069,6 +1069,18 @@ export default {
       if (!token) return page("Confirm", "<h1>Something is missing</h1><p>That link is incomplete.</p>");
 
       try {
+        /* Opening the link shows a button; only the click (a POST) subscribes. Work mail systems open links
+           in emails to check them, which confirmed sign-ups nobody clicked (9 Nov 2026). Links already sent
+           work the same way: they open this page. */
+        if (request.method !== "POST") {
+          const pend = await pendingConfirmation(env, token);
+          if (pend) {
+            const what = cleanProducts(pend.products).map((p) => PRODUCT_NAMES[p] + ": " + (pend.tickers || []).map((t) => (p === "gcc" ? gccLabel(t) : t)).join(", "));
+            return page("Confirm", "<h1>Confirm your subscription</h1>" + what.map((x) => "<p>" + x + "</p>").join("")
+              + '<form method="post" action="/confirm?t=' + encodeURIComponent(token) + '"><button type="submit">Confirm</button></form>'
+              + "<p style=\"font-size:13px\">If you did not sign up, close this page and nothing happens.</p>");
+          }
+        }
         const done = await confirm(env, token);
         if (!done) {
           // Used already: the person clicked twice, or their mail system opened the link first. They are subscribed.

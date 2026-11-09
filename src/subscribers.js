@@ -155,6 +155,12 @@ export async function usedConfirmation(env, token) {
   return raw ? JSON.parse(raw) : null;
 }
 
+/* Is this link still waiting to be confirmed? Reads without using it up. */
+export async function pendingConfirmation(env, token) {
+  const raw = await env.CACHE.get(PENDING_PREFIX + token);
+  return raw ? JSON.parse(raw) : null;
+}
+
 export async function confirm(env, token) {
   const raw = await env.CACHE.get(PENDING_PREFIX + token);
   if (!raw) return null;
