@@ -24,6 +24,7 @@ import { gccLabel } from "./gcc_codes.js";
 
 const LIST_KEY = "subscribers";
 const PENDING_PREFIX = "pending:";
+const USED_PREFIX = "confirmed:";
 const PENDING_TTL = 48 * 60 * 60;
 
 /* ------------------------------------------------------------------ *
@@ -148,6 +149,12 @@ export async function hold(env, email, tickers, products = ["guidance"], skip = 
  * later for WMT wants both - the other product overwrote the first list and it
  * was a real bug, not a theoretical one.
  */
+/** A confirmation link already used: { email, products, at }, or null. */
+export async function usedConfirmation(env, token) {
+  const raw = await env.CACHE.get(USED_PREFIX + token);
+  return raw ? JSON.parse(raw) : null;
+}
+
 export async function confirm(env, token) {
   const raw = await env.CACHE.get(PENDING_PREFIX + token);
   if (!raw) return null;
@@ -180,6 +187,9 @@ export async function confirm(env, token) {
 
   await writeList(env, list);
   await env.CACHE.delete(PENDING_PREFIX + token);
+  // Remember the link was used, for a week: a second click (or a mail scanner that opened it first) then
+  // shows "already confirmed", not "expired".
+  await env.CACHE.put(USED_PREFIX + token, JSON.stringify({ email: pending.email, products, at: new Date().toISOString() }), { expirationTtl: 7 * 86400 });
 
   const had = (p) => (existing && existing[PRODUCTS[p]]) || [];
   return {

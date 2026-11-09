@@ -36,7 +36,7 @@ import { readRecord, listRecords, forEmail, headline } from "./records.js";
 import { GCC_CODES, GCC_SAUDI_BLOCKED, gccLabel } from "./gcc_codes.js";
 import { renderEmail } from "./email.js";
 import {
-  cleanEmail, cleanTickers, hold, confirm, remove, readList, watchedTickers, watchedByProduct, cleanProducts, PRODUCTS, PRODUCT_NAMES, MAX_COMPANIES,
+  cleanEmail, cleanTickers, hold, confirm, usedConfirmation, remove, readList, watchedTickers, watchedByProduct, cleanProducts, PRODUCTS, PRODUCT_NAMES, MAX_COMPANIES,
   confirmUrl, unsubscribeUrl, send, confirmationEmail, signatureValid, page,
 } from "./subscribers.js";
 
@@ -1071,6 +1071,15 @@ export default {
       try {
         const done = await confirm(env, token);
         if (!done) {
+          // Used already: the person clicked twice, or their mail system opened the link first. They are subscribed.
+          const used = await usedConfirmation(env, token);
+          if (used) {
+            const list = await readList(env);
+            const rec = list[used.email] || {};
+            const following = (used.products || []).map((p) => PRODUCT_NAMES[p] + ": " + (rec[PRODUCTS[p]] || []).map((t) => (p === "gcc" ? gccLabel(t) : t)).join(", "));
+            return page("Confirmed", "<h1>You are already confirmed</h1>" + following.map((x) => "<p>" + x + "</p>").join("")
+              + "<p>This link was used already, so there is nothing more to do. Emails go to the address you signed up with; if a sample has not arrived, check the spam or promotions folder.</p>");
+          }
           return page("Confirm",
             "<h1>That link has expired</h1><p>Confirmation links last 48 hours. "
             + '<a href="' + (env.SITE_URL || "/") + '">Sign up again</a> and we will send a fresh one.</p>');
