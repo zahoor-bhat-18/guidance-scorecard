@@ -42,7 +42,9 @@ if (process.env.CLEAR === "CLEAR") {
   process.exit(0);
 }
 
-const mask = (e) => { const [u, d] = String(e).split("@"); return u.slice(0, 2) + "***@" + (d || "?"); };
+// The log is public: two letters of the name, and the domain only if it is a public mail service.
+const PUBLIC_MAIL = /^(gmail|googlemail|yahoo|outlook|hotmail|live|icloud|me|proton|protonmail|aol)\./i;
+const mask = (e) => { const [u, d] = String(e).split("@"); return u.slice(0, 2) + "***@" + (d && PUBLIC_MAIL.test(d) ? d : "(work domain)"); };
 const rows = Object.entries(list);
 console.log("Addresses on the shared list: " + rows.length);
 const by = (k) => rows.filter(([, v]) => Array.isArray(v[k]) && v[k].length).length;
