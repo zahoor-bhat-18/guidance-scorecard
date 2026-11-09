@@ -1114,13 +1114,23 @@ export default {
         if (done.products.includes("gcc") && env.GITHUB_TOKEN) {
           const first = ((done.addedFor && done.addedFor.gcc) || done.added)[0];
           if (first) {
-            try {
-              await fetch("https://api.github.com/repos/" + env.GITHUB_REPO + "/dispatches", {
-                method: "POST",
-                headers: { Authorization: "Bearer " + env.GITHUB_TOKEN, Accept: "application/vnd.github+json", "User-Agent": "guidance-scorecard", "Content-Type": "application/json" },
-                body: JSON.stringify({ event_type: "gcc-sample", client_payload: { email: done.email, symbols: first } }),
-              });
-            } catch (e) { /* the subscription stands without the sample */ }
+            // Two tries; a failure is recorded (without the address) so a missing first email can be traced.
+            // A confirmation on 9 Nov 2026 sent no sample and left no trace of why.
+            let status = "no answer";
+            for (let attempt = 0; attempt < 2; attempt++) {
+              try {
+                const r = await fetch("https://api.github.com/repos/" + env.GITHUB_REPO + "/dispatches", {
+                  method: "POST",
+                  headers: { Authorization: "Bearer " + env.GITHUB_TOKEN, Accept: "application/vnd.github+json", "User-Agent": "guidance-scorecard", "Content-Type": "application/json" },
+                  body: JSON.stringify({ event_type: "gcc-sample", client_payload: { email: done.email, symbols: first } }),
+                });
+                status = String(r.status);
+                if (r.ok) break;
+              } catch (e) { status = e.message; }
+            }
+            if (!/^2/.test(status)) {
+              try { await env.CACHE.put("gcc:sample-failed:" + new Date().toISOString(), JSON.stringify({ symbol: first, status }), { expirationTtl: 90 * 86400 }); } catch (e) { /* the subscription stands without the sample */ }
+            }
           }
         }
         const sample = pick && !(done.products.length === 1 && done.products[0] === "gcc")
