@@ -45,12 +45,15 @@ if (process.env.CLEAR === "CLEAR") {
 const mask = (e) => { const [u, d] = String(e).split("@"); return u.slice(0, 2) + "***@" + (d || "?"); };
 const rows = Object.entries(list);
 console.log("Addresses on the shared list: " + rows.length);
+const by = (k) => rows.filter(([, v]) => Array.isArray(v[k]) && v[k].length).length;
+console.log("By product: Guidance Scorecard " + by("tickers") + ", Release Watch " + by("earnings") + ", Filing Watch " + by("filings") + ", GCC Watch " + by("gcc"));
 for (const [email, v] of rows) {
   const n = (k) => (Array.isArray(v[k]) ? v[k].length : 0);
   console.log("  " + mask(email) + (email.toLowerCase() === OWNER ? "  (owner)" : "")
-    + " | guidance " + n("tickers") + ", earnings " + n("earnings") + ", filings " + n("filings")
+    + " | since " + String(v.confirmedAt || "?").slice(0, 10)
+    + " | guidance " + n("tickers") + ", earnings " + n("earnings") + ", filings " + n("filings") + ", gcc " + n("gcc")
     + (v.confirmed === false ? " | unconfirmed" : "")
-    + " | " + ["tickers", "earnings", "filings"].map((k) => k + ": " + (v[k] || []).join(",")).join("; ")
+    + " | " + ["tickers", "earnings", "filings", "gcc"].map((k) => k + ": " + (v[k] || []).join(",")).join("; ")
     + " | owner match: " + (OWNER ? String(email).toLowerCase() === OWNER : "no TEST_EMAIL set"));
 }
 
