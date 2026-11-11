@@ -63,20 +63,34 @@ jobs:
         with:
           node-version: "22"
       # Dubai and Oman statements are PDFs, some of them scanned: pdftotext and OCR.
-      # Tried three times: a runner that could not reach the package servers failed two runs on 11 Nov 2026.
-      # The tools are often on the runner already; if they still cannot be installed, the run goes on with what is there.
-      # Each try is cut off after a few minutes: with the package servers unreachable, apt waited 40 minutes.
+      # The PDF and OCR tools are kept in the Actions cache once downloaded, so a run does not depend on Ubuntu's
+      # package servers being up: they were down on 11 Nov 2026 and no Dubai, Oman or Bahrain filing could be read.
+      - uses: actions/cache/restore@v4
+        id: debs
+        with:
+          path: ~/gcc-debs
+          key: gcc-debs-ubuntu-24.04-v1
       - name: PDF and OCR tools
-        timeout-minutes: 12
+        id: tools
+        timeout-minutes: 10
         continue-on-error: true
         run: |
-          for i in 1 2 3; do
-            if command -v pdftotext >/dev/null && command -v tesseract >/dev/null; then break; fi
-            sudo timeout 90 apt-get update -q >/dev/null 2>&1 || true
-            sudo timeout 150 apt-get install -y -q -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 poppler-utils tesseract-ocr >/dev/null 2>&1 && break
-            sleep 15
+          have() { command -v pdftotext >/dev/null && command -v tesseract >/dev/null; }
+          mkdir -p ~/gcc-debs
+          if ! have && ls ~/gcc-debs/*.deb >/dev/null 2>&1; then sudo dpkg -i ~/gcc-debs/*.deb >/dev/null 2>&1 || true; fi
+          for i in 1 2; do
+            have && break
+            sudo timeout 60 apt-get update -q >/dev/null 2>&1 || true
+            sudo timeout 180 apt-get install -y -q -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o APT::Keep-Downloaded-Packages=true -o Dir::Cache::archives="$HOME/gcc-debs" poppler-utils tesseract-ocr >/dev/null 2>&1 || true
+            sudo chown -R "$USER" ~/gcc-debs; rm -rf ~/gcc-debs/partial ~/gcc-debs/lock
           done
-          command -v pdftotext && command -v tesseract || echo "::warning::PDF or OCR tools missing: Dubai, Oman and Bahrain filings may not be read this run"
+          if have; then echo "ok=true" >> "$GITHUB_OUTPUT"; else echo "::warning::PDF or OCR tools missing: Dubai, Oman and Bahrain filings cannot be read this run"; fi
+          ls ~/gcc-debs/*.deb >/dev/null 2>&1 && echo "debs=true" >> "$GITHUB_OUTPUT" || true
+      - uses: actions/cache/save@v4
+        if: ${{ steps.debs.outputs.cache-hit != 'true' && steps.tools.outputs.ok == 'true' && steps.tools.outputs.debs == 'true' }}
+        with:
+          path: ~/gcc-debs
+          key: gcc-debs-ubuntu-24.04-v1
       - name: Build and send
         working-directory: gcc
         env:
