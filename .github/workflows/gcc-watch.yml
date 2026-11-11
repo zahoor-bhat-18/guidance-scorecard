@@ -65,13 +65,16 @@ jobs:
       # Dubai and Oman statements are PDFs, some of them scanned: pdftotext and OCR.
       # Tried three times: a runner that could not reach the package servers failed two runs on 11 Nov 2026.
       # The tools are often on the runner already; if they still cannot be installed, the run goes on with what is there.
+      # Each try is cut off after a few minutes: with the package servers unreachable, apt waited 40 minutes.
       - name: PDF and OCR tools
+        timeout-minutes: 12
+        continue-on-error: true
         run: |
           for i in 1 2 3; do
             if command -v pdftotext >/dev/null && command -v tesseract >/dev/null; then break; fi
-            sudo apt-get update -q >/dev/null 2>&1 || true
-            sudo apt-get install -y -q poppler-utils tesseract-ocr >/dev/null 2>&1 && break
-            sleep 20
+            sudo timeout 90 apt-get update -q >/dev/null 2>&1 || true
+            sudo timeout 150 apt-get install -y -q -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 poppler-utils tesseract-ocr >/dev/null 2>&1 && break
+            sleep 15
           done
           command -v pdftotext && command -v tesseract || echo "::warning::PDF or OCR tools missing: Dubai, Oman and Bahrain filings may not be read this run"
       - name: Build and send
