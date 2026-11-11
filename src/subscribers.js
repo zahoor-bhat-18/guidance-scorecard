@@ -86,7 +86,7 @@ export function cleanTickers(raw) {
     .split(/[^A-Z0-9.\-:_]+/)
     .map((t) => t.trim())
     // GCC Watch's Dubai and Oman codes carry their exchange: "DFM:EMAAR", "MSX:BKMB".
-    .filter((t) => (t.length >= 1 && t.length <= 6 && !/[:_]/.test(t)) || /^(DFM|MSX):[A-Z0-9_-]{1,16}$/.test(t));
+    .filter((t) => (t.length >= 1 && t.length <= 6 && !/[:_]/.test(t)) || /^(DFM|MSX|BHB):[A-Z0-9_-]{1,16}$/.test(t));
   return Array.from(new Set(list)).slice(0, 25);
 }
 
@@ -319,7 +319,7 @@ export function confirmationEmail(tickers, link, postal, products = ["guidance"]
     products.includes("earnings") ? "Release Watch: the earnings release worked through - what the headline numbers do not show, what drove revenue, margin and EPS." : "",
     products.includes("guidance") ? "Guidance Scorecard: how its guidance has compared to what it delivered, and what it has just guided for next." : "",
     products.includes("filings") ? "Filing Watch: what is new, changed or deleted in each 10-Q and 10-K against the filings before it." : "",
-    products.includes("gcc") ? "GCC Watch: each results filing on Saudi Exchange, Dubai Financial Market or Muscat Stock Exchange, set against the company's own past quarters, with its own reasons for the changes." : "",
+    products.includes("gcc") ? "GCC Watch: each results filing on Saudi Exchange, Dubai Financial Market, Muscat Stock Exchange or Bahrain Bourse, set against the company's own past quarters, with its own reasons for the changes." : "",
   ].filter(Boolean);
 
   const text = [
