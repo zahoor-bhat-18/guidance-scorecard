@@ -63,7 +63,17 @@ jobs:
         with:
           node-version: "22"
       # Dubai and Oman statements are PDFs, some of them scanned: pdftotext and OCR.
-      - run: sudo apt-get install -y -q poppler-utils tesseract-ocr >/dev/null
+      # Tried three times: a runner that could not reach the package servers failed two runs on 11 Nov 2026.
+      # The tools are often on the runner already; if they still cannot be installed, the run goes on with what is there.
+      - name: PDF and OCR tools
+        run: |
+          for i in 1 2 3; do
+            if command -v pdftotext >/dev/null && command -v tesseract >/dev/null; then break; fi
+            sudo apt-get update -q >/dev/null 2>&1 || true
+            sudo apt-get install -y -q poppler-utils tesseract-ocr >/dev/null 2>&1 && break
+            sleep 20
+          done
+          command -v pdftotext && command -v tesseract || echo "::warning::PDF or OCR tools missing: Dubai, Oman and Bahrain filings may not be read this run"
       - name: Build and send
         working-directory: gcc
         env:
