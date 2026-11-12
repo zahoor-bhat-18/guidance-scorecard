@@ -350,6 +350,18 @@ async function main() {
           + (found.hits.length ? "; dates far from the calendars ignored: " + Array.from(new Set(found.hits.map((h) => h.date))).join(", ") : ""));
       }
     } catch (e) { console.log("  " + t.padEnd(6) + " company site check failed: " + e.message); }
+    /* With no calendar to hold it against, a date read off the company's pages must fit the company's own rhythm:
+       about a quarter after its last release, or about a year after the same one last year. General Electric's
+       events page gave 10 Nov 2026 (some other event; results had come out three weeks before, and neither
+       calendar had a date) and a preview went out for it. */
+    if (co && !cal) {
+      const rel = ((rec && rec.releasesRead) || []).map((x) => x.filed).filter(Boolean).sort().reverse();
+      const fits = rel.length && (Math.abs(days(rel[0], co.date) - 91) <= 21 || rel.some((f) => Math.abs(days(f, co.date) - 364) <= 21));
+      if (!fits) {
+        console.log("  " + t.padEnd(6) + " company site date " + co.date + " ignored: no calendar confirms it and it does not fit past release dates (" + (rel.slice(0, 2).join(", ") || "none on record") + ")");
+        co = null;
+      }
+    }
     if (!co && !cal) { console.log("  " + t.padEnd(6) + " no date from the company or either calendar"); continue; }
     const pick = co ? { date: co.date, time: co.time || (cal && cal.date === co.date ? cal.time : "") } : cal;
     const d = { ...(av || {}), ...pick, alphavantage: av ? av.date : null, nasdaq: nq ? nq.date : null, agree: Boolean(av && nq && av.date === nq.date),
