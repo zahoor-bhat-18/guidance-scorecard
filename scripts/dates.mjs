@@ -356,7 +356,8 @@ async function main() {
        calendar had a date) and a preview went out for it. */
     if (co && !cal) {
       const rel = ((rec && rec.releasesRead) || []).map((x) => x.filed).filter(Boolean).sort().reverse();
-      const fits = rel.length && (Math.abs(days(rel[0], co.date) - 91) <= 21 || rel.some((f) => Math.abs(days(f, co.date) - 364) <= 21));
+      // Never within two months of the last release: the next results are a quarter away.
+      const fits = rel.length && days(rel[0], co.date) >= 60 && (Math.abs(days(rel[0], co.date) - 91) <= 21 || rel.some((f) => Math.abs(days(f, co.date) - 364) <= 21));
       if (!fits) {
         console.log("  " + t.padEnd(6) + " company site date " + co.date + " ignored: no calendar confirms it and it does not fit past release dates (" + (rel.slice(0, 2).join(", ") || "none on record") + ")");
         co = null;
