@@ -27,6 +27,10 @@ async function kvGet(key) {
   if (!r.ok) throw new Error("KV read failed for " + key + ": " + r.status);
   return r.text();
 }
+async function kvDelete(key) {
+  const r = await fetch(kvUrl(key), { method: "DELETE", headers: { Authorization: "Bearer " + CF_TOKEN } });
+  if (!r.ok && r.status !== 404) throw new Error("KV delete failed for " + key + ": " + r.status);
+}
 async function kvPut(key, value) {
   const body = new FormData();
   body.set("value", value);
@@ -363,7 +367,17 @@ async function main() {
         co = null;
       }
     }
-    if (!co && !cal) { console.log("  " + t.padEnd(6) + " no date from the company or either calendar"); continue; }
+    if (!co && !cal) {
+      // A date stored on an earlier run that nothing supports any more is taken out, so no preview goes out for it.
+      try {
+        const had = JSON.parse((await kvGet("date:" + t)) || "null");
+        if (had && !had.manual && had.date >= today) {
+          console.log("  " + t.padEnd(6) + " stored date " + had.date + " (" + String(had.source || "").slice(0, 60) + ") no longer supported: removed");
+          if (!dry) await kvDelete("date:" + t);
+        }
+      } catch (e) { console.log("  " + t.padEnd(6) + " stored date not checked: " + e.message); }
+      console.log("  " + t.padEnd(6) + " no date from the company or either calendar"); continue;
+    }
     const pick = co ? { date: co.date, time: co.time || (cal && cal.date === co.date ? cal.time : "") } : cal;
     const d = { ...(av || {}), ...pick, alphavantage: av ? av.date : null, nasdaq: nq ? nq.date : null, agree: Boolean(av && nq && av.date === nq.date),
       company: co ? { date: co.date, url: co.url, quote: co.quote } : null };
