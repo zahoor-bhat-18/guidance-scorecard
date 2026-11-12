@@ -7,6 +7,7 @@
  *
  * Usage: node scripts/whois.mjs           (list)
  *        FOLLOW="V,GOOGL" node scripts/whois.mjs (the owner follows these on every product)
+ *        KEEP="V,GOOGL" node scripts/whois.mjs   (the owner follows only these on the US products)
  *        CLEAR=CLEAR node scripts/whois.mjs (empty the list - every product, every address)
  */
 
@@ -33,6 +34,22 @@ if (process.env.FOLLOW) {
   const w = await fetch(url, { method: "PUT", headers: { Authorization: "Bearer " + CF_TOKEN }, body: JSON.stringify(list) });
   if (!w.ok) throw new Error("KV write failed: " + w.status);
   console.log("Owner now follows " + rec.tickers.length + " companies on every product; added: " + add.join(","));
+}
+
+// KEEP="V,GOOGL": the owner's address follows only these on the three US products (the rest are dropped; GCC is untouched).
+if (process.env.KEEP) {
+  if (!OWNER) throw new Error("TEST_EMAIL is not set: KEEP only ever changes the owner's own address.");
+  const keep = String(process.env.KEEP).toUpperCase().split(/[\s,]+/).filter((t) => /^[A-Z][A-Z0-9.\-]{0,9}$/.test(t));
+  const key = Object.keys(list).find((e) => e.toLowerCase() === OWNER);
+  if (!key) throw new Error("The owner's address is not on the list.");
+  if (!keep.length) throw new Error("KEEP names no tickers: nothing changed.");
+  const rec = { ...list[key] };
+  for (const f of ["tickers", "earnings", "filings"]) rec[f] = (rec[f] || []).filter((t) => keep.includes(t));
+  rec.updatedAt = new Date().toISOString();
+  list[key] = rec;
+  const w = await fetch(url, { method: "PUT", headers: { Authorization: "Bearer " + CF_TOKEN }, body: JSON.stringify(list) });
+  if (!w.ok) throw new Error("KV write failed: " + w.status);
+  console.log("Owner now follows " + rec.tickers.length + " companies on the US products: " + rec.tickers.join(","));
 }
 
 if (process.env.CLEAR === "CLEAR") {

@@ -14,6 +14,10 @@ on:
         description: "Tickers the owner's address should follow on every product, comma-separated. Leave blank to list."
         required: false
         default: ""
+      keep:
+        description: "Trim: the only tickers the owner's address keeps on the US products, comma-separated. Leave blank to change nothing."
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -35,5 +39,6 @@ jobs:
           TEST_EMAIL: ${{ vars.TEST_EMAIL }}
           CLEAR: ${{ inputs.clear }}
           FOLLOW: ${{ inputs.follow }}
+          KEEP: ${{ inputs.keep }}
           UNSUB_SECRET: ${{ secrets.UNSUB_SECRET }}
         run: node scripts/whois.mjs
