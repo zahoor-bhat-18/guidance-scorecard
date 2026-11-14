@@ -14,10 +14,11 @@ name: gcc-watch
 # The run log is public. The send script prints counts, never addresses.
 
 on:
+  # The website starts the check every two hours (gcc-check); GitHub's own schedule, which it often skips, is a backup.
   schedule:
     - cron: "17 */2 * * *"
   repository_dispatch:
-    types: [gcc-sample]
+    types: [gcc-sample, gcc-check]
   workflow_dispatch:
     inputs:
       symbols:

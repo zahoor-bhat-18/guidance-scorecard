@@ -362,6 +362,27 @@ export function feedCiks(xml) {
  * At most one write an hour per problem: the poll runs every minute, and the
  * free plan allows a thousand KV writes a day.
  */
+/* GCC Watch's check for new Gulf results, started from here every two hours (at :17 past even UTC hours).
+   GitHub's own schedule for it ran only 3-4 times a day instead of 12 (Nov 2026): scheduled jobs on the free
+   tier are delayed or dropped when GitHub is busy, so results reached subscribers up to 8 hours late. This
+   minute cron is reliable; the GitHub schedule stays as a backup, and a second run in the same hour sends
+   nothing twice (each filing is recorded as sent). */
+async function gccTick(env, at) {
+  const t = new Date(at || Date.now());
+  if (t.getUTCMinutes() !== 17 || t.getUTCHours() % 2 !== 0) return;
+  if (!env.GITHUB_TOKEN || !env.GITHUB_REPO) return;
+  try {
+    const byProduct = await watchedByProduct(env);
+    if (!(byProduct.gcc || []).length) return;
+    const r = await fetch("https://api.github.com/repos/" + env.GITHUB_REPO + "/dispatches", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + env.GITHUB_TOKEN, Accept: "application/vnd.github+json", "User-Agent": "guidance-scorecard", "Content-Type": "application/json" },
+      body: JSON.stringify({ event_type: "gcc-check", client_payload: {} }),
+    });
+    if (!r.ok) await pollProblem(env, "GCC check could not be started: GitHub answered " + r.status);
+  } catch (e) { await pollProblem(env, "GCC check could not be started: " + e.message); }
+}
+
 async function pollProblem(env, message) {
   try {
     const held = await env.CACHE.get("poll:problem");
@@ -496,6 +517,7 @@ async function requestSamples(env, email, earnings, guidance, filings = []) {
 export default {
   async scheduled(event, env, ctx) {
     ctx.waitUntil(poll(env));
+    ctx.waitUntil(gccTick(env, event.scheduledTime));
   },
 
   async fetch(request, env, ctx) {
