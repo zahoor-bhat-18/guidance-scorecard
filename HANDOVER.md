@@ -37,11 +37,11 @@ For the next chat. Read this first, then ARCHITECTURE.md if you need the code la
   `gh api -X POST repos/zahoor-bhat-18/guidance-scorecard/actions/workflows/backfill.yml/dispatches -f ref=main -f 'inputs[tickers]=X,Y' -f 'inputs[rebuild]=true'`
 - **Sends:** a send can be run by hand with `send.yml` and `inputs[tickers]=X`.
 - **Inspect live data:** `/api/record?ticker=X&full=1&n=RANDOM`, `/api/preview?ticker=X`, `/api/records` (lists all 39 records) and `/api/summary`.
-- **Gmail access** to zahoorbhatdotcom@gmail.com:
+- **Gmail access** to the owner's test inbox (the TEST_EMAIL secret):
   - Read every Guidance Scorecard email (from guidance@zahoorbhat.com) right after it is sent, and check it line by line against the filing.
   - "[Check] TICKER" emails list what the pre-send check held back.
   - Filing Watch emails (from filings@) are a separate product. Leave them alone unless asked.
-- **SEC from the shell:** EDGAR is reachable with `curl -A "zahoor research zahoorf6@gmail.com"`.
+- **SEC from the shell:** EDGAR is reachable with `curl -A "zahoor research hello@zahoorbhat.com"`.
 
 ## What changed on 13 Oct (all live, all companies rebuilt except where noted)
 1. **Check before every send** (`src/check.js`). The number checks trace each result, and each new, raised, cut or held guide, to its quote and the filing. Anything that can't be confirmed is withheld: that line is taken out of the email and the record. The email still goes on time, and every finding is emailed to the owner (TEST_EMAIL) as "[Check] TICKER". The missed-guidance check also runs: lines that look like guidance but weren't read are reported (alert only).
@@ -282,7 +282,7 @@ Filing Watch: no new briefings since CHRN (14 Oct); its HANDOVER open items unch
 Zahoor unsubscribed from everything and will sign up again once fixes are in. Nothing is sent to him meanwhile.
 - **Filing Watch's old list** (`filing-agent/config/subscribers.json`, not touched by the unsubscribe page): his three
   addresses (zahoorbhatdotcom@, zahoorf6@, zahoor.bhat@icloud) set `active: false`. Two other people's stay active.
-- **Shared list (KV `subscribers`)**: one address left, za***@gmail.com - DAL, MU, MSFT (Guidance), MSFT (Release
+- **Shared list (KV `subscribers`)**: one address left, the owner's - DAL, MU, MSFT (Guidance), MSFT (Release
   Watch), MSFT (Filing Watch). Not TEST_EMAIL; probably zahoorf6@. Asked him whether to remove it.
 - New: `whois.yml` / `scripts/whois.mjs` - read-only, prints the shared list with addresses masked.
 

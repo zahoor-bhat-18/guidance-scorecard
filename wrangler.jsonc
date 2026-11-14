@@ -52,7 +52,7 @@
   // EMAIL_FROM must match a domain verified in Resend - zahoorbhat.com already
   // is, from the other product, so a new local part needs no new warm-up.
   "vars": {
-    "SEC_USER_AGENT": "Zahoor Bhat zahoorbhatdotcom@gmail.com",
+    "SEC_USER_AGENT": "Zahoor Bhat hello@zahoorbhat.com",
     "GITHUB_REPO": "zahoor-bhat-18/guidance-scorecard",
     "EMAIL_FROM": "guidance@zahoorbhat.com",
     // Replies land here, because hello@ already has a routing rule and a

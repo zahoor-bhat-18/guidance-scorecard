@@ -108,7 +108,9 @@ jobs:
         run: |
           node scripts/send.mjs ${{ inputs.dry && '--dry' || (inputs.test && '--test' || (inputs.resend && format('--resend={0}', inputs.resend) || '')) }} "${{ github.event.client_payload.symbols || inputs.symbols }}"
       - uses: actions/upload-artifact@v4
-        if: ${{ inputs.dry || inputs.test || inputs.resend }}
+        # Dry and test runs only: a resend goes to real subscribers, and its copies would carry their unsubscribe
+        # links. This repo is public, so its artifacts can be downloaded by anyone.
+        if: ${{ inputs.dry || inputs.test }}
         with:
           name: gcc-dry
           path: gcc/out/
