@@ -64,7 +64,8 @@ function cells(line) {
    results, is in the next 45 days, and is within 14 days of the calendars
    (a guard against reading some other date on the page). */
 const UA = process.env.SEC_USER_AGENT || "guidance-scorecard (zahoorbhat.com)";
-const BROWSER = { "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36", Accept: "text/html,application/json;q=0.9,*/*;q=0.8" };
+/* Says who is asking; never posing as a browser (owner's rule). A site that refuses this is left alone. */
+const BROWSER = { "User-Agent": "Mozilla/5.0 (compatible; zahoorbhat.com research; hello@zahoorbhat.com)", Accept: "text/html,application/json;q=0.9,*/*;q=0.8" };
 const MONTHS = ["january","february","march","april","may","june","july","august","september","october","november","december"];
 let cikMap = null;
 async function cikOf(t) {

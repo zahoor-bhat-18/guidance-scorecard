@@ -33,7 +33,8 @@ async function daily(ticker, full) {
    Vantage's window, once per company (owner's request, 28 Oct 2026: 7-8
    quarters). Alpha Vantage's closes win where both have a day. Stooq was
    tried first and now refuses scripts. */
-const BROWSER = { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36", Accept: "application/json, text/plain, */*", "Accept-Language": "en-US,en;q=0.9", Origin: "https://www.nasdaq.com", Referer: "https://www.nasdaq.com/" };
+/* Says who is asking; never posing as a browser (owner's rule). A site that refuses this is left alone. */
+const BROWSER = { "User-Agent": "Mozilla/5.0 (compatible; zahoorbhat.com research; hello@zahoorbhat.com)", Accept: "application/json, text/plain, */*", "Accept-Language": "en-US,en;q=0.9", Origin: "https://www.nasdaq.com", Referer: "https://www.nasdaq.com/" };
 async function nasdaq(ticker, from) {
   const to = new Date().toISOString().slice(0, 10);
   const r = await fetch("https://api.nasdaq.com/api/quote/" + encodeURIComponent(ticker.replace(/\./g, "/")) + "/historical?assetclass=stocks&fromdate=" + from + "&todate=" + to + "&limit=9999", { headers: BROWSER });
