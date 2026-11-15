@@ -250,11 +250,31 @@ async function poll(env) {
   const wanted = new Map();
   for (const t of watching) if (ciks[t]) wanted.set(String(Number(ciks[t])), t);
 
+  /* Each filing is acted on once. A ticker used to be let through again every hour while its 8-K stayed in the
+     feed: on 13 Nov 2026 one META 8-K that was not an earnings release started a run every hour for ten hours.
+     Now the feed's filings (accession numbers) are remembered for three days, per product; only a filing not
+     seen before starts a run. A ticker whose email is held for its outlook (below) still goes through. */
   const hits = new Set();
-  for (const cik of feedCiks(xml)) {
-    const t = wanted.get(cik);
-    if (t) hits.add(t);
+  const filings = new Map(); // ticker -> accession numbers in the feed
+  for (const f of feedFilings(xml)) {
+    const t = wanted.get(f.cik);
+    if (!t) continue;
+    hits.add(t);
+    if (!filings.has(t)) filings.set(t, new Set());
+    if (f.acc) filings.get(t).add(f.acc);
   }
+  // Tickers with no filing new to this product; the accession numbers to mark once its dispatch is accepted.
+  const unseen = async (product, ticker) => {
+    const accs = Array.from(filings.get(ticker) || []);
+    if (!accs.length) return { fresh: true, accs };
+    const left = [];
+    for (const acc of accs) if (!(await env.CACHE.get(product + ":seen:" + acc))) left.push(acc);
+    return { fresh: left.length > 0, accs: left };
+  };
+  const markSeen = async (product, accs) => {
+    for (const acc of accs) await env.CACHE.put(product + ":seen:" + acc, "1", { expirationTtl: 3 * 86400 });
+  };
+  const heldOver = new Set();
   /* A held email whose outlook never came. send.mjs holds the email of a
      company that files its outlook later the same day (JPMorgan) and lists
      it in awaiting:index; after six hours the send is started anyway, and it
@@ -264,7 +284,7 @@ async function poll(env) {
   try {
     held = JSON.parse((await env.CACHE.get("awaiting:index")) || "{}") || {};
     for (const [t, at] of Object.entries(held)) {
-      if (watching.includes(t) && Date.now() - Date.parse(at) > (6 * 60 + 1) * 60 * 1000) hits.add(t);
+      if (watching.includes(t) && Date.now() - Date.parse(at) > (6 * 60 + 1) * 60 * 1000) { hits.add(t); heldOver.add(t); }
     }
   } catch (e) {
     // A broken index must not stop the poller; the next filing still dispatches.
@@ -277,8 +297,13 @@ async function poll(env) {
      minutes are free), with its own one-hour mark; the Guidance Scorecard
      dispatch below is unchanged. Neither waits for the other. */
   const earningsWanted = new Set(byProduct.earnings || []);
-  const rw = [];
-  for (const ticker of hits) if (earningsWanted.has(ticker) && !(await env.CACHE.get("rw:dispatched:" + ticker))) rw.push(ticker);
+  const rw = [], rwAccs = [];
+  for (const ticker of hits) {
+    if (!earningsWanted.has(ticker) || (await env.CACHE.get("rw:dispatched:" + ticker))) continue;
+    const u = heldOver.has(ticker) ? { fresh: true, accs: [] } : await unseen("rw", ticker);
+    if (!u.fresh) continue;
+    rw.push(ticker); rwAccs.push(...u.accs);
+  }
   if (rw.length) {
     const d = await fetch("https://api.github.com/repos/" + env.GITHUB_REPO + "/dispatches", {
       method: "POST",
@@ -288,6 +313,7 @@ async function poll(env) {
     if (!d.ok) await pollProblem(env, "GitHub refused the Release Watch dispatch for " + rw.join(",") + ": " + d.status);
     else {
       for (const ticker of rw) await env.CACHE.put("rw:dispatched:" + ticker, String(Date.now()), { expirationTtl: 3600 });
+      await markSeen("rw", rwAccs);
       await env.CACHE.put("poll:lastEarnings", new Date().toISOString() + " dispatched " + rw.join(","));
     }
   }
@@ -295,7 +321,13 @@ async function poll(env) {
   for (const t of Array.from(hits)) if (!guidanceWanted.has(t)) hits.delete(t);
   if (!hits.size) return;
 
-  const fresh = [];
+  const fresh = [], gsAccs = [];
+  for (const ticker of Array.from(hits)) {
+    if (heldOver.has(ticker) || held[ticker]) continue;
+    const u = await unseen("gs", ticker);
+    if (!u.fresh) hits.delete(ticker);
+    else gsAccs.push(...u.accs);
+  }
   for (const ticker of hits) {
     const seen = await env.CACHE.get("dispatched:" + ticker);
     /* A company whose email is held for its outlook filing is let through
@@ -331,6 +363,7 @@ async function poll(env) {
   for (const ticker of fresh) {
     await env.CACHE.put("dispatched:" + ticker, String(Date.now()), { expirationTtl: 3600 });
   }
+  await markSeen("gs", gsAccs);
 
   await env.CACHE.put("poll:last", new Date().toISOString() + " dispatched " + fresh.join(","));
 }
@@ -347,6 +380,17 @@ async function poll(env) {
  * All three forms are read now, so a change in the feed's layout in one place
  * does not silence it again.
  */
+/** The feed's filings: { cik, acc } per entry (acc is the accession number, "0001125345-26-000077"). */
+export function feedFilings(xml) {
+  const out = [];
+  for (const e of String(xml || "").split(/<entry>/i).slice(1)) {
+    const cik = (/\/edgar\/data\/(\d+)\//.exec(e) || /\((\d{10})\)/.exec(e) || [])[1];
+    const acc = (/accession-number=(\d{10}-\d{2}-\d{6})/.exec(e) || /AccNo:(?:&lt;\/b&gt;|<\/b>)?\s*(\d{10}-\d{2}-\d{6})/.exec(e) || [])[1];
+    if (cik) out.push({ cik: String(Number(cik)), acc: acc || null });
+  }
+  return out;
+}
+
 export function feedCiks(xml) {
   const out = new Set();
   const text = String(xml || "");
