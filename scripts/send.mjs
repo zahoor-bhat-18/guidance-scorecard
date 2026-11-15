@@ -555,6 +555,13 @@ async function handle(ticker) {
    gone. Plain text: what was withheld and why, so it can be looked at. */
 async function alertOwner(ticker, current, problems, sentRes = {}) {
   if (!problems.length) return;
+  /* With the release-day email off, no subscriber saw anything: the findings go to the run's log only, not
+     the inbox (owner, 15 Nov 2026: inbox noise). The preview the day before the next report is built from
+     the checked record. */
+  if (sentRes.dayOf && !sentRes.sent) {
+    console.log(ticker + ": the check found (no email went to subscribers):\n- " + problems.join("\n- "));
+    return;
+  }
   const owner = process.env.TEST_EMAIL;
   if (!owner) { console.log(ticker + ": " + problems.length + " check findings, and no TEST_EMAIL to send them to."); return; }
   const text = ticker + " - release " + current.accession + " filed " + current.filed + "\n\n"
