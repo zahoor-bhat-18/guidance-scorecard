@@ -65,7 +65,7 @@ jobs:
           POSTAL_ADDRESS: ${{ vars.POSTAL_ADDRESS }}
           # Only read on a test run. The address lives in a repository variable
           # rather than in the script, because this repository is public.
-          TEST_EMAIL: ${{ vars.TEST_EMAIL }}
+          TEST_EMAIL: ${{ secrets.TEST_EMAIL || vars.TEST_EMAIL }}
         # inputs.test is empty on repository_dispatch, so the Worker's own
         # trigger can never produce a test run, and a hand run defaults to a
         # real one only if the box is left unticked.

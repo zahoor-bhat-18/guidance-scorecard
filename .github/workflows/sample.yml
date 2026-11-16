@@ -60,7 +60,7 @@ jobs:
       # step prints its settings; GitHub shows every step's settings, and this repository's logs are public.
       - name: Hide addresses
         env:
-          OWNER_TO: ${{ vars.TEST_EMAIL }}
+          OWNER_TO: ${{ secrets.TEST_EMAIL || vars.TEST_EMAIL }}
         run: |
           TO=$(jq -r '.client_payload.email // .inputs.email // empty' "$GITHUB_EVENT_PATH")
           echo "::add-mask::$TO"

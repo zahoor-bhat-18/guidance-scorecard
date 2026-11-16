@@ -54,6 +54,6 @@ jobs:
           EMAIL_FROM: ${{ vars.EMAIL_FROM }}
           REPLY_TO: ${{ vars.REPLY_TO }}
           POSTAL_ADDRESS: ${{ vars.POSTAL_ADDRESS }}
-          TEST_EMAIL: ${{ vars.TEST_EMAIL }}
+          TEST_EMAIL: ${{ secrets.TEST_EMAIL || vars.TEST_EMAIL }}
         run: |
           node scripts/preview.mjs ${{ inputs.test && '--test' || '' }} ${{ inputs.dry && '--dry' || '' }} "${{ inputs.tickers }}"

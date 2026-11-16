@@ -77,7 +77,7 @@ jobs:
           REPLY_TO: ${{ vars.REPLY_TO }}
           POSTAL_ADDRESS: ${{ vars.POSTAL_ADDRESS }}
           # Test sends, and anything the check holds, go here.
-          TEST_EMAIL: ${{ vars.TEST_EMAIL }}
-          ALERT_TO: ${{ vars.TEST_EMAIL }}
+          TEST_EMAIL: ${{ secrets.TEST_EMAIL || vars.TEST_EMAIL }}
+          ALERT_TO: ${{ secrets.TEST_EMAIL || vars.TEST_EMAIL }}
         run: |
           node scripts/send.mjs ${{ inputs.test && '--test' || '' }} ${{ inputs.force && '--force' || '' }} "${{ github.event.client_payload.tickers || inputs.tickers }}"

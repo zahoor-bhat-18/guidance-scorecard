@@ -36,7 +36,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           KV_NAMESPACE_ID: ${{ vars.KV_NAMESPACE_ID }}
-          TEST_EMAIL: ${{ vars.TEST_EMAIL }}
+          TEST_EMAIL: ${{ secrets.TEST_EMAIL || vars.TEST_EMAIL }}
           CLEAR: ${{ inputs.clear }}
           FOLLOW: ${{ inputs.follow }}
           KEEP: ${{ inputs.keep }}
