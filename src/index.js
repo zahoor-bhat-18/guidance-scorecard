@@ -532,17 +532,18 @@ async function requestBackfill(env, tickers) {
  * Someone who follows a company may wait months for its next filing, so each
  * confirmed signup is sent the email each product would have sent for the
  * company's latest filing, marked as a sample - for ONE company, chosen at
- * confirm for the most products it can show, so three emails at most.
+ * confirm for the most products it can show, so six emails at most.
  *
  * Only after the address is confirmed, so a form cannot be used to send them
- * to strangers. At most SAMPLE_DAILY a day across the site and three tickers
- * per confirmation, so cost stays bounded.
+ * to strangers. At most SAMPLE_DAILY a day across the site and two tickers
+ * per product per confirmation, so cost stays bounded.
  */
 const SAMPLE_DAILY = 50;
 async function requestSamples(env, email, earnings, guidance, filings = []) {
   // Filing Watch briefings are the heaviest to build, so two at most.
-  // One company per product (the confirm step picks it): three emails at most.
-  const want = { earnings: earnings.slice(0, 1), guidance: guidance.slice(0, 1), filings: filings.slice(0, 1) };
+  // Two companies per product (the confirm step picks them): six emails at most. Owner, 16 Nov 2026: one
+  // company was too little to judge the product by.
+  const want = { earnings: earnings.slice(0, 2), guidance: guidance.slice(0, 2), filings: filings.slice(0, 2) };
   const n = want.earnings.length + want.guidance.length + want.filings.length;
   if (!n || !env.GITHUB_TOKEN) return { sent: 0 };
   const day = "samples:" + new Date().toISOString().slice(0, 10);
@@ -1187,10 +1188,12 @@ export default {
         const rwList = done.products.includes("earnings") ? ((done.addedFor && done.addedFor.earnings) || done.added) : [];
         const fwList = done.products.includes("filings") ? ((done.addedFor && done.addedFor.filings) || done.added) : [];
         const fits = (t) => (covered.includes(t) ? 1 : 0) + (rwList.includes(t) ? 1 : 0) + (fwList.includes(t) ? 1 : 0);
-        const pick = done.added.slice().sort((a, b) => fits(b) - fits(a) || done.added.indexOf(a) - done.added.indexOf(b))[0];
+        const picks = done.added.slice().sort((a, b) => fits(b) - fits(a) || done.added.indexOf(a) - done.added.indexOf(b)).slice(0, 2);
+        const pick = picks[0];
         // GCC Watch: one sample, the latest results email for the first Saudi code, from its own workflow.
         if (done.products.includes("gcc") && env.GITHUB_TOKEN) {
-          const first = ((done.addedFor && done.addedFor.gcc) || done.added)[0];
+          // The first two Gulf codes, one email each.
+          const first = ((done.addedFor && done.addedFor.gcc) || done.added).slice(0, 2).join(" ");
           if (first) {
             // Two tries; a failure is recorded (without the address) so a missing first email can be traced.
             // A confirmation on 9 Nov 2026 sent no sample and left no trace of why.
@@ -1212,7 +1215,7 @@ export default {
           }
         }
         const sample = pick && !(done.products.length === 1 && done.products[0] === "gcc")
-          ? await requestSamples(env, done.email, rwList.includes(pick) ? [pick] : [], covered.includes(pick) ? [pick] : [], fwList.includes(pick) ? [pick] : [])
+          ? await requestSamples(env, done.email, picks.filter((t) => rwList.includes(t)), picks.filter((t) => covered.includes(t)), picks.filter((t) => fwList.includes(t)))
           : { sent: 0 };
 
         const para = (text) => "<p>" + text + "</p>";
@@ -1231,7 +1234,7 @@ export default {
               ? para("<b>Filing Watch</b>: a briefing arrives when each company files its next 10-Q or 10-K.")
               : "")
           + (done.products.includes("gcc")
-              ? para("<b>GCC Watch</b>: an email arrives when each company posts its next results on its exchange. A sample of its latest one is on its way.")
+              ? para("<b>GCC Watch</b>: an email arrives when each company posts its next results on its exchange. Samples of the latest results, for up to two of your companies, are on their way.")
               : "")
           + (onGuidance && newly.length !== done.added.length
               ? para("You were already following " + done.added.filter((t) => done.alreadyHad.includes(t)).join(", ") + ".")
@@ -1263,7 +1266,7 @@ export default {
                 + " minutes, or write to hello@zahoorbhat.com.")
               : "")
           + (sample.sent
-              ? para("A sample of each email, built from " + pick + "'s latest filings, is on its way: "
+              ? para("A sample of each email, built from the latest filings of " + picks.join(" and ") + ", is on its way: "
                 + [sample.earnings.length ? "Release Watch for " + sample.earnings.join(", ") : "",
                    sample.guidance.length ? "Guidance Scorecard for " + sample.guidance.join(", ") : "",
                    sample.filings.length ? "Filing Watch for " + sample.filings.join(", ") : ""].filter(Boolean).join("; ")
