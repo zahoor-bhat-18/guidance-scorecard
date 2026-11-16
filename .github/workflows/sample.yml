@@ -32,7 +32,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: sample-${{ github.event.client_payload.email || inputs.email }}
+  # One run per sign-up. The address is never in a name or a setting GitHub prints: this log is public.
+  group: sample-${{ github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -40,7 +41,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      SAMPLE_TO: ${{ github.event.client_payload.email || inputs.email }}
       EARNINGS: ${{ github.event.client_payload.earnings || inputs.earnings }}
       GUIDANCE: ${{ github.event.client_payload.guidance || inputs.guidance }}
       FILINGS: ${{ github.event.client_payload.filings || inputs.filings }}
@@ -55,8 +55,19 @@ jobs:
       EMAIL_FROM: ${{ vars.EMAIL_FROM }}
       REPLY_TO: ${{ vars.REPLY_TO }}
       POSTAL_ADDRESS: ${{ vars.POSTAL_ADDRESS }}
-      ALERT_TO: ${{ vars.TEST_EMAIL }}
     steps:
+      # The subscriber's address (and the owner's) are read from the event and hidden from the log before any
+      # step prints its settings; GitHub shows every step's settings, and this repository's logs are public.
+      - name: Hide addresses
+        env:
+          OWNER_TO: ${{ vars.TEST_EMAIL }}
+        run: |
+          TO=$(jq -r '.client_payload.email // .inputs.email // empty' "$GITHUB_EVENT_PATH")
+          echo "::add-mask::$TO"
+          [ -n "$OWNER_TO" ] && echo "::add-mask::$OWNER_TO"
+          echo "SAMPLE_TO=$TO" >> "$GITHUB_ENV"
+          echo "ALERT_TO=$OWNER_TO" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
@@ -98,7 +109,6 @@ jobs:
         working-directory: fw
         env:
           EDGAR_UA: "Zahoor Bhat hello@zahoorbhat.com"
-          EMAIL_TO: ${{ github.event.client_payload.email || inputs.email }}
           EMAIL_FROM: "Filing Watch <filings@zahoorbhat.com>"
           EMAIL_REPLY_TO: ${{ vars.REPLY_TO }}
           SHARED_UNSUB_SECRET: ${{ secrets.UNSUB_SECRET }}
@@ -106,6 +116,6 @@ jobs:
         run: |
           npm install --no-audit --no-fund > /dev/null 2>&1
           for t in $(echo "$FILINGS" | tr ',' ' '); do
-            TICKER="$t" FORM="10-Q" node scripts/section-filings.mjs > "/tmp/fw-$t.log" 2>&1 || true
+            EMAIL_TO="$SAMPLE_TO" TICKER="$t" FORM="10-Q" node scripts/section-filings.mjs > "/tmp/fw-$t.log" 2>&1 || true
             grep -E "sent to|NOT sent|ERROR|Error" "/tmp/fw-$t.log" | sed -E 's/[^ ]+@[^ ]+/<address>/g' | tail -3 || true
           done

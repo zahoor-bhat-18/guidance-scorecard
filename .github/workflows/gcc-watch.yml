@@ -46,7 +46,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: gcc-watch-${{ github.event.client_payload.email || 'run' }}
+  # A sample runs on its own; the address is never in a name GitHub prints (this log is public).
+  group: gcc-watch-${{ github.event.client_payload.email && github.run_id || 'run' }}
   cancel-in-progress: false
 
 jobs:
@@ -54,6 +55,18 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
+      # A sample's address (and the owner's) are read from the event and hidden from the log before any step
+      # prints its settings; this repository's logs are public.
+      - name: Hide addresses
+        env:
+          OWNER_TO: ${{ vars.TEST_EMAIL }}
+        run: |
+          TO=$(jq -r '.client_payload.email // empty' "$GITHUB_EVENT_PATH")
+          [ -n "$TO" ] && echo "::add-mask::$TO"
+          [ -n "$OWNER_TO" ] && echo "::add-mask::$OWNER_TO"
+          echo "SAMPLE_TO=$TO" >> "$GITHUB_ENV"
+          echo "TEST_EMAIL=$OWNER_TO" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v4
         with:
           repository: zahoor-bhat-18/Gcc-watch-
@@ -103,9 +116,7 @@ jobs:
           SITE_URL: "https://zahoorbhat.com"
           REPLY_TO: ${{ vars.REPLY_TO }}
           POSTAL_ADDRESS: ${{ vars.POSTAL_ADDRESS }}
-          TEST_EMAIL: ${{ vars.TEST_EMAIL }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          SAMPLE_TO: ${{ github.event.client_payload.email }}
           # A dry run prints the statement tables it read (company figures only).
           IFRS_DEBUG: ${{ inputs.dry && '1' || '' }}
         run: |
