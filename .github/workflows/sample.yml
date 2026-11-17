@@ -115,7 +115,17 @@ jobs:
           SAMPLE: "1"
         run: |
           npm install --no-audit --no-fund > /dev/null 2>&1
+          # The sample is the company's latest report, 10-Q or 10-K: Starbucks' latest on 17 Nov 2026 was its
+          # 10-K of 12 Nov, and the sample had compared the July 10-Q.
+          curl -s -A "$EDGAR_UA" https://www.sec.gov/files/company_tickers.json -o /tmp/tickers.json || true
           for t in $(echo "$FILINGS" | tr ',' ' '); do
-            EMAIL_TO="$SAMPLE_TO" TICKER="$t" FORM="10-Q" node scripts/section-filings.mjs > "/tmp/fw-$t.log" 2>&1 || true
+            CIK=$(jq -r --arg t "$t" '[.[] | select(.ticker == $t)][0].cik_str // empty' /tmp/tickers.json 2>/dev/null)
+            FORM_NOW="10-Q"
+            if [ -n "$CIK" ]; then
+              F=$(curl -s -A "$EDGAR_UA" "https://data.sec.gov/submissions/CIK$(printf '%010d' "$CIK").json" | jq -r '[.filings.recent.form[] | select(. == "10-Q" or . == "10-K")][0] // empty' 2>/dev/null)
+              [ -n "$F" ] && FORM_NOW="$F"
+            fi
+            echo "$t: latest report is a $FORM_NOW"
+            EMAIL_TO="$SAMPLE_TO" TICKER="$t" FORM="$FORM_NOW" node scripts/section-filings.mjs > "/tmp/fw-$t.log" 2>&1 || true
             grep -E "sent to|NOT sent|ERROR|Error" "/tmp/fw-$t.log" | sed -E 's/[^ ]+@[^ ]+/<address>/g' | tail -3 || true
           done
