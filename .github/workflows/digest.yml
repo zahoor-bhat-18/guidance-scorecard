@@ -1,0 +1,37 @@
+name: release-watch-digest
+
+# Once a day: the owner's list of every line taken out of a Release Watch
+# email before it was sent (a figure that did not trace to the company's
+# release). The list goes to TEST_EMAIL; the log names companies only.
+
+on:
+  schedule:
+    - cron: "41 3 * * *"   # 09:11 in India
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: zahoor-bhat-18/release-watch
+          ref: main
+          path: rw
+          token: ${{ secrets.RW_READ_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Send the list
+        working-directory: rw
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          KV_NAMESPACE_ID: ${{ vars.KV_NAMESPACE_ID }}
+          ALERT_TO: ${{ secrets.TEST_EMAIL || vars.TEST_EMAIL }}
+        run: node scripts/digest.mjs
