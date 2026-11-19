@@ -34,6 +34,10 @@ on:
         description: "Send to subscribers even if the release is not new or was sent before."
         type: boolean
         default: false
+      dry:
+        description: "Dry run: build and check, keep the email as a download, send nothing."
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -80,4 +84,12 @@ jobs:
           TEST_EMAIL: ${{ secrets.TEST_EMAIL || vars.TEST_EMAIL }}
           ALERT_TO: ${{ secrets.TEST_EMAIL || vars.TEST_EMAIL }}
         run: |
-          node scripts/send.mjs ${{ inputs.test && '--test' || '' }} ${{ inputs.force && '--force' || '' }} "${{ github.event.client_payload.tickers || inputs.tickers }}"
+          node scripts/send.mjs ${{ inputs.dry && '--dry' || (inputs.test && '--test' || '') }} ${{ inputs.force && '--force' || '' }} "${{ github.event.client_payload.tickers || inputs.tickers }}"
+
+      # A dry run's emails and what the checks took out, to read before anything is sent.
+      - uses: actions/upload-artifact@v4
+        if: ${{ inputs.dry }}
+        with:
+          name: rw-dry
+          path: rw/out/
+          retention-days: 3
